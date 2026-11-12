@@ -77,12 +77,60 @@ pub struct ResourceSpec {
 	/// Memory limit as a size string (e.g. `"512M"`).
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub memory: Option<String>,
-	/// Maximum number of process IDs.
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub pids: Option<u64>,
+	/// Maximum number of process IDs; `-1` for no limit, as `pids_limit:` takes.
+	/// A value past `i64` saturates instead of wrapping to a negative number.
+	#[serde(
+		default,
+		deserialize_with = "deserialize_pids",
+		skip_serializing_if = "Option::is_none"
+	)]
+	pub pids: Option<i64>,
 	/// Device reservations such as GPUs.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub devices: Vec<DeviceReservation>,
+}
+
+/// Read `pids`: an integer that may be `-1`, saturating at `i64::MAX`.
+///
+/// It was a `u64`, so `-1` (no limit, which `docker compose config` accepts and
+/// `pids_limit:` already takes) failed the whole file with a YAML error that
+/// named neither the service nor the key.
+fn deserialize_pids<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+	D: serde::Deserializer<'de>,
+{
+	struct Pids;
+	impl<'de> serde::de::Visitor<'de> for Pids {
+		type Value = Option<i64>;
+
+		fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+			f.write_str("an integer number of processes, or -1 for no limit")
+		}
+
+		fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Self::Value, E> {
+			Ok(Some(v))
+		}
+
+		fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Self::Value, E> {
+			Ok(Some(i64::try_from(v).unwrap_or(i64::MAX)))
+		}
+
+		fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+			Ok(None)
+		}
+
+		fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+			Ok(None)
+		}
+
+		fn visit_some<D: serde::Deserializer<'de>>(
+			self,
+			deserializer: D,
+		) -> Result<Self::Value, D::Error> {
+			deserializer.deserialize_any(self)
+		}
+	}
+	deserializer.deserialize_option(Pids)
 }
 
 // ---------------------------------------------------------------------------
