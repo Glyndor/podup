@@ -39,7 +39,25 @@ fn host() -> FakePodman {
 	})
 }
 
+/// `up()` reads `PODUP_MAX_REPLICAS`, and `replica_limit_default_and_env_override`
+/// sets it to `2` for a while: a three-replica fixture inside `up()` at that
+/// moment fails with `ReplicaLimitExceeded`. The lock is the one that test and
+/// `up_one.rs` already take. Held in a struct, as `up_one.rs` does, because the
+/// test has to keep it across the `await` of `up()`.
+struct ReplicaLock {
+	_lock: std::sync::MutexGuard<'static, ()>,
+}
+
+fn replica_lock() -> ReplicaLock {
+	ReplicaLock {
+		_lock: crate::engine::lifecycle::scale::scale_tests::MAX_REPLICAS_TEST_LOCK
+			.lock()
+			.unwrap_or_else(|poisoned| poisoned.into_inner()),
+	}
+}
+
 async fn up(fake: &FakePodman, yaml: &str) {
+	let _lock = replica_lock();
 	let file = crate::parse_str(yaml).expect("the fixture parses");
 	Engine::with_base_dir(fake.client(), "proj".into(), std::env::temp_dir())
 		.up_with_options(&file, false, &[], &[], false, false, false, false)
