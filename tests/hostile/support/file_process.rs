@@ -58,16 +58,34 @@ impl Drop for Reap {
 	}
 }
 
-pub fn run(mut cmd: Command) -> Outcome {
+pub fn run(cmd: Command) -> Outcome {
+	run_fed(cmd, None)
+}
+
+/// [`run`] with standard input written by `feed` on its own thread, so a feed
+/// that never ends (an endless stream) cannot block the measurement. The feed
+/// stops when podup closes its end: the write then fails.
+pub fn run_fed(
+	mut cmd: Command,
+	feed: Option<Box<dyn FnOnce(std::process::ChildStdin) + Send>>,
+) -> Outcome {
 	let out = tempfile::NamedTempFile::new().unwrap();
 	let err = tempfile::NamedTempFile::new().unwrap();
+	let stdin = if feed.is_some() {
+		Stdio::piped()
+	} else {
+		Stdio::null()
+	};
 	let mut child = Reap(
-		cmd.stdin(Stdio::null())
+		cmd.stdin(stdin)
 			.stdout(Stdio::from(File::create(out.path()).unwrap()))
 			.stderr(Stdio::from(File::create(err.path()).unwrap()))
 			.spawn()
 			.unwrap(),
 	);
+	if let (Some(feed), Some(pipe)) = (feed, child.0.stdin.take()) {
+		std::thread::spawn(move || feed(pipe));
+	}
 	let start = Instant::now();
 	let mut rss_kib = 0;
 	let (success, code, timed_out) = loop {

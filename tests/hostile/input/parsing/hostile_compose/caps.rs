@@ -139,3 +139,44 @@ fn a_compose_file_one_byte_over_the_size_cap_is_refused() {
 		outcome.text
 	);
 }
+
+/// `-f -` reads the compose document from standard input under the same 16 MiB
+/// cap as a file. An endless stream must be refused at the cap, in bounded
+/// memory, instead of being read until the machine runs out.
+#[test]
+fn an_endless_compose_on_stdin_is_refused_at_the_cap() {
+	let dir = compose_dir();
+	let mut cmd = super::file_process::isolated(dir.path());
+	cmd.args(["--socket", super::DEAD_SOCKET, "-f", "-", "config"]);
+	let outcome = super::file_process::run_fed(
+		cmd,
+		Some(Box::new(|mut pipe| {
+			use std::io::Write;
+			let line =
+				"x-filler: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n".repeat(1024);
+			while pipe.write_all(line.as_bytes()).is_ok() {}
+		})),
+	);
+	assert_refused("endless stdin", &outcome);
+	assert!(
+		outcome.text.contains("standard input is larger than"),
+		"another guard refused it:\n{}",
+		outcome.text
+	);
+}
+
+#[test]
+fn a_compose_on_stdin_under_the_cap_loads() {
+	let dir = compose_dir();
+	let mut cmd = super::file_process::isolated(dir.path());
+	cmd.args(["--socket", super::DEAD_SOCKET, "-f", "-", "config"]);
+	let outcome = super::file_process::run_fed(
+		cmd,
+		Some(Box::new(|mut pipe| {
+			use std::io::Write;
+			let _ = pipe.write_all(b"services:\n  web:\n    image: alpine\n");
+		})),
+	);
+	assert_survived("small stdin", &outcome);
+	assert_eq!(outcome.code, Some(0), "{}", outcome.text);
+}
