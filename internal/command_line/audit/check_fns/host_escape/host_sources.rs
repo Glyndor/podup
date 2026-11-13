@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 
 use podup::compose::types::{BuildConfig, ComposeFile};
 
-use super::super::check_sensitive_bind::{
+use super::super::super::check_sensitive_bind::{
 	host_path_exposure, normalize_host_path, normalize_slashes, HostExposure,
 };
-use super::super::HostContext;
+use super::super::super::HostContext;
 use super::host_paths::{home_dir, resolve};
 use super::{finding, Finding};
 

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::super::tests::{report_in, test_home};
+use super::super::super::tests::{report_in, test_home};
 
 // ---------------------------------------------------------------------------
 // bind_outside_project

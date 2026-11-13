@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 
 use podup::compose::types::{VolumeMount, VolumeType};
 
-use super::super::check_sensitive_bind::{
+use super::super::super::check_sensitive_bind::{
 	has_windows_drive_prefix, is_short_bind_source, split_short_volume_spec,
 };
-use super::super::HostContext;
+use super::super::super::HostContext;
 use super::host_paths::{fold, resolve};
 use super::{finding, Finding};
 

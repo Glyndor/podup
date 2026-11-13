@@ -9,10 +9,7 @@
 
 use super::Finding;
 
-mod bind_scope;
-mod devices;
-mod host_paths;
-mod host_sources;
+mod host_escape;
 mod image;
 mod limits;
 mod namespaces;
@@ -20,11 +17,11 @@ mod ports;
 mod privileges;
 mod root_filesystem;
 mod secrets;
-mod security_opts;
 
-pub use bind_scope::check_bind_outside_project;
-pub use devices::{check_device_cgroup_rule, check_host_device};
-pub use host_sources::check_sensitive_host_source;
+pub use host_escape::{
+	check_bind_outside_project, check_device_cgroup_rule, check_host_device,
+	check_sensitive_host_source, check_unconfined_security_opt,
+};
 pub use image::check_unpinned_image;
 pub use limits::{check_no_memory_limit, check_no_pids_limit};
 pub use namespaces::{check_host_namespace, check_no_userns};
@@ -35,7 +32,6 @@ pub use privileges::{
 };
 pub use root_filesystem::check_writable_root;
 pub use secrets::{check_secret_in_environment, segments};
-pub use security_opts::check_unconfined_security_opt;
 
 /// Construct one [`Finding`]. Private to this module so callers always go
 /// through `run_checks`, and so the field-name ordering (service, check,
@@ -71,17 +67,3 @@ mod root_filesystem_tests;
 
 #[cfg(test)]
 mod limits_tests;
-
-#[cfg(test)]
-mod devices_tests;
-
-#[cfg(test)]
-mod security_opts_tests;
-
-// Host paths are judged as Linux paths; Windows paths never match.
-#[cfg(all(test, unix))]
-mod host_sources_tests;
-
-// Host paths are judged as Linux paths; Windows paths never match.
-#[cfg(all(test, unix))]
-mod bind_scope_tests;
