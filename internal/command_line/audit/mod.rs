@@ -2,7 +2,7 @@
 //! compose file. The command is a read-only view; it never contacts Podman
 //! and never changes what `up` does.
 //!
-//! Checks live as a flat list of pure functions over the parsed
+//! Checks live as a flat list of functions over the parsed
 //! [`podup::compose::types::Service`]. Each check returns the list of
 //! [`Finding`]s it raised; [`audit_containers`] walks the file and the
 //! [`render_table`]/[`render_json`] functions translate the result into the
@@ -42,6 +42,10 @@ pub struct AuditedContainer {
 	pub name: String,
 	/// The container specification the checks ran against.
 	pub service: Service,
+	/// The same container as the compose file wrote it, before its env files
+	/// were read and its relative bind sources anchored. The host-path checks
+	/// read this one: preparing erases what they judge.
+	pub written: Service,
 }
 
 /// What the audit walked: the file's services sorted by service name, and
@@ -93,22 +97,40 @@ impl AuditReport {
 /// `audit_strict_exits_zero_when_clean` and the in-process tests in
 /// `audit_tests.rs` rely on that to keep their findings list stable.
 ///
-/// Pure: no I/O, no logging, no global state. The callers wire the result
+/// No logging and no global state; the only I/O is `bind_outside_project`
+/// resolving symbolic links under the project directory. The callers wire the result
 /// into whichever renderer matches `--format`.
+///
+/// The project directory is [`TEST_BASE_DIR`], a path that does not exist,
+/// so the host-path checks judge relative paths lexically and never find a
+/// symbolic link on the machine running the tests.
 #[cfg(test)]
 pub fn audit_file(file: &ComposeFile, opt_in: &[&'static str]) -> AuditReport {
-	audit_containers(file, &audited_containers(file), opt_in)
+	let base_dir = std::path::Path::new(TEST_BASE_DIR);
+	audit_containers(file, base_dir, &audited_containers(file), opt_in)
 }
 
+/// The project directory [`audit_file`] resolves relative host paths against.
+#[cfg(test)]
+pub const TEST_BASE_DIR: &str = "/nonexistent/podup-audit-project";
+
 /// Check already prepared containers without repeating inheritance or file I/O.
+/// `base_dir` is the absolute project directory the host-path checks resolve
+/// relative paths against, the same one [`prepare_containers`] was given.
 pub fn audit_containers(
 	file: &ComposeFile,
+	base_dir: &std::path::Path,
 	containers: &[AuditedContainer],
 	opt_in: &[&'static str],
 ) -> AuditReport {
 	let mut report = AuditReport::default();
 	for container in containers {
-		let findings = checks::run_checks(&container.name, &container.service, file, opt_in);
+		let host = checks::HostContext {
+			file,
+			written: &container.written,
+			base_dir,
+		};
+		let findings = checks::run_checks(&container.name, &container.service, &host, opt_in);
 		report.findings.extend(findings);
 	}
 	report
@@ -131,10 +153,12 @@ pub fn audited_containers(file: &ComposeFile) -> Vec<AuditedContainer> {
 		out.push(AuditedContainer {
 			name: name.clone(),
 			service: service.clone(),
+			written: service.clone(),
 		});
 		for (step_name, step) in podup::compose::pre_start::effective_steps(name, service) {
 			out.push(AuditedContainer {
 				name: step_name,
+				written: step.clone(),
 				service: step,
 			});
 		}

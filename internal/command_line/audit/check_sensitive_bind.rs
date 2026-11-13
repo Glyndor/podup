@@ -4,7 +4,8 @@
 //! the line limit.
 
 // The four path functions below are `pub(crate)` only so `fuzz/fuzz_targets/host/audit_bind_path.rs`,
-// which compiles this file into its own crate, can call them; nothing else widens.
+// which compiles this file into its own crate, can call them. `host_path_exposure` and the
+// short-form parsers are shared with the other host-path checks under `check_fns`.
 use podup::compose::types::{ComposeFile, Service, VolumeMount, VolumeType};
 
 use super::super::Finding;
@@ -293,51 +294,59 @@ fn rootless_podman_path(path: &str) -> Option<RootlessPodman> {
 	}
 }
 
-/// Build the reason string for a sensitive bind mount. The exact socket
-/// matches fire first because the message is stronger; the host root
-/// fires next with the prefix-list wording because the bind target is
-/// a directory the container can walk, not a single file that grants
-/// a daemon verb; prefix matches follow with a capability hint that
-/// names what the attacker gains.
-pub(crate) fn sensitive_bind_reason(normalized_path: &str, mode: &str) -> Option<String> {
+/// What a sensitive host path hands to whoever can read it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HostExposure {
+	/// A container runtime socket: the path is the attack vector itself.
+	RuntimeSocket,
+	/// A file or directory of host state, with the capability it grants.
+	Path(&'static str),
+}
+
+/// Classify a normalized absolute host path against the sensitive list, or
+/// `None` when it is not on it. Shared by every check that judges a host
+/// path, so the list has one owner whatever field named the path.
+///
+/// The exact socket matches come first because their wording is stronger;
+/// the host root next, as an exact entry, because every absolute path
+/// starts with `/` and a prefix match would fire on every path; the prefix
+/// list last, each entry with the capability an attacker gains.
+pub(crate) fn host_path_exposure(normalized_path: &str) -> Option<HostExposure> {
 	let rootless = rootless_podman_path(normalized_path);
 	if normalized_path == "/" {
-		// The whole host filesystem is a superset of every path on the
-		// list below. The entry sits beside the prefix list because the
-		// wording matches, and uses an exact comparison rather than a
-		// prefix comparison because every absolute path starts with `/`
-		// and a prefix match would fire on every bind mount in the
-		// file. The normaliser folds `/`, `//`, `/.`, and `/./` to the
-		// canonical `/` before this branch is reached.
-		return Some(format!(
-			"volumes: {normalized_path} is {mode}a sensitive host path \
-			 (the whole host filesystem)"
-		));
+		// The normaliser folds `/`, `//`, `/.`, and `/./` to the canonical
+		// `/` before this branch is reached.
+		return Some(HostExposure::Path("the whole host filesystem"));
 	}
 	if SENSITIVE_BIND_EXACT.contains(&normalized_path) || rootless == Some(RootlessPodman::Socket) {
-		// Exact match: the bind target is the attack vector itself, not
-		// a directory of files. Phrasing distinguishes this entry from
-		// the directory-prefix matches below so a CI consumer can grep
-		// for the socket variant without parsing the path.
-		return Some(format!(
-			"volumes: {normalized_path} is the container runtime socket; \
-			 the {mode}bind gives the container the ability to spawn sibling containers"
-		));
+		return Some(HostExposure::RuntimeSocket);
 	}
 	if rootless == Some(RootlessPodman::Directory) {
-		return Some(format!(
-			"volumes: {normalized_path} is {mode}a sensitive host path \
-			 (rootless Podman runtime directory, contains podman.sock)"
+		return Some(HostExposure::Path(
+			"rootless Podman runtime directory, contains podman.sock",
 		));
 	}
-	for (prefix, capability) in SENSITIVE_BIND_PREFIXES {
-		if normalized_path == *prefix || normalized_path.starts_with(&format!("{prefix}/")) {
-			return Some(format!(
-				"volumes: {normalized_path} is {mode}a sensitive host path ({capability})"
-			));
+	SENSITIVE_BIND_PREFIXES
+		.iter()
+		.find(|(prefix, _)| {
+			normalized_path == *prefix || normalized_path.starts_with(&format!("{prefix}/"))
+		})
+		.map(|(_, capability)| HostExposure::Path(capability))
+}
+
+/// Build the reason string for a sensitive bind mount. A runtime socket
+/// gets its own phrasing, so a CI consumer can grep for the socket variant
+/// without parsing the path; every other entry names the capability.
+pub(crate) fn sensitive_bind_reason(normalized_path: &str, mode: &str) -> Option<String> {
+	Some(match host_path_exposure(normalized_path)? {
+		HostExposure::RuntimeSocket => format!(
+			"volumes: {normalized_path} is the container runtime socket; \
+			 the {mode}bind gives the container the ability to spawn sibling containers"
+		),
+		HostExposure::Path(capability) => {
+			format!("volumes: {normalized_path} is {mode}a sensitive host path ({capability})")
 		}
-	}
-	None
+	})
 }
 
 /// Extract the bind source path and read-only flag from one volume
@@ -387,7 +396,7 @@ fn bind_source(mount: &VolumeMount) -> Option<(&str, bool)> {
 /// (`internal/backends/engine/objects/volume_mounts/spec.rs::split_volume_spec`) so the
 /// two agree on which colon is the separator. Duplicated here to keep
 /// the audit free of a dependency on the engine module.
-fn split_short_volume_spec(s: &str) -> (&str, &str, &str) {
+pub(super) fn split_short_volume_spec(s: &str) -> (&str, &str, &str) {
 	let scan_from = if has_windows_drive_prefix(s) { 2 } else { 0 };
 	let seps: Vec<usize> = s
 		.as_bytes()
@@ -410,7 +419,7 @@ fn split_short_volume_spec(s: &str) -> (&str, &str, &str) {
 /// A leading `/`, `.`, `~`, or Windows drive prefix marks a bind; a
 /// bare identifier is a named volume. Mirrors
 /// `internal/backends/engine/objects/volume_mounts/spec.rs::is_bind_source`.
-fn is_short_bind_source(src: &str) -> bool {
+pub(super) fn is_short_bind_source(src: &str) -> bool {
 	src.starts_with('/')
 		|| src.starts_with('.')
 		|| src.starts_with('~')
@@ -421,7 +430,7 @@ fn is_short_bind_source(src: &str) -> bool {
 /// colon that follows is part of the path rather than a `src:dst`
 /// separator. Mirrors
 /// `internal/backends/engine/objects/volume_mounts/spec.rs::has_windows_drive_prefix`.
-fn has_windows_drive_prefix(s: &str) -> bool {
+pub(super) fn has_windows_drive_prefix(s: &str) -> bool {
 	let b = s.as_bytes();
 	b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
 }

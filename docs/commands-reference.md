@@ -145,6 +145,11 @@ podup audit --list-checks --format json | jq -r '.checks[].id'
 | `no_health_action` | A non-disabled `healthcheck:` has no `x-podman-on-failure` extension | An unhealthy container stays unhealthy. |
 | `swap_unbounded` | A memory limit is in effect but `memswap_limit` is absent, `-1`, or differs from the memory limit | The service can page to disk. |
 | `no_cpu_limit` | No positive effective CPU quota and no nonblank `cpuset` | Quota comes from `cpus:`, `deploy.resources.limits.cpus:` or `cpu_quota:`. |
+| `host_device` | `devices:` has an entry | One finding per device. |
+| `unconfined_security_opt` | `security_opt` has `seccomp`, `apparmor` or `systempaths` set to `unconfined`, or `label` set to `disable` | Both `=` and `:` spellings match. A profile path such as `seccomp=/path/profile.json` does not fire. |
+| `device_cgroup_rule` | `device_cgroup_rules:` has an entry | One finding per rule. |
+| `sensitive_host_source` | A secret or config `file:` the service uses, `env_file`, `build.context`, `build.dockerfile` or a local `build.additional_contexts` entry resolves to a sensitive host path | Sensitive means the `sensitive_bind_mount` paths, the home itself, `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.docker`, `~/.config/gcloud`, `/etc/shadow` and `/etc/sudoers`. `~` is expanded in every field. |
+| `bind_outside_project` | A relative or `~` bind source resolves outside the project directory, or reaches outside through a symbolic link inside it | Absolute sources do not fire. The link test reads the host filesystem. |
 
 | Flag | Description | Default |
 |---|---|---|
