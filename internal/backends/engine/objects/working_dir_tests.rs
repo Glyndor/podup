@@ -133,3 +133,55 @@ async fn a_created_network_records_the_directory() {
 		.expect("a network create body");
 	assert!(created.contains("podup.working_dir"), "{created}");
 }
+
+/// An engine whose project's one network carries `labels`.
+fn engine_with_network(
+	labels: &'static str,
+	dir: &std::path::Path,
+) -> (Engine, fake_podman::FakePodman) {
+	let fake = fake_podman::start(move |method, target| {
+		if method == "GET" && target.contains("/networks/json") {
+			(
+				200,
+				format!(r#"[{{"name":"proj_default","labels":{labels}}}]"#),
+			)
+		} else {
+			(404, r#"{"message":"not used"}"#.to_string())
+		}
+	});
+	let e = Engine::with_base_dir(fake.client(), "proj".to_string(), dir.to_path_buf());
+	(e, fake)
+}
+
+/// `down -v` from another directory would remove that project's volumes, so it
+/// is refused unless `--force` says so.
+#[tokio::test]
+async fn a_destructive_down_from_another_directory_needs_force() {
+	let here = tempfile::tempdir().unwrap();
+	let (e, _fake) = engine_with_network(
+		r#"{"podup.project":"proj","podup.working_dir":"/somewhere/else"}"#,
+		here.path(),
+	);
+	let err = e
+		.refuse_if_project_used_elsewhere("down -v", false)
+		.await
+		.expect_err("refused without --force");
+	let text = err.to_string();
+	assert!(
+		text.contains("/somewhere/else") && text.contains("--force"),
+		"{text}"
+	);
+	e.refuse_if_project_used_elsewhere("down -v", true)
+		.await
+		.expect("--force lets it run");
+}
+
+/// A project without the record (created before it existed) is not refused.
+#[tokio::test]
+async fn a_project_without_the_record_is_not_refused() {
+	let here = tempfile::tempdir().unwrap();
+	let (e, _fake) = engine_with_network(r#"{"podup.project":"proj"}"#, here.path());
+	e.refuse_if_project_used_elsewhere("down -v", false)
+		.await
+		.expect("no record, no refusal");
+}

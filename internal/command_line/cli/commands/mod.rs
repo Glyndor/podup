@@ -32,6 +32,10 @@ pub(crate) enum Commands {
 		/// Remove containers for services not defined in the compose file.
 		#[arg(long)]
 		remove_orphans: bool,
+		/// Run `-v` or `--remove-orphans` even when the project was created from
+		/// another directory, whose volumes or containers they would remove.
+		#[arg(long)]
+		force: bool,
 		/// Also remove service images: `all`, or `local` for the images built
 		/// from a `build:` section that set no `image:` tag of their own.
 		#[arg(long, value_enum)]
