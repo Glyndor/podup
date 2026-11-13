@@ -8,20 +8,22 @@ use super::Section;
 /// healthcheck emits `HealthCmd=none`; otherwise the compose test (with any
 /// leading `CMD`/`CMD-SHELL`/`NONE` sentinel stripped) and the timing fields
 /// are rendered. Fields with no Quadlet/Podman equivalent push a warning into
-/// `warnings` instead of being silently dropped.
+/// `warnings` instead of being silently dropped. Returns whether the unit waits
+/// for the healthcheck to pass (`Notify=healthy`).
 pub(super) fn render_healthcheck(
 	name: &str,
 	service: &Service,
 	container: &mut Section,
 	warnings: &mut Vec<String>,
-) {
+) -> bool {
 	let Some(hc) = &service.healthcheck else {
-		return;
+		return false;
 	};
 	if hc.is_disabled() {
 		container.add("HealthCmd", "none".to_string());
-		return;
+		return false;
 	}
+	let mut waits = false;
 	if let Some(test) = &hc.test {
 		let cmd = match test {
 			Command::Shell(s) => s.clone(),
@@ -60,6 +62,7 @@ pub(super) fn render_healthcheck(
 			// nothing to probe would leave the unit starting until
 			// `TimeoutStartSec` expires.
 			container.add("Notify", "healthy".to_string());
+			waits = true;
 		}
 	}
 	if let Some(v) = &hc.interval {
@@ -95,6 +98,7 @@ pub(super) fn render_healthcheck(
 			"{name}: healthcheck.start_interval has no Quadlet/Podman equivalent and is skipped"
 		));
 	}
+	waits
 }
 
 #[cfg(test)]

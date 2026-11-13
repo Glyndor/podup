@@ -40,7 +40,7 @@ use networking::{
 };
 use process::{
 	emit_command, emit_env_files, emit_environment, emit_logging, emit_restart, emit_runtime,
-	emit_stop,
+	emit_stop, emit_timeouts,
 };
 use storage::{emit_secrets, emit_tmpfs, emit_volumes};
 
@@ -254,11 +254,14 @@ fn render_container_unit(
 	emit_pull(service, mode, &mut container);
 	emit_deploy_limits(service, &mut container);
 	emit_secrets(name, project, service, secrets, &mut container, warnings);
-	render_healthcheck(name, service, &mut container, warnings);
+	let waits_for_health = render_healthcheck(name, service, &mut container, warnings);
 
 	let mut svc = Section::new("Service");
 	match role {
-		UnitRole::Service => emit_restart(service, &mut svc),
+		UnitRole::Service => {
+			emit_restart(service, &mut svc);
+			emit_timeouts(service, waits_for_health, &mut svc);
+		}
 		// One run per start. A scheduled run is not retried, and `Restart=`
 		// is only valid next to `oneshot` as `no` or `on-failure`.
 		UnitRole::Job => svc.add("Type", "oneshot".to_string()),
