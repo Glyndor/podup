@@ -37,7 +37,7 @@ fn a_string_command_is_written_as_its_words() {
 	let unit = container(
 		"services:\n  web:\n    image: nginx\n    entrypoint: echo got\n    command: \"sh -c 'a b' \\\"c d\\\"\"\n",
 	);
-	assert_eq!(line(&unit, "Entrypoint"), "Entrypoint=echo got");
+	assert_eq!(line(&unit, "Entrypoint"), "Entrypoint=[\"echo\",\"got\"]");
 	assert_eq!(line(&unit, "Exec"), "Exec=sh -c \"a b\" \"c d\"");
 }
 
@@ -108,4 +108,17 @@ fn a_semicolon_inside_a_word_is_kept() {
 		let yaml = format!("services:\n  web:\n    image: nginx\n    {command}\n");
 		assert!(!rejects(&yaml), "{command} should be accepted");
 	}
+}
+
+/// The JSON entrypoint keeps quotes, backslashes and newlines inside each word,
+/// and doubles `%` because Quadlet copies the value into `ExecStart=`.
+#[test]
+fn an_entrypoint_word_is_escaped_inside_the_json_array() {
+	let unit = container(
+		"services:\n  web:\n    image: nginx\n    entrypoint: [\"/bin/sh\", \"-c\", \"echo \\\"a\\\\b\\\" 100%\\nnext\"]\n",
+	);
+	assert_eq!(
+		line(&unit, "Entrypoint"),
+		"Entrypoint=[\"/bin/sh\",\"-c\",\"echo \\\"a\\\\b\\\" 100%%\\u000anext\"]"
+	);
 }

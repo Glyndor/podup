@@ -201,7 +201,7 @@ services:
 }
 
 #[test]
-fn warns_when_static_ip_set_on_multiple_networks() {
+fn static_ips_on_multiple_networks_are_not_reported_outside_a_pod() {
 	let yaml = r#"
 services:
   s:
@@ -219,9 +219,10 @@ networks:
 	let joined = generate_at(&file, "proj", std::path::Path::new("/srv/app"))
 		.warnings
 		.join("\n");
+	// Each `Network=` line carries its own address, so nothing is lost.
 	assert!(
-		joined.contains("ipv4_address/ipv6_address"),
-		"missing multi-network static-IP warning; got:\n{joined}"
+		!joined.contains("ipv4_address/ipv6_address"),
+		"no warning outside a pod; got:\n{joined}"
 	);
 }
 

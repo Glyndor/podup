@@ -114,12 +114,8 @@ networks:
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
-		!c.contains("--network-alias=\"\""),
-		"empty network alias must not emit --network-alias=; got:\n{c}"
-	);
-	assert!(
-		c.contains("PodmanArgs=--network-alias=\"web\""),
-		"non-empty network alias must still emit; got:\n{c}"
+		c.contains("Network=p-front.network:alias=s,alias=web\n"),
+		"the empty alias must be left out and the others kept; got:\n{c}"
 	);
 }
 

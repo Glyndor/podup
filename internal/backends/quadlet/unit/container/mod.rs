@@ -219,6 +219,7 @@ fn render_container_unit(
 		&mut container,
 	);
 	emit_networks(
+		name,
 		service,
 		project,
 		declared_networks,
@@ -270,6 +271,7 @@ fn render_container_unit(
 		services,
 		warnings,
 		mode == ContainerUnitMode::Prebuilt && super::build::emits_build_unit(service),
+		in_pod,
 	);
 
 	// The unforgeable ownership marker comes first, as its own comment line;

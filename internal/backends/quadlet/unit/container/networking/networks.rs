@@ -12,6 +12,7 @@ use super::super::{quote_podman_arg_value, unit_stem, ExternalNames, Section};
 /// Emit a `Network=` line per declared network the service attaches to, unless
 /// the pod carries the attachment instead.
 pub(in super::super) fn emit_networks(
+	name: &str,
 	service: &Service,
 	project: &str,
 	declared_networks: &[&str],
@@ -29,17 +30,19 @@ pub(in super::super) fn emit_networks(
 			// A declared (non-external) network is backed by a generated `.network`
 			// unit; an external network is referenced by its existing name directly,
 			// since no unit is emitted for it.
-			if declared_networks.contains(&net.as_str()) {
-				container.add("Network", format!("{}.network", unit_stem(project, &net)));
+			let target = if declared_networks.contains(&net.as_str()) {
+				format!("{}.network", unit_stem(project, &net))
 			} else {
 				// An external network carries the name it really has, which a
 				// compose `name:` may have changed.
-				let name = external_networks
+				external_networks
 					.get(net.as_str())
 					.copied()
-					.unwrap_or(net.as_str());
-				container.add("Network", name.to_string());
-			}
+					.unwrap_or(net.as_str())
+					.to_string()
+			};
+			let options = attachment_options(name, service, &net);
+			container.add("Network", format!("{target}:{}", options.join(",")));
 		}
 	}
 }
@@ -118,17 +121,65 @@ pub(in super::super) fn emit_network_mode(
 	}
 }
 
-/// Emit a `--network-alias` podman arg per network alias, and the first static
-/// address declared across the service's networks as `IP=`/`IP6=`.
+/// The options of one network attachment, the way `up` builds them
+/// (`build_per_network_options`): the service name as an alias so siblings
+/// resolve it, the aliases declared for this network, and its static
+/// addresses. Podman reads them after the network name, so each one is scoped
+/// to that network instead of to every network the container joins.
+///
+/// The value is a comma-separated option list, so an alias that could break it
+/// is left out and reported, and an address is written only once it parses.
+fn attachment_options(name: &str, service: &Service, net: &str) -> Vec<String> {
+	let config = service.networks.config_for(net);
+	let declared = config.and_then(|c| c.aliases.clone()).unwrap_or_default();
+	let mut options = Vec::new();
+	let mut seen = std::collections::HashSet::new();
+	for alias in std::iter::once(name.to_string()).chain(declared) {
+		if alias.is_empty() || !seen.insert(alias.clone()) {
+			continue;
+		}
+		if alias
+			.chars()
+			.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+		{
+			options.push(format!("alias={alias}"));
+		} else if !is_no_warn_set() {
+			tracing::warn!(
+				"service \"{name}\": network alias {alias:?} on {net:?} is not exported; \
+				 it holds a character the Network= option list cannot carry"
+			);
+		}
+	}
+	let address = |value: Option<&String>| {
+		value
+			.filter(|v| v.parse::<std::net::IpAddr>().is_ok())
+			.cloned()
+	};
+	if let Some(ip) = address(config.and_then(|c| c.ipv4_address.as_ref())) {
+		options.push(format!("ip={ip}"));
+	}
+	if let Some(ip6) = address(config.and_then(|c| c.ipv6_address.as_ref())) {
+		options.push(format!("ip6={ip6}"));
+	}
+	options
+}
+
+/// In a pod, emit a `--network-alias` podman arg per network alias and the first
+/// static address declared across the service's networks as `IP=`/`IP6=`, for
+/// the pod fields the pod does not carry. Outside a pod each `Network=` line
+/// carries them already.
 pub(in super::super) fn emit_network_extras(
 	service: &Service,
 	in_pod: bool,
 	pod_fields: &PodFields,
 	container: &mut Section,
 ) {
-	// `IP=`/`IP6=` are single-valued per container, so the first static address
-	// declared across the service's networks wins (Quadlet has no per-network IP
-	// scoping); a second one is reported by collect_warnings.
+	if !in_pod {
+		return;
+	}
+	// In a pod `IP=`/`IP6=` are single-valued per container, so the first static
+	// address declared across the service's networks wins; a second one is
+	// reported by collect_warnings.
 	let values = network_values(service);
 	if !(in_pod && pod_fields.owns(PodField::NetworkAlias)) {
 		for alias in &values.aliases {

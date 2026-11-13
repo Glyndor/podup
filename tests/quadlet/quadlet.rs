@@ -58,7 +58,7 @@ Image=nginx:1.27
 PublishPort=8080:80
 Environment=TZ=UTC
 Volume=proj-data.volume:/var/lib/data
-Network=proj-frontend.network
+Network=proj-frontend.network:alias=web
 Label=podup.project=proj
 Label=podup.service=web
 LogDriver=k8s-file

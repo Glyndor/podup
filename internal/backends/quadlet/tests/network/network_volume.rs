@@ -299,11 +299,11 @@ fn duplicate_network_aliases_are_emitted_once() {
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert_eq!(
-		c.matches("--network-alias=\"dup\"").count(),
+		c.matches("alias=dup").count(),
 		1,
 		"duplicate alias must be emitted once; got:\n{c}"
 	);
-	assert_eq!(c.matches("--network-alias=\"uniq\"").count(), 1, "in:\n{c}");
+	assert_eq!(c.matches("alias=uniq").count(), 1, "in:\n{c}");
 }
 
 #[test]
