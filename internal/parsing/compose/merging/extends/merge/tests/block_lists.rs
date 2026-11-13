@@ -74,3 +74,65 @@ fn the_same_logging_driver_keeps_merging_options() {
 	assert_eq!(logging["options"]["max-size"], "1m");
 	assert_eq!(logging["options"]["max-file"], "3");
 }
+
+/// The other lists `docker compose config` 5.7.0 appends across files; each of
+/// these used to keep only the later file's list.
+#[test]
+fn every_list_compose_appends_keeps_both_files() {
+	let svc = merged(
+		"services:\n  s:\n    image: x\n    \
+		 build: {context: ., platforms: [linux/amd64], cache_to: [\"type=local,dest=/a\"]}\n    \
+		 deploy: {placement: {constraints: [a==1], preferences: [{spread: a}]}}\n    \
+		 develop: {watch: [{path: ./a, action: sync, target: /a}]}\n    \
+		 gpus: [{driver: nvidia, count: 1}]\n",
+		"services:\n  s:\n    \
+		 build: {platforms: [linux/arm64], cache_to: [\"type=local,dest=/b\"]}\n    \
+		 deploy: {placement: {constraints: [b==2], preferences: [{spread: b}]}}\n    \
+		 develop: {watch: [{path: ./b, action: rebuild}]}\n    \
+		 gpus: [{driver: nvidia, count: 2}]\n",
+	);
+	let value = serde_json::to_value(&svc).unwrap();
+	let len = |v: &serde_json::Value| v.as_array().map(Vec::len);
+	assert_eq!(len(&value["build"]["platforms"]), Some(2), "{value}");
+	assert_eq!(len(&value["build"]["cache_to"]), Some(2), "{value}");
+	assert_eq!(
+		len(&value["deploy"]["placement"]["constraints"]),
+		Some(2),
+		"{value}"
+	);
+	assert_eq!(
+		len(&value["deploy"]["placement"]["preferences"]),
+		Some(2),
+		"{value}"
+	);
+	assert_eq!(len(&value["develop"]["watch"]), Some(2), "{value}");
+	assert_eq!(len(&value["gpus"]), Some(2), "{value}");
+}
+
+/// `blkio_config` merges key by key and its device lists append, so a later
+/// file that adds a rate limit does not drop the earlier `weight`.
+#[test]
+fn blkio_config_merges_key_by_key() {
+	let svc = merged(
+		"services:\n  s:\n    image: x\n    \
+		 blkio_config: {weight: 300, device_read_bps: [{path: /dev/sda, rate: 1mb}]}\n",
+		"services:\n  s:\n    blkio_config: {device_read_bps: [{path: /dev/sdb, rate: 2mb}]}\n",
+	);
+	let blkio = serde_json::to_value(svc.blkio_config.unwrap()).unwrap();
+	assert_eq!(blkio["weight"], 300, "{blkio}");
+	assert_eq!(
+		blkio["device_read_bps"].as_array().map(Vec::len),
+		Some(2),
+		"{blkio}"
+	);
+}
+
+/// A count or `all` is one value: the later file's wins, as before.
+#[test]
+fn a_gpu_count_still_replaces() {
+	let svc = merged(
+		"services:\n  s:\n    image: x\n    gpus: [{driver: nvidia, count: 1}]\n",
+		"services:\n  s:\n    gpus: all\n",
+	);
+	assert_eq!(serde_json::to_value(svc.gpus.unwrap()).unwrap(), "all");
+}

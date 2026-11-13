@@ -279,13 +279,30 @@ where
 	}
 
 	/// The lists, by path from the block's root, that compose appends to instead
-	/// of replacing: measured against `docker compose config` 5.7.0.
+	/// of replacing: measured against `docker compose config` 5.7.0. The blocks
+	/// are `build`, `deploy`, `develop` and `blkio_config`, and no path is shared
+	/// between two of them.
+	const APPENDS: &[&[&str]] = &[
+		&["cache_from"],
+		&["cache_to"],
+		&["tags"],
+		&["extra_hosts"],
+		&["platforms"],
+		&["resources", "reservations", "devices"],
+		&["placement", "constraints"],
+		&["placement", "preferences"],
+		&["watch"],
+		&["weight_device"],
+		&["device_read_bps"],
+		&["device_write_bps"],
+		&["device_read_iops"],
+		&["device_write_iops"],
+	];
+
 	fn appends(path: &[String]) -> bool {
-		let path: Vec<&str> = path.iter().map(String::as_str).collect();
-		matches!(
-			path.as_slice(),
-			["cache_from"] | ["tags"] | ["extra_hosts"] | ["resources", "reservations", "devices"]
-		)
+		APPENDS
+			.iter()
+			.any(|known| known.iter().copied().eq(path.iter().map(String::as_str)))
 	}
 
 	match (base, over) {

@@ -266,7 +266,7 @@ pub(in crate::parsing::compose) fn merge_service(
 		pids_limit: override_svc.pids_limit.or(base.pids_limit),
 		oom_kill_disable: override_svc.oom_kill_disable.or(base.oom_kill_disable),
 		oom_score_adj: override_svc.oom_score_adj.or(base.oom_score_adj),
-		blkio_config: override_svc.blkio_config.or(base.blkio_config),
+		blkio_config: merge_block(base.blkio_config, override_svc.blkio_config, None),
 		logging: merge_block(base.logging, override_svc.logging, None),
 		// Merged per key, like `environment` and `labels`, not replaced.
 		sysctls: merge_sysctls(base.sysctls, override_svc.sysctls),
@@ -288,7 +288,7 @@ pub(in crate::parsing::compose) fn merge_service(
 		pull_refresh_after_reset,
 		deploy: merge_block(base.deploy, override_svc.deploy, None),
 		develop: merge_block(base.develop, override_svc.develop, None),
-		gpus: override_svc.gpus.or(base.gpus),
+		gpus: merge_gpus(base.gpus, override_svc.gpus),
 		credential_spec: override_svc.credential_spec.or(base.credential_spec),
 		isolation: override_svc.isolation.or(base.isolation),
 		provider: override_svc.provider.or(base.provider),
@@ -301,5 +301,28 @@ pub(in crate::parsing::compose) fn merge_service(
 			u.extend(override_svc.unknown);
 			u
 		},
+	}
+}
+
+/// Two device lists append, as `docker compose config` 5.7.0 does; any other
+/// pair (`all`, a count) is a single value and the override wins.
+fn merge_gpus(
+	base: Option<crate::compose::types::GpuSpec>,
+	over: Option<crate::compose::types::GpuSpec>,
+) -> Option<crate::compose::types::GpuSpec> {
+	use crate::compose::types::GpuSpec;
+	match (base, over) {
+		(Some(GpuSpec::Devices(mut devices)), Some(GpuSpec::Devices(more))) => {
+			for device in more {
+				let json = serde_json::to_value(&device).ok();
+				let repeated =
+					json.is_some() && devices.iter().any(|d| serde_json::to_value(d).ok() == json);
+				if !repeated {
+					devices.push(device);
+				}
+			}
+			Some(GpuSpec::Devices(devices))
+		}
+		(base, over) => over.or(base),
 	}
 }
