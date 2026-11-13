@@ -8,6 +8,7 @@ mod block_lists;
 mod dedupe;
 mod dependencies;
 mod directives;
+mod identity;
 mod long_lists;
 mod networks;
 mod service_fields;
