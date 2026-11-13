@@ -40,19 +40,7 @@ pub(crate) fn network_unit(
 			{
 				net.add("IPAMDriver", ipam_driver.clone());
 			}
-			// Each `ipam.config` pool maps to a Subnet=/Gateway=/IPRange= triple;
-			// all three keys are repeatable and correlated positionally by Podman.
-			for pool in &ipam.config {
-				if let Some(subnet) = &pool.subnet {
-					net.add("Subnet", subnet.clone());
-				}
-				if let Some(gateway) = &pool.gateway {
-					net.add("Gateway", gateway.clone());
-				}
-				if let Some(range) = &pool.ip_range {
-					net.add("IPRange", range.clone());
-				}
-			}
+			super::ipam::add_pools(&mut net, &ipam.config);
 		}
 	}
 	// Driver options, with the same default the live engine applies to a bridge
