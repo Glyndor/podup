@@ -76,7 +76,7 @@ services:
 	// before it reaches the unit. The path is the one `up` mounts.
 	assert!(
 		web.contents
-			.contains("Volume=/srv/app/./html:/usr/share/nginx/html:ro"),
+			.contains("Volume=/srv/app/html:/usr/share/nginx/html:ro"),
 		"in:\n{}",
 		web.contents
 	);
@@ -98,7 +98,7 @@ services:
 	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 	let web = unit_named(&out, "proj-web.container");
 	assert!(
-		web.contents.contains("Volume=/srv/app/./data:/data"),
+		web.contents.contains("Volume=/srv/app/data:/data"),
 		"in:\n{}",
 		web.contents
 	);
