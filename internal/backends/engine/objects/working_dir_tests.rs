@@ -98,7 +98,6 @@ async fn the_same_directory_or_no_record_says_nothing() {
 }
 
 /// A symlink to the project directory is the same directory.
-#[cfg(unix)]
 #[tokio::test]
 async fn the_recorded_directory_is_canonical() {
 	let real = tempfile::tempdir().unwrap();

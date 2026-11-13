@@ -87,6 +87,7 @@ impl Engine {
 	}
 }
 
-#[cfg(test)]
+// The fake engine listens on a Unix socket.
+#[cfg(all(test, unix))]
 #[path = "working_dir_tests.rs"]
 mod tests;
