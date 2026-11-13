@@ -96,3 +96,73 @@ fn reset_tag_empties_a_block_that_merges_key_by_key() {
 		"the base healthcheck survived !reset"
 	);
 }
+
+/// Docker Compose 5.7.0 honours `!reset` on every service key. A key missing
+/// from the reset list kept the earlier file's value instead; each of these did.
+#[test]
+fn reset_tag_clears_every_scalar_service_key() {
+	let keys = [
+		("hostname", "h"),
+		("domainname", "d.example"),
+		("user", "\"1\""),
+		("working_dir", "/w"),
+		("container_name", "cn"),
+		("restart", "always"),
+		("platform", "linux/amd64"),
+		("stop_signal", "SIGINT"),
+		("stop_grace_period", "5s"),
+		("mac_address", "02:42:ac:11:00:02"),
+		("shm_size", "64m"),
+		("pids_limit", "10"),
+		("mem_limit", "100m"),
+		("init", "true"),
+		("read_only", "true"),
+		("privileged", "true"),
+		("tty", "true"),
+		("stdin_open", "true"),
+		("pull_policy", "always"),
+		("network_mode", "host"),
+	];
+	let mut base = String::from("services:\n  web:\n    image: alpine\n");
+	let mut over = String::from("services:\n  web:\n");
+	for (key, value) in keys {
+		base.push_str(&format!("    {key}: {value}\n"));
+		over.push_str(&format!("    {key}: !reset null\n"));
+	}
+	let merged = merged_with_tags(&base, &over);
+	let value = serde_yaml::to_value(&merged).unwrap();
+	for (key, _) in keys {
+		assert!(
+			value.get(key).is_none(),
+			"!reset must clear {key}: {:?}",
+			value.get(key)
+		);
+	}
+}
+
+/// `!override` on these keys used to combine both files (append or merge by key)
+/// because they were not in the reset list; Docker keeps only the later value.
+#[test]
+fn override_tag_replaces_the_keys_that_used_to_combine() {
+	let merged = merged_with_tags(
+		"services:\n  web:\n    image: alpine\n    annotations: {a: \"1\"}\n    \
+		 device_cgroup_rules: [\"c 1:3 mr\"]\n    post_start: [{command: [a]}]\n",
+		"services:\n  web:\n    annotations: !override {b: \"2\"}\n    \
+		 device_cgroup_rules: !override [\"c 1:5 mr\"]\n    \
+		 post_start: !override [{command: [b]}]\n",
+	);
+	let value = serde_yaml::to_value(&merged).unwrap();
+	assert_eq!(
+		value["annotations"],
+		serde_yaml::from_str::<serde_yaml::Value>("{b: \"2\"}").unwrap()
+	);
+	assert_eq!(
+		value["device_cgroup_rules"],
+		serde_yaml::from_str::<serde_yaml::Value>("[\"c 1:5 mr\"]").unwrap()
+	);
+	assert_eq!(
+		value["post_start"].as_sequence().map(Vec::len),
+		Some(1),
+		"{value:?}"
+	);
+}
