@@ -33,6 +33,7 @@ pub(in super::super) fn render_volume(
 			}
 		}
 		VolumeMount::Long {
+			volume_type,
 			source,
 			target,
 			read_only,
@@ -41,7 +42,12 @@ pub(in super::super) fn render_volume(
 			..
 		} => {
 			let src = source.clone().unwrap_or_default();
-			let src = if declared_volumes.contains(&src.as_str()) {
+			// A long-form bind names a host path even without `./`: `source: data`
+			// is the project's `data` directory, as `up` reads it, not a volume
+			// named `data` that Podman would create empty.
+			let src = if matches!(volume_type, VolumeType::Bind) && !src.is_empty() {
+				crate::engine::container::resolve_bind_source(&src, base_dir)
+			} else if declared_volumes.contains(&src.as_str()) {
 				format!("{}.volume", unit_stem(project, &src))
 			} else if let Some(name) = external_volumes.get(src.as_str()) {
 				name.to_string()
