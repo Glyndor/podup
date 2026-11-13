@@ -66,6 +66,32 @@ fn ensure_bind_source(abs: &str) -> BindSource {
 	}
 }
 
+/// Create a missing bind source the way the mount resolves it, and say so when
+/// the directory it had to create is outside the project: a relative path that
+/// climbs out (`../../x`), a `~` path, or a path that crosses a symlink inside
+/// the project. Docker creates it too, so this does not refuse; it makes sure
+/// a compose file from someone else cannot make a directory in the home
+/// without a word. An absolute source is written on purpose and stays quiet.
+fn create_bind_source(src: &str, base_dir: &Path) {
+	let abs = crate::engine::container::resolve_bind_source(src, base_dir);
+	match ensure_bind_source(&abs) {
+		BindSource::Failed(msg) => tracing::warn!("{msg}"),
+		BindSource::Created if !Path::new(src).is_absolute() => {
+			let inside = std::fs::canonicalize(&abs)
+				.ok()
+				.zip(std::fs::canonicalize(base_dir).ok())
+				.is_some_and(|(made, project)| made.starts_with(project));
+			if !inside {
+				tracing::warn!(
+					"create_host_path: created {abs} for the bind {src:?}, outside the project \
+					 directory; check that the compose file meant it"
+				);
+			}
+		}
+		BindSource::Created | BindSource::Present => {}
+	}
+}
+
 /// Build all OCI mounts and named volume attachments for a container.
 ///
 /// Returns `(mounts, named_volumes)`. Named volumes must go into
@@ -94,11 +120,7 @@ pub(crate) fn build_mounts_all(
 							// path actually bind-mounted (relative anchored to the
 							// project dir, leading `~` expanded).
 							if let Some(src) = m.source.as_deref() {
-								let abs =
-									crate::engine::container::resolve_bind_source(src, base_dir);
-								if let BindSource::Failed(msg) = ensure_bind_source(&abs) {
-									tracing::warn!("{msg}");
-								}
+								create_bind_source(src, base_dir);
 							}
 							mounts.push(m);
 						}
@@ -150,10 +172,7 @@ pub(crate) fn build_mounts_all(
 						// Resolve exactly like the mount source (expand `~`, anchor a
 						// relative path to the project dir) so the directory is created
 						// at the path actually bind-mounted, not a literal `~` dir.
-						let abs = crate::engine::container::resolve_bind_source(src, base_dir);
-						if let BindSource::Failed(msg) = ensure_bind_source(&abs) {
-							tracing::warn!("{msg}");
-						}
+						create_bind_source(src, base_dir);
 					}
 
 					let mut opts = access_opts(*read_only);

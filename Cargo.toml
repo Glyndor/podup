@@ -235,6 +235,10 @@ name = "hostile_podman"
 path = "tests/hostile/podman/hostile_podman.rs"
 
 [[test]]
+name = "hostile_project_from_elsewhere"
+path = "tests/hostile/podman/hostile_project_from_elsewhere.rs"
+
+[[test]]
 name = "hostile_push"
 path = "tests/hostile/podman/hostile_push.rs"
 

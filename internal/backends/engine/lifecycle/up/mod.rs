@@ -125,6 +125,7 @@ impl Engine {
 		build: bool,
 	) -> Result<()> {
 		self.pull_preflight(file)?;
+		self.warn_if_project_used_elsewhere().await;
 		let result = async {
 			// Reject any volume/network/container name Podman's regex would refuse
 			// before issuing a single create, so a bad name surfaces as a clear

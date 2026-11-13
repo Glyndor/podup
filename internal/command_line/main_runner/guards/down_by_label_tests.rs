@@ -5,6 +5,7 @@ fn down() -> Commands {
 	Commands::Down {
 		volumes: false,
 		remove_orphans: false,
+		force: false,
 		rmi: None,
 		timeout: None,
 		services: Vec::new(),
