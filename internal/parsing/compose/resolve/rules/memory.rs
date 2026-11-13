@@ -12,7 +12,10 @@ use crate::error::{ComposeError, Result};
 /// bytes or a `b`/`k`/`m`/`g`/`t` amount (with an optional `b`), and `-1`.
 /// An empty value is not a mistake: `${MEM:-}` is how a file says "no limit",
 /// so it counts as unset.
-pub(super) fn validate_memory_amounts(name: &str, service: &Service) -> Result<()> {
+pub(in crate::parsing::compose::resolve) fn validate_memory_amounts(
+	name: &str,
+	service: &Service,
+) -> Result<()> {
 	let resources = service.deploy.as_ref().and_then(|d| d.resources.as_ref());
 	let amounts = [
 		("mem_limit", service.mem_limit.as_deref()),
@@ -46,5 +49,5 @@ pub(super) fn validate_memory_amounts(name: &str, service: &Service) -> Result<(
 }
 
 #[cfg(test)]
-#[path = "validate_memory_tests.rs"]
+#[path = "memory_tests.rs"]
 mod tests;

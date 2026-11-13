@@ -221,10 +221,10 @@ fn is_windows_drive(src: &str) -> bool {
 /// still contain literal `${VAR}` placeholders, which cannot be meaningfully
 /// range- or reference-checked.
 pub(in super::super) fn validate(file: &ComposeFile) -> Result<()> {
-	super::validate_names::validate_resource_names(file)?;
+	super::rules::names::validate_resource_names(file)?;
 	validate_services(file)?;
 	validate_networks(file)?;
-	super::validate_volumes::validate_volumes(file)?;
+	super::rules::volumes::validate_volumes(file)?;
 	Ok(())
 }
 
@@ -349,8 +349,9 @@ fn validate_service_consistency(
 		}
 	}
 
-	super::validate_memory::validate_memory_amounts(name, service)?;
-	super::validate_replicas::validate_replica_counts(name, service)?;
+	super::rules::memory::validate_memory_amounts(name, service)?;
+	super::rules::cpus::validate_cpu_limits(name, service)?;
+	super::rules::replicas::validate_replica_counts(name, service)?;
 
 	// Surface a malformed/out-of-range port at config time rather than letting
 	// it slip through to a podman create error at run time.

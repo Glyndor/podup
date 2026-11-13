@@ -4,7 +4,7 @@ use crate::parse_str;
 fn validate_str(yaml: &str) -> Result<()> {
 	let mut file = parse_str(yaml).unwrap();
 	crate::compose::normalize_default_network(&mut file);
-	super::super::validate::validate(&file)
+	super::super::super::validate::validate(&file)
 }
 
 fn service_with(line: &str) -> String {

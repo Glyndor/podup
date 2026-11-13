@@ -6,7 +6,10 @@ use crate::error::{ComposeError, Result};
 
 /// Reject a service whose `scale` and `deploy.replicas` disagree. Setting both
 /// to the same number is fine, and either one alone is the whole answer.
-pub(super) fn validate_replica_counts(name: &str, service: &Service) -> Result<()> {
+pub(in crate::parsing::compose::resolve) fn validate_replica_counts(
+	name: &str,
+	service: &Service,
+) -> Result<()> {
 	let replicas = service.deploy.as_ref().and_then(|d| d.replicas);
 	match (service.scale, replicas) {
 		(Some(scale), Some(replicas)) if scale != replicas => Err(ComposeError::Invalid(format!(
@@ -19,5 +22,5 @@ pub(super) fn validate_replica_counts(name: &str, service: &Service) -> Result<(
 }
 
 #[cfg(test)]
-#[path = "validate_replicas_tests.rs"]
+#[path = "replicas_tests.rs"]
 mod tests;
