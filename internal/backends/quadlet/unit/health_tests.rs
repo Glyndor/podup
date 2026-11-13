@@ -7,7 +7,7 @@ fn render(yaml: &str) -> (String, Vec<String>) {
 	let service: Service = serde_yaml::from_str(yaml).expect("service parses");
 	let mut container = Section::new("Container");
 	let mut warnings = Vec::new();
-	render_healthcheck("web", &service, &mut container, &mut warnings);
+	let _ = render_healthcheck("web", &service, &mut container, &mut warnings);
 	(container.render(), warnings)
 }
 
