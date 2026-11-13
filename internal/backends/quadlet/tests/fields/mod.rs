@@ -6,4 +6,5 @@ mod logging;
 mod mounts;
 mod networks;
 mod resources;
+mod subpath;
 mod tmpfs_owner;
