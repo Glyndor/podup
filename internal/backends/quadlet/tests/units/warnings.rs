@@ -78,3 +78,29 @@ fn no_env_file_warning_when_every_entry_is_required() {
 		out.warnings
 	);
 }
+
+/// `podman --env-file` reads each line as written, while `up` reads the file as
+/// dotenv. A file that quotes, exports, comments inline or interpolates gives
+/// the container other values under Quadlet, so the keys are named (never the
+/// values, which may be secrets).
+#[test]
+fn warns_when_podman_reads_an_env_file_differently() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(
+		dir.path().join("app.env"),
+		"Q1=\"quoted value\"\nexport EX=1\nC1=val # comment\nPLAIN=ok\n",
+	)
+	.unwrap();
+	std::fs::write(dir.path().join("clean.env"), "PLAIN=ok\n# note\nOTHER=2\n").unwrap();
+	let yaml = "services:\n  s:\n    image: x\n    env_file: [app.env, clean.env]\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", dir.path());
+	let joined = out.warnings.join("\n");
+	assert!(joined.contains("\"app.env\""), "{joined}");
+	for key in ["Q1", "EX", "C1"] {
+		assert!(joined.contains(key), "{key} missing from: {joined}");
+	}
+	assert!(!joined.contains("quoted value"), "a value leaked: {joined}");
+	assert!(!joined.contains("PLAIN"), "{joined}");
+	assert!(!joined.contains("clean.env"), "{joined}");
+}
