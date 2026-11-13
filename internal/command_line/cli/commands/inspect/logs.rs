@@ -27,6 +27,9 @@ pub(crate) struct LogsArgs {
 	/// Do not print the service-name prefix on each line.
 	#[arg(long)]
 	pub(crate) no_log_prefix: bool,
+	/// Show only this replica (1-based) of a scaled service.
+	#[arg(long)]
+	pub(crate) index: Option<u32>,
 	/// Show logs for these services (default: all).
 	pub(crate) services: Vec<String>,
 }

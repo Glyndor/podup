@@ -161,6 +161,14 @@ fn parses(args: &[&str]) -> bool {
 }
 
 #[test]
+fn logs_takes_a_replica_index() {
+	assert!(parses(&["podup", "logs", "--index", "2", "web"]));
+	// The index is a number, and it needs a value.
+	assert!(!parses(&["podup", "logs", "--index", "second", "web"]));
+	assert!(!parses(&["podup", "logs", "--index"]));
+}
+
+#[test]
 fn up_accepts_the_attach_and_output_options() {
 	assert!(parses(&[
 		"podup",

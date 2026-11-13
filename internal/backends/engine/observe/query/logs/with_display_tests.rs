@@ -299,3 +299,88 @@ async fn logs_report_an_oversized_frame_from_a_stopped_container() {
 		"a history with a frame over the limit must not be reported as read"
 	);
 }
+
+/// `logs --index 2` shows replica 2 of the scaled service and no other, as
+/// `docker compose logs --index` does. The number is the replica's own, so it
+/// is read from the name and not from the position in Podman's listing.
+#[cfg(unix)]
+#[tokio::test]
+async fn logs_index_targets_only_that_replica() {
+	let containers = r#"[
+		{"Names":["/proj-web-3"],"Labels":{"podup.service":"web"}},
+		{"Names":["/proj-web-1"],"Labels":{"podup.service":"web"}},
+		{"Names":["/proj-web-2"],"Labels":{"podup.service":"web"}}
+	]"#;
+	let fake = fake_podman::start(move |method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			(200, containers.to_string())
+		} else if method == "GET" && target.contains("/logs") {
+			(200, String::new())
+		} else {
+			(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+	let mut file = ComposeFile::default();
+	file.services.insert("web".into(), Service::default());
+
+	e.logs_with_options(
+		&file,
+		&["web".to_string()],
+		LogsOptions::default().with_index(Some(2)),
+	)
+	.await
+	.expect("logs --index 2 should succeed");
+
+	let seen = fake.requests.lock().unwrap();
+	assert!(
+		seen.iter().any(|r| r.contains("/proj-web-2/logs")),
+		"{seen:?}"
+	);
+	assert!(
+		!seen
+			.iter()
+			.any(|r| r.contains("/proj-web-1/logs") || r.contains("/proj-web-3/logs")),
+		"only replica 2 may be read: {seen:?}"
+	);
+}
+
+/// A number no replica holds fails the command and reads no log at all,
+/// instead of printing nothing and exiting 0. Zero is refused too: replica
+/// numbers start at 1.
+#[cfg(unix)]
+#[tokio::test]
+async fn logs_index_without_that_replica_fails() {
+	let containers = r#"[
+		{"Names":["/proj-web-1"],"Labels":{"podup.service":"web"}},
+		{"Names":["/proj-web-2"],"Labels":{"podup.service":"web"}}
+	]"#;
+	let fake = fake_podman::start(move |method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			(200, containers.to_string())
+		} else if method == "GET" && target.contains("/logs") {
+			(200, String::new())
+		} else {
+			(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+	let mut file = ComposeFile::default();
+	file.services.insert("web".into(), Service::default());
+
+	for index in [0, 9] {
+		let result = e
+			.logs_with_options(
+				&file,
+				&["web".to_string()],
+				LogsOptions::default().with_index(Some(index)),
+			)
+			.await;
+		assert!(result.is_err(), "--index {index} must fail");
+	}
+	let seen = fake.requests.lock().unwrap();
+	assert!(
+		!seen.iter().any(|r| r.contains("/logs")),
+		"no log may be read for a replica that does not exist: {seen:?}"
+	);
+}

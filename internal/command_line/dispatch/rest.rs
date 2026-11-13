@@ -236,6 +236,7 @@ pub(super) async fn dispatch_rest(
 			timestamps,
 			no_color,
 			no_log_prefix,
+			index,
 			services,
 		}) => {
 			engine
@@ -248,7 +249,8 @@ pub(super) async fn dispatch_rest(
 						since,
 						until,
 						timestamps,
-					),
+					)
+					.with_index(index),
 					podup::LogsDisplay::new(no_color, no_log_prefix),
 				)
 				.await?
