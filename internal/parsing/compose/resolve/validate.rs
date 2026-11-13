@@ -350,6 +350,7 @@ fn validate_service_consistency(
 	}
 
 	super::validate_memory::validate_memory_amounts(name, service)?;
+	super::validate_cpus::validate_cpu_limits(name, service)?;
 	super::validate_replicas::validate_replica_counts(name, service)?;
 
 	// Surface a malformed/out-of-range port at config time rather than letting
