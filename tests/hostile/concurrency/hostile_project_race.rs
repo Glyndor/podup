@@ -46,17 +46,60 @@ fn slow_create(line: &str, _: &str) -> Option<Reply> {
 	None
 }
 
-/// How long the second process gets to start and reach the lock before the first
-/// one is let go. Its output cannot be read while it waits (it is written when
-/// the process ends), so the wait cannot be watched, and a fixed look has to do.
-/// It is long on purpose: the first process holds the lock until this has passed,
-/// so a slow start only costs time, where the old 700 ms pause let the first
-/// process finish before a slow Windows runner had started the second.
+/// How long the second process gets to start and reach the lock where the wait
+/// cannot be observed (not Linux). It is long on purpose: the first process
+/// holds the lock until this has passed, so a slow start only costs time.
+#[cfg(not(target_os = "linux"))]
 const SECOND_PROCESS_HEAD_START: Duration = Duration::from_secs(3);
 
-/// Let the first process go on once the second has had its head start.
-fn release_after_the_second_had_time() {
-	std::thread::sleep(SECOND_PROCESS_HEAD_START);
+/// Let the first process go on once a second one is waiting for the lock.
+///
+/// On Linux a blocked `flock` is listed in `/proc/locks` with `->` and the
+/// `major:minor:inode` of the file, so the wait on the project lock file is
+/// observed instead of guessed. A fixed three seconds was not enough on a loaded
+/// host (load average near 30): the second process had not reached the lock
+/// yet, the first one finished, and the second never waited. The ceiling only
+/// stops a broken run from hanging; the assertions after it say what went wrong.
+fn release_once_the_second_waits(fake: &FakeEngine) {
+	#[cfg(target_os = "linux")]
+	{
+		use std::os::unix::fs::MetadataExt;
+		let begun = Instant::now();
+		while begun.elapsed() < Duration::from_secs(60) {
+			let waiting = lock_file(fake.dir()).is_some_and(|inode| {
+				let needle = format!(":{inode} ");
+				std::fs::read_to_string("/proc/locks")
+					.unwrap_or_default()
+					.lines()
+					.any(|l| l.contains("->") && l.contains(&needle))
+			});
+			if waiting {
+				break;
+			}
+			std::thread::sleep(Duration::from_millis(10));
+		}
+		/// The inode of the project's lock file, wherever podup keeps it below
+		/// the test's home.
+		fn lock_file(dir: &std::path::Path) -> Option<u64> {
+			for entry in std::fs::read_dir(dir).ok()?.flatten() {
+				let path = entry.path();
+				if path.file_name().is_some_and(|n| n == "vzh-race.lock") {
+					return std::fs::metadata(&path).ok().map(|m| m.ino());
+				}
+				if path.is_dir() && !path.is_symlink() {
+					if let Some(found) = lock_file(&path) {
+						return Some(found);
+					}
+				}
+			}
+			None
+		}
+	}
+	#[cfg(not(target_os = "linux"))]
+	{
+		let _ = fake;
+		std::thread::sleep(SECOND_PROCESS_HEAD_START);
+	}
 	RELEASE.store(true, Ordering::SeqCst);
 }
 
@@ -92,7 +135,9 @@ fn setup() -> FakeEngine {
 	CREATING.store(false, Ordering::SeqCst);
 	SLOWED.store(false, Ordering::SeqCst);
 	RELEASE.store(false, Ordering::SeqCst);
-	let fake = FakeEngine::start(slow_create);
+	// One thread per connection: the second process has to reach the lock while
+	// the first one's create is held back, not queue behind it on the socket.
+	let fake = FakeEngine::start_concurrent(slow_create);
 	// The first file has two services, so the process that runs it has several
 	// requests still to make after the slow create.
 	for (file, services) in [
@@ -126,7 +171,7 @@ fn two_up_on_one_project_do_not_interleave_their_requests() {
 	let mut first = start(&fake, "one.yaml", &["up", "-d"]);
 	wait_until_creating();
 	let mut second = start(&fake, "two.yaml", &["up", "-d"]);
-	release_after_the_second_had_time();
+	release_once_the_second_waits(&fake);
 	assert!(first.wait().success(), "{}", first.text());
 	assert!(second.wait().success(), "{}", second.text());
 	assert!(
@@ -150,7 +195,7 @@ fn down_started_during_up_waits_for_it() {
 	let mut up = start(&fake, "one.yaml", &["up", "-d"]);
 	wait_until_creating();
 	let mut down = start(&fake, "one.yaml", &["down"]);
-	release_after_the_second_had_time();
+	release_once_the_second_waits(&fake);
 	assert!(up.wait().success(), "{}", up.text());
 	assert!(down.wait().success(), "{}", down.text());
 	assert!(
