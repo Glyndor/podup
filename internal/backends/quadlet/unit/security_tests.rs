@@ -217,3 +217,34 @@ fn unrecognized_opt_warns_and_emits_no_key() {
 	assert_eq!(warnings.len(), 1);
 	assert!(warnings[0].contains("proc-opts=nosuid"));
 }
+
+/// Compose spells these with a colon (`label:disable`, `seccomp:unconfined`) and
+/// Podman reads both separators. Only the `=` form was mapped, so the compose
+/// spelling was skipped with "no Quadlet mapping" and the unit ran with the
+/// default confinement instead of the one the file asked for.
+#[test]
+fn the_colon_spelling_of_label_and_seccomp_is_mapped_like_the_equals_one() {
+	for (colon, equals_key) in [
+		("label:disable", "SecurityLabelDisable=true"),
+		("label:nested", "SecurityLabelNested=true"),
+		("label:type:spc_t", "SecurityLabelType=spc_t"),
+		("seccomp:unconfined", "SeccompProfile=unconfined"),
+		(
+			"seccomp:/etc/seccomp.json",
+			"SeccompProfile=/etc/seccomp.json",
+		),
+	] {
+		let (body, warnings) = map_one(colon);
+		assert!(body.contains(equals_key), "{colon}: in:\n{body}");
+		assert!(warnings.is_empty(), "{colon}: {warnings:?}");
+	}
+}
+
+#[test]
+fn an_unknown_label_entry_is_still_reported() {
+	let (_, warnings) = map_one("label:bogus");
+	assert!(
+		warnings.iter().any(|w| w.contains("label=bogus")),
+		"{warnings:?}"
+	);
+}

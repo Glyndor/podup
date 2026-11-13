@@ -89,6 +89,19 @@ pub(super) fn map_security_opt(
 	name: &str,
 	warnings: &mut Vec<String>,
 ) {
+	// Compose writes `label:disable` and `seccomp:unconfined`, with a colon, and
+	// Podman reads both separators (the engine does too). The branches below are
+	// written for the `=` form, so the first separator of these two is normalised.
+	let canonical;
+	let opt = if let Some(rest) = opt.strip_prefix("seccomp:") {
+		canonical = format!("seccomp={rest}");
+		canonical.as_str()
+	} else if let Some(rest) = opt.strip_prefix("label:") {
+		canonical = format!("label={rest}");
+		canonical.as_str()
+	} else {
+		opt
+	};
 	if let Some(rest) = opt.strip_prefix("no-new-privileges") {
 		// The value starts after the first separator, the way the engine reads
 		// the same entry, so both paths read one compose file the same way.
