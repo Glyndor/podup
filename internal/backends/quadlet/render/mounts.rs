@@ -150,3 +150,63 @@ pub(in super::super) fn render_tmpfs_mount(vol: &VolumeMount) -> Option<String> 
 		Some(format!("{target}:{}", opts.join(",")))
 	}
 }
+
+/// If `vol` is a long-form volume mount with `volume.subpath`, render it as a
+/// Quadlet `Mount=` value. `Volume=` becomes `podman -v`, which has no subpath
+/// option (`invalid option type "subpath=..."`), so the whole volume was
+/// mounted instead of the folder `up` mounts. `--mount` takes it.
+///
+/// `None` for any other mount, and for a subpath that would break the option
+/// list (a `,` or `=`), which then falls back to `Volume=` and is reported.
+pub(in super::super) fn render_subpath_mount(
+	vol: &VolumeMount,
+	project: &str,
+	declared_volumes: &[&str],
+	external_volumes: &ExternalNames<'_>,
+) -> Option<String> {
+	let VolumeMount::Long {
+		volume_type: VolumeType::Volume,
+		source: Some(source),
+		target,
+		read_only,
+		volume: Some(options),
+		..
+	} = vol
+	else {
+		return None;
+	};
+	let subpath = options.subpath.as_deref()?;
+	if subpath.contains([',', '=']) || target.contains([',', '=']) {
+		tracing::warn!(
+			"volume {source:?}: subpath {subpath:?} cannot be written as a Quadlet `Mount=` \
+			 option; the whole volume is mounted at {target:?}"
+		);
+		return None;
+	}
+	let source = if declared_volumes.contains(&source.as_str()) {
+		format!("{}.volume", unit_stem(project, source))
+	} else if let Some(name) = external_volumes.get(source.as_str()) {
+		name.to_string()
+	} else {
+		source.clone()
+	};
+	let mut out = format!("type=volume,source={source},destination={target},subpath={subpath}");
+	for (set, flag) in [
+		(*read_only == Some(true), "ro"),
+		(options.noexec == Some(true), "noexec"),
+		(options.nosuid == Some(true), "nosuid"),
+		(options.nodev == Some(true), "nodev"),
+	] {
+		if set {
+			out.push(',');
+			out.push_str(flag);
+		}
+	}
+	if options.nocopy == Some(true) {
+		tracing::warn!(
+			"volume {source:?}: nocopy has no `--mount` spelling; it is dropped for the \
+			 subpath mount at {target:?}"
+		);
+	}
+	Some(out)
+}

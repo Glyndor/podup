@@ -4,10 +4,12 @@ use std::path::Path;
 
 use crate::compose::types::Service;
 
-use super::super::{render_tmpfs_mount, render_volume, ExternalNames, Section};
+use super::super::{
+	render_subpath_mount, render_tmpfs_mount, render_volume, ExternalNames, Section,
+};
 
-/// Emit a `Volume=` line per `volumes:` entry, or `Tmpfs=` for a long-form
-/// `type: tmpfs` mount.
+/// Emit a `Volume=` line per `volumes:` entry, `Tmpfs=` for a long-form
+/// `type: tmpfs` mount, or `Mount=` for a volume with a `subpath`.
 pub(in super::super) fn emit_volumes(
 	service: &Service,
 	project: &str,
@@ -21,6 +23,10 @@ pub(in super::super) fn emit_volumes(
 		// (which would persist it as a volume rather than an in-memory fs).
 		if let Some(t) = render_tmpfs_mount(vol) {
 			container.add("Tmpfs", t);
+		} else if let Some(m) =
+			render_subpath_mount(vol, project, declared_volumes, external_volumes)
+		{
+			container.add("Mount", m);
 		} else {
 			container.add(
 				"Volume",
