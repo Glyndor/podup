@@ -17,5 +17,6 @@ mod create_host_path;
 mod ensure_bind_source;
 mod hostile_short_form;
 mod long_form;
+mod outside_project;
 mod short_form;
 mod volume_type;
