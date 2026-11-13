@@ -25,16 +25,39 @@ use host_files::Running;
 /// Set once the first container create is being served.
 static CREATING: AtomicBool = AtomicBool::new(false);
 static SLOWED: AtomicBool = AtomicBool::new(false);
+/// Set by the test once the second process has had time to reach the lock.
+static RELEASE: AtomicBool = AtomicBool::new(false);
 
-/// The first container create takes long enough for a second process to start.
+/// The first container create holds the lock until the test lets it go, after the
+/// second process has had time to start and reach the lock. A fixed pause inside
+/// the create raced the start of that process: on a slow Windows runner it took
+/// longer than the pause, the first process was already done, and the second never
+/// waited. The ceiling only stops a broken run from hanging.
 fn slow_create(line: &str, _: &str) -> Option<Reply> {
 	if line.starts_with("POST") && line.ends_with("/containers/create HTTP/1.1") {
 		CREATING.store(true, Ordering::SeqCst);
 		if !SLOWED.swap(true, Ordering::SeqCst) {
-			std::thread::sleep(Duration::from_millis(700));
+			let begun = Instant::now();
+			while !RELEASE.load(Ordering::SeqCst) && begun.elapsed() < Duration::from_secs(40) {
+				std::thread::sleep(Duration::from_millis(10));
+			}
 		}
 	}
 	None
+}
+
+/// How long the second process gets to start and reach the lock before the first
+/// one is let go. Its output cannot be read while it waits (it is written when
+/// the process ends), so the wait cannot be watched, and a fixed look has to do.
+/// It is long on purpose: the first process holds the lock until this has passed,
+/// so a slow start only costs time, where the old 700 ms pause let the first
+/// process finish before a slow Windows runner had started the second.
+const SECOND_PROCESS_HEAD_START: Duration = Duration::from_secs(3);
+
+/// Let the first process go on once the second has had its head start.
+fn release_after_the_second_had_time() {
+	std::thread::sleep(SECOND_PROCESS_HEAD_START);
+	RELEASE.store(true, Ordering::SeqCst);
 }
 
 /// The cases share the flags above, so they take turns.
@@ -68,6 +91,7 @@ fn wait_until_creating() {
 fn setup() -> FakeEngine {
 	CREATING.store(false, Ordering::SeqCst);
 	SLOWED.store(false, Ordering::SeqCst);
+	RELEASE.store(false, Ordering::SeqCst);
 	let fake = FakeEngine::start(slow_create);
 	// The first file has two services, so the process that runs it has several
 	// requests still to make after the slow create.
@@ -102,6 +126,7 @@ fn two_up_on_one_project_do_not_interleave_their_requests() {
 	let mut first = start(&fake, "one.yaml", &["up", "-d"]);
 	wait_until_creating();
 	let mut second = start(&fake, "two.yaml", &["up", "-d"]);
+	release_after_the_second_had_time();
 	assert!(first.wait().success(), "{}", first.text());
 	assert!(second.wait().success(), "{}", second.text());
 	assert!(
@@ -125,6 +150,7 @@ fn down_started_during_up_waits_for_it() {
 	let mut up = start(&fake, "one.yaml", &["up", "-d"]);
 	wait_until_creating();
 	let mut down = start(&fake, "one.yaml", &["down"]);
+	release_after_the_second_had_time();
 	assert!(up.wait().success(), "{}", up.text());
 	assert!(down.wait().success(), "{}", down.text());
 	assert!(
