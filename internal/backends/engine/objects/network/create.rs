@@ -57,6 +57,10 @@ impl Engine {
 				.map(|c| c.labels.to_map())
 				.unwrap_or_default();
 			labels.insert("podup.project".to_string(), self.project.clone());
+			labels.insert(
+				crate::engine::objects::working_dir::WORKING_DIR_LABEL.to_string(),
+				self.working_dir_label(),
+			);
 
 			let mut driver_opts: HashMap<String, String> = config
 				.as_ref()
