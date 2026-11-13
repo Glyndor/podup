@@ -35,9 +35,15 @@ pub(super) fn render_publish_port(p: &ParsedPort) -> String {
 	}
 	// A host port of None/0 means "let Podman pick"; omit it so the published
 	// side is empty (PublishPort=<container>) and Podman assigns a port.
-	if let Some(host) = p.host_port.filter(|n| *n != 0) {
-		s.push_str(&host.to_string());
-		s.push(':');
+	// With a host address the host port keeps its slot even when empty
+	// (`127.0.0.1::80`): without it Podman reads the address as the host port.
+	match p.host_port.filter(|n| *n != 0) {
+		Some(host) => {
+			s.push_str(&host.to_string());
+			s.push(':');
+		}
+		None if !p.host_ip.is_empty() => s.push(':'),
+		None => {}
 	}
 	s.push_str(&p.container_port.to_string());
 	if p.protocol != "tcp" {
