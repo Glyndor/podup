@@ -22,9 +22,11 @@ secrets:
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
-	assert!(c.contains("Secret=tok"));
-	assert!(c.contains("Secret=cred,target=/run/cred,uid=100"));
-	assert!(!out.warnings.iter().any(|w| w.contains("secrets")));
+	// `up` creates a `file:` secret as `{project}_secret_{name}`, so the unit
+	// names that one and the operator is told to provision it.
+	assert!(c.contains("Secret=p_secret_tok\n"), "in:\n{c}");
+	assert!(c.contains("Secret=p_secret_cred,target=/run/cred,uid=100"));
+	assert!(out.warnings.iter().any(|w| w.contains("\"p_secret_tok\"")));
 }
 
 #[test]
