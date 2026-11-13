@@ -12,6 +12,7 @@ pub(crate) fn collect_warnings(
 	services: &IndexMap<String, Service>,
 	warnings: &mut Vec<String>,
 	prebuilt: bool,
+	in_pod: bool,
 ) {
 	let mut warn = |field: &str, detail: &str| {
 		warnings.push(format!("{name}: {field} {detail}"));
@@ -241,8 +242,9 @@ pub(crate) fn collect_warnings(
 	if service.mac_address.is_some() || has_network_mac {
 		warn("mac_address", skipped);
 	}
-	// Only the first static IP across the service's networks is emitted; a second
-	// one would need per-network IP scoping that Quadlet does not support.
+	// Inside a pod only the first static IP across the service's networks is
+	// emitted (the pod owns the attachments); outside one each `Network=` line
+	// carries its own.
 	let static_ip_count = service
 		.networks
 		.names()
@@ -250,10 +252,10 @@ pub(crate) fn collect_warnings(
 		.filter_map(|n| service.networks.config_for(n))
 		.filter(|c| c.ipv4_address.is_some() || c.ipv6_address.is_some())
 		.count();
-	if static_ip_count > 1 {
+	if in_pod && static_ip_count > 1 {
 		warn(
 			"ipv4_address/ipv6_address",
-			"is set on multiple networks; Quadlet emits only the first (no per-network IP scoping)",
+			"is set on multiple networks; inside a pod Quadlet emits only the first",
 		);
 	}
 }

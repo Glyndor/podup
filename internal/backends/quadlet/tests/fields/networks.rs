@@ -83,8 +83,15 @@ networks:
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
-	assert!(c.contains("IP=10.5.0.7"), "missing IP= in:\n{c}");
-	assert!(c.contains("IP6=2001:db8::7"), "missing IP6= in:\n{c}");
+	// Scoped to the network they belong to, as `up` attaches them.
+	assert!(
+		c.contains("Network=p-net.network:alias=s,ip=10.5.0.7,ip6=2001:db8::7\n"),
+		"missing per-network addresses in:\n{c}"
+	);
+	assert!(
+		!c.contains("\nIP="),
+		"a global IP= would apply to every network:\n{c}"
+	);
 }
 
 #[test]
@@ -137,4 +144,32 @@ fn network_mode_pasta_is_not_written_for_a_pod_member() {
 		!c.contains("Network=pasta"),
 		"pod member got Network= in:\n{c}"
 	);
+}
+
+/// `up` registers the service name as an alias on every network and scopes a
+/// static address to its own network. A global `IP=` next to two networks made
+/// Podman refuse the container (`--ip can only be set for a single network`),
+/// and without the alias a sibling could not resolve the service by name.
+#[test]
+fn each_network_carries_the_service_alias_and_its_own_address() {
+	let yaml = r#"
+services:
+  web:
+    image: x
+    networks:
+      front: {ipv4_address: 10.89.5.10}
+      back: {}
+networks:
+  front: {ipam: {config: [{subnet: 10.89.5.0/24}]}}
+  back: {}
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "p-web.container").contents;
+	assert!(
+		c.contains("Network=p-front.network:alias=web,ip=10.89.5.10\n"),
+		"{c}"
+	);
+	assert!(c.contains("Network=p-back.network:alias=web\n"), "{c}");
+	assert!(!c.contains("\nIP="), "{c}");
 }

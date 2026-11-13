@@ -77,27 +77,38 @@ fn assert_quoted_boundary_spaces(yaml: &str, flag: &str, value: &str) {
 	let expected = format!("PodmanArgs={flag}=\" {value} \"\n");
 	let out = render(yaml);
 	assert!(unit(&out, "demo.pod").contents.contains(&expected));
+	for name in ["demo-web.container", "demo-db.container"] {
+		assert!(!unit(&out, name).contents.contains(flag));
+	}
+}
+
+/// Outside a pod the same value on its own container keeps its spaces.
+fn assert_native_quoted_boundary_spaces(yaml: &str, flag: &str, value: &str) {
+	let expected = format!("PodmanArgs={flag}=\" {value} \"\n");
 	let native = render(&yaml.replace("x-podman-pod: true\n", ""));
 	for name in ["demo-web.container", "demo-db.container"] {
 		assert!(unit(&native, name).contents.contains(&expected));
-		assert!(!unit(&out, name).contents.contains(flag));
 	}
 }
 
 #[test]
 fn promoted_add_host_keeps_container_quoted_boundary_spaces() {
-	assert_quoted_boundary_spaces(
-		&two_services("    extra_hosts: [' cache:10.0.0.2 ']\n"),
-		"--add-host",
-		"cache:10.0.0.2",
-	);
+	let yaml = two_services("    extra_hosts: [' cache:10.0.0.2 ']\n");
+	assert_quoted_boundary_spaces(&yaml, "--add-host", "cache:10.0.0.2");
+	assert_native_quoted_boundary_spaces(&yaml, "--add-host", "cache:10.0.0.2");
 }
 
 #[test]
 fn promoted_alias_keeps_container_quoted_boundary_spaces() {
-	assert_quoted_boundary_spaces(
-		&two_services_on_front("    networks:\n      front:\n        aliases: [' shared ']\n"),
-		"--network-alias",
-		"shared",
+	let yaml =
+		two_services_on_front("    networks:\n      front:\n        aliases: [' shared ']\n");
+	assert_quoted_boundary_spaces(&yaml, "--network-alias", "shared");
+	// Outside the pod the alias goes on the `Network=` option list, which a space
+	// would break, so it is left out there and the service name stays.
+	let native = render(&yaml.replace("x-podman-pod: true\n", ""));
+	let web = unit(&native, "demo-web.container").contents.clone();
+	assert!(
+		web.contains("Network=demo-front.network:alias=web\n"),
+		"{web}"
 	);
 }
