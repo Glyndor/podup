@@ -39,7 +39,9 @@ fn exec_test_strips_cmd_sentinel_and_renders_timing() {
 	assert!(body.contains("HealthTimeout=5s"));
 	assert!(body.contains("HealthRetries=3"));
 	assert!(body.contains("HealthStartPeriod=10s"));
-	assert!(warnings.is_empty());
+	// Podman reads `HealthCmd=` as a shell line, so the exec form is reported.
+	assert_eq!(warnings.len(), 1, "{warnings:?}");
+	assert!(warnings[0].contains("/bin/sh"), "{warnings:?}");
 }
 
 #[test]
@@ -61,9 +63,12 @@ fn start_interval_is_skipped_with_warning() {
 	let (body, warnings) =
 		render("image: x\nhealthcheck:\n  test: [\"CMD\", \"true\"]\n  start_interval: 5s\n");
 	assert!(body.contains("HealthCmd=true"));
-	// No key is emitted for start_interval, but the user is warned.
-	assert_eq!(warnings.len(), 1);
-	assert!(warnings[0].contains("start_interval"));
+	// No key is emitted for start_interval, but the user is warned (next to
+	// the warning that a `CMD` test runs through a shell).
+	assert!(
+		warnings.iter().any(|w| w.contains("start_interval")),
+		"{warnings:?}"
+	);
 }
 
 /// Without this systemd calls the unit started as soon as the container is
@@ -124,4 +129,14 @@ fn a_shell_form_healthcheck_is_written_as_it_is() {
 fn a_quote_inside_an_exec_word_is_closed_and_reopened() {
 	let (body, _) = render("image: x\nhealthcheck:\n  test: [\"CMD\", \"echo\", \"it's\"]\n");
 	assert!(body.contains("HealthCmd=echo 'it'\\''s'"), "{body}");
+}
+
+/// A `CMD-SHELL` or plain string test already runs through a shell, so it is
+/// not reported.
+#[test]
+fn a_shell_test_is_not_reported() {
+	for test in ["[\"CMD-SHELL\", \"curl -f x\"]", "curl -f x"] {
+		let (_, warnings) = render(&format!("image: x\nhealthcheck:\n  test: {test}\n"));
+		assert!(warnings.is_empty(), "{test}: {warnings:?}");
+	}
 }
