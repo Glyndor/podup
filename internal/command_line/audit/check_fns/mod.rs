@@ -9,6 +9,7 @@
 
 use super::Finding;
 
+mod host_escape;
 mod image;
 mod limits;
 mod namespaces;
@@ -17,6 +18,10 @@ mod privileges;
 mod root_filesystem;
 mod secrets;
 
+pub use host_escape::{
+	check_bind_outside_project, check_device_cgroup_rule, check_host_device,
+	check_sensitive_host_source, check_unconfined_security_opt,
+};
 pub use image::check_unpinned_image;
 pub use limits::{check_no_memory_limit, check_no_pids_limit};
 pub use namespaces::{check_host_namespace, check_no_userns};

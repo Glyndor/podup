@@ -12,6 +12,8 @@
 //! change for consumers; add new ids instead. Adding a check is one entry in
 //! the registry plus one function in `check_fns`.
 
+use std::path::Path;
+
 use podup::compose::types::{ComposeFile, Service};
 
 use super::Finding;
@@ -28,10 +30,12 @@ mod check_runtime;
 pub(super) use check_sensitive_bind::check_sensitive_bind_mount;
 
 pub(super) use check_fns::{
-	check_dangerous_capability, check_host_namespace, check_no_cap_drop_all, check_no_memory_limit,
+	check_bind_outside_project, check_dangerous_capability, check_device_cgroup_rule,
+	check_host_device, check_host_namespace, check_no_cap_drop_all, check_no_memory_limit,
 	check_no_new_privileges_off, check_no_pids_limit, check_no_userns,
 	check_port_published_on_all_interfaces, check_port_published_on_wildcard, check_privileged,
-	check_secret_in_environment, check_unpinned_image, check_writable_root,
+	check_secret_in_environment, check_sensitive_host_source, check_unconfined_security_opt,
+	check_unpinned_image, check_writable_root,
 };
 
 pub(super) use check_runtime::{
@@ -54,6 +58,34 @@ pub(super) use check_fns::segments;
 /// function.
 type CheckFn = fn(&str, &Service, &ComposeFile) -> Vec<Finding>;
 
+/// What a check that resolves host paths needs beyond the container the
+/// other checks read: the project directory relative paths resolve against,
+/// and the container as the compose file wrote it. The audit reads env files
+/// and anchors relative bind sources before the checks run, which erases
+/// both the `env_file:` entries and the difference between a relative and
+/// an absolute source.
+pub(super) struct HostContext<'a> {
+	/// The whole compose file, for the top-level `secrets:` and `configs:`.
+	pub file: &'a ComposeFile,
+	/// The container before its env files were read and its binds anchored.
+	pub written: &'a Service,
+	/// The project directory, absolute.
+	pub base_dir: &'a Path,
+}
+
+/// A check that judges host paths: the container name and its context.
+type HostCheckFn = fn(&str, &HostContext<'_>) -> Vec<Finding>;
+
+/// How a registry entry runs: on the container alone, or with the host
+/// context. Two shapes so the checks that never touch a host path keep the
+/// signature their tests call directly.
+pub(super) enum CheckRun {
+	/// Reads the prepared container and the file.
+	Service(CheckFn),
+	/// Reads the written container, the file and the project directory.
+	Host(HostCheckFn),
+}
+
 /// One entry in [`CHECK_REGISTRY`]: the stable check id, its one-line
 /// description for `audit --list-checks`, and the run function that emits
 /// findings carrying that id. Carried together so the listing path and the
@@ -67,7 +99,7 @@ pub(super) struct CheckDescriptor {
 	/// diffs the listing between releases.
 	pub description: &'static str,
 	/// The run function called by `run_checks` for one service.
-	pub run: CheckFn,
+	pub run: CheckRun,
 	/// The flag that enables this check, when it is opt-in. `None`
 	/// means the check runs every time `audit` walks a compose file.
 	/// The flag string is what `audit --list-checks` prints in the
@@ -92,7 +124,7 @@ pub(super) struct CheckDescriptor {
 pub(super) fn run_checks(
 	service_name: &str,
 	service: &Service,
-	file: &ComposeFile,
+	host: &HostContext<'_>,
 	opt_in: &[&'static str],
 ) -> Vec<Finding> {
 	let mut out = Vec::new();
@@ -102,7 +134,10 @@ pub(super) fn run_checks(
 				continue;
 			}
 		}
-		out.extend((check.run)(service_name, service, file));
+		out.extend(match check.run {
+			CheckRun::Service(run) => run(service_name, service, host.file),
+			CheckRun::Host(run) => run(service_name, host),
+		});
 	}
 	out
 }
@@ -119,115 +154,145 @@ pub(super) const CHECK_REGISTRY: &[CheckDescriptor] = &[
 	CheckDescriptor {
 		id: "privileged",
 		description: "privileged: true grants extended host privileges.",
-		run: check_privileged,
+		run: CheckRun::Service(check_privileged),
 		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "host_namespace",
 		description: "a host-binding namespace mode shares the host's or another container's namespace.",
-		run: check_host_namespace,
+		run: CheckRun::Service(check_host_namespace),
 		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "dangerous_capability",
 		description: "cap_add carries a capability from the dangerous list (kernel admin, audit, networking, device nodes).",
-		run: check_dangerous_capability,
+		run: CheckRun::Service(check_dangerous_capability),
 		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "writable_root",
 		description: "read_only is not true: the container's root filesystem is writable.",
-		run: check_writable_root,
+		run: CheckRun::Service(check_writable_root),
 		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "no_cap_drop_all",
 		description: "cap_drop does not contain ALL: the service keeps the runtime's default capability set.",
-		run: check_no_cap_drop_all,
+		run: CheckRun::Service(check_no_cap_drop_all),
 		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "no_new_privileges_off",
 		description: "security_opt is missing no-new-privileges:true: setuid binaries may regain privileges.",
-		run: check_no_new_privileges_off,
+		run: CheckRun::Service(check_no_new_privileges_off),
 		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "no_pids_limit",
 		description: "pids_limit is not set: a fork bomb can exhaust the host's process table.",
-		run: check_no_pids_limit,
+		run: CheckRun::Service(check_no_pids_limit),
 		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "no_memory_limit",
 		description: "neither mem_limit nor deploy.resources.limits.memory is parseable: a leak can OOM the host.",
-		run: check_no_memory_limit,
+		run: CheckRun::Service(check_no_memory_limit),
 		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "no_userns",
 		description: "userns_mode is not set: rootless Podman's default maps container root to your host user; set `auto` explicitly for a private subordinate UID range.",
-		run: check_no_userns,
+		run: CheckRun::Service(check_no_userns),
 		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "secret_in_environment",
 		description: "an environment variable name contains a secret-bearing segment (PASSWORD, SECRET, TOKEN, KEY) and a value is set in compose; move it to secrets:.",
-		run: check_secret_in_environment,
+		run: CheckRun::Service(check_secret_in_environment),
 		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "port_published_on_all_interfaces",
 		description: "a port is published without a host IP, so the bind falls on every host interface.",
-		run: check_port_published_on_all_interfaces,
+		run: CheckRun::Service(check_port_published_on_all_interfaces),
 		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "sensitive_bind_mount",
 		description: "a bind mount exposes a sensitive host path: a container runtime socket, or /proc, /sys, /dev, /etc, /boot, /root or a runtime directory holding a socket.",
-		run: check_sensitive_bind_mount,
+		run: CheckRun::Service(check_sensitive_bind_mount),
 		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "unpinned_image",
 		description: "image has no tag (defaults to :latest), pins to :latest, or is not anchored by a digest.",
-		run: check_unpinned_image,
+		run: CheckRun::Service(check_unpinned_image),
 		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "port_published_on_wildcard",
 		description: "a port is published with an explicit wildcard host IP (0.0.0.0 or ::); off by default, enable with --wildcard-binds.",
-		run: check_port_published_on_wildcard,
+		run: CheckRun::Service(check_port_published_on_wildcard),
 		opt_in: Some("--wildcard-binds"),
 	},
 	CheckDescriptor {
 		id: "no_restart_policy",
 		description: "neither restart nor deploy.restart_policy is set: a process that exits stays exited until someone redeploys.",
-		run: check_no_restart_policy,
+		run: CheckRun::Service(check_no_restart_policy),
 		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "no_init",
 		description: "init is not true: PID 1 is the app, orphans become zombies and SIGTERM may wait out the whole stop timeout.",
-		run: check_no_init,
+		run: CheckRun::Service(check_no_init),
 		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "no_health_action",
 		description: "a non-disabled healthcheck has no x-podman-on-failure: an unhealthy container stays unhealthy and nothing acts on it.",
-		run: check_no_health_action,
+		run: CheckRun::Service(check_no_health_action),
 		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "swap_unbounded",
 		description: "a memory limit is in effect but memswap_limit is absent, is -1, or differs from the memory limit: the service can page to disk instead of hitting its memory limit.",
-		run: check_swap_unbounded,
+		run: CheckRun::Service(check_swap_unbounded),
 		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "no_cpu_limit",
 		description: "neither cpus nor deploy.resources.limits.cpus nor cpu_quota gives a limit: one service can take every core of the host.",
-		run: check_no_cpu_limit,
+		run: CheckRun::Service(check_no_cpu_limit),
+		opt_in: None,
+	},
+	CheckDescriptor {
+		id: "host_device",
+		description: "devices: passes a host device into the container.",
+		run: CheckRun::Service(check_host_device),
+		opt_in: None,
+	},
+	CheckDescriptor {
+		id: "unconfined_security_opt",
+		description: "security_opt turns off a confinement layer: seccomp, AppArmor or SELinux unconfined, or systempaths=unconfined.",
+		run: CheckRun::Service(check_unconfined_security_opt),
+		opt_in: None,
+	},
+	CheckDescriptor {
+		id: "device_cgroup_rule",
+		description: "device_cgroup_rules: lets the container use host device nodes beyond the default set.",
+		run: CheckRun::Service(check_device_cgroup_rule),
+		opt_in: None,
+	},
+	CheckDescriptor {
+		id: "sensitive_host_source",
+		description: "a secret or config file, env_file, build context, Dockerfile or additional build context names a sensitive host path, such as a credentials directory in the home or the home itself.",
+		run: CheckRun::Host(check_sensitive_host_source),
+		opt_in: None,
+	},
+	CheckDescriptor {
+		id: "bind_outside_project",
+		description: "a relative or ~ bind source resolves outside the project directory, directly or through a symbolic link.",
+		run: CheckRun::Host(check_bind_outside_project),
 		opt_in: None,
 	},
 ];

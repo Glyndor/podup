@@ -24,7 +24,7 @@ fn effective_steps_materialize_files_after_inheritance() {
 			Some("step")
 		);
 		assert!(containers[1].service.env_file.to_entries().is_empty());
-		let report = audit_containers(&file, &containers, &[]);
+		let report = audit_containers(&file, dir.path(), &containers, &[]);
 		assert!(
 			report
 				.findings
@@ -75,7 +75,7 @@ fn effective_steps_resolve_relative_binds_for_services_and_jobs() {
 			"{kind}:\n  web:\n{triggers}    image: alpine\n    pre_start:\n      - volumes:\n          - ./ssh:/keys:ro\n          - type: bind\n            source: ./ssl\n            target: /certs\n          - type: bind\n            source: ssh\n            target: /plain\n"
 		)).unwrap();
 		let containers = prepare_containers(&file, std::path::Path::new("/etc")).unwrap();
-		let report = audit_containers(&file, &containers, &[]);
+		let report = audit_containers(&file, std::path::Path::new("/etc"), &containers, &[]);
 		assert_eq!(
 			report
 				.findings
@@ -101,7 +101,7 @@ fn audit_preserves_ambiguous_bind_paths_before_checks() {
 			"{kind}:\n  web:\n{triggers}    image: alpine\n    volumes:\n      - ./link/../../etc:/host:ro\n      - type: bind\n        source: ./link/../../etc\n        target: /host-long\n    pre_start:\n      - command: init\n"
 		)).unwrap();
 		let containers = prepare_containers(&file, std::path::Path::new("/srv/app")).unwrap();
-		let report = audit_containers(&file, &containers, &[]);
+		let report = audit_containers(&file, std::path::Path::new("/srv/app"), &containers, &[]);
 		for name in ["web", "web/pre_start[1]"] {
 			let findings: Vec<_> = report
 				.findings
@@ -124,7 +124,7 @@ fn audit_checks_both_written_and_folded_anchored_bind_paths() {
 		"services:\n  web:\n    image: alpine\n    volumes:\n      - ./../etc:/folded\n      - ./../etc/../srv:/written\n      - ./data:/safe\n      - named:/named\n"
 	).unwrap();
 	let containers = prepare_containers(&file, std::path::Path::new("/tmp")).unwrap();
-	let report = audit_containers(&file, &containers, &[]);
+	let report = audit_containers(&file, std::path::Path::new("/tmp"), &containers, &[]);
 	assert_eq!(
 		report
 			.findings
@@ -143,7 +143,7 @@ fn audit_keeps_sensitive_written_path_even_when_folded_path_is_safe() {
 		"services:\n  web:\n    image: alpine\n    volumes:\n      - ../srv:/short\n      - type: bind\n        source: ../srv\n        target: /long\n"
 	).unwrap();
 	let containers = prepare_containers(&file, std::path::Path::new("/etc")).unwrap();
-	let report = audit_containers(&file, &containers, &[]);
+	let report = audit_containers(&file, std::path::Path::new("/etc"), &containers, &[]);
 	let findings: Vec<_> = report
 		.findings
 		.iter()

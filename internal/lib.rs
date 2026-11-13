@@ -186,6 +186,14 @@ pub fn effective_memory_limit(service: &crate::compose::types::Service) -> Optio
 pub fn effective_pids_limit(service: &crate::compose::types::Service) -> Option<i64> {
 	crate::engine::effective_pids_limit(service)
 }
+/// The host path a bind or `file:` source names, as the engine resolves it:
+/// a leading `~` expanded to the home directory, a relative path joined to
+/// `base_dir`. Shared with the binary's audit; not a supported library
+/// interface.
+#[doc(hidden)]
+pub fn resolve_bind_source(src: &str, base_dir: &std::path::Path) -> String {
+	crate::engine::container::resolve_bind_source(src, base_dir)
+}
 /// The CFS CPU quota the engine will forward into `LinuxCPU.quota`, in
 /// microseconds over `cpu_period` (default 100_000). `cpu_quota:` wins
 /// when present, including `-1` (Docker's "unlimited" sentinel) and
