@@ -27,11 +27,16 @@ pub(crate) fn volume_unit(name: &str, project: &str, config: Option<&VolumeConfi
 		// `type`→Type=, `device`→Device=, `o`→Options= (already a comma-separated
 		// mount-option string). Quadlet rejects Options= without a Device=, so any
 		// other driver option has no [Volume] key and passes through PodmanArgs=.
+		let has_device = cfg.driver_opts.contains_key("device");
 		for (key, val) in sorted_label_pairs(cfg.driver_opts.clone()) {
 			match key.as_str() {
-				"type" => vol.add("Type", val),
+				// `Type=` and `Options=` are read together with `Device=`, and
+				// Quadlet drops the whole unit when either is there without it
+				// ("key Options can't be used without Device"). Without a device
+				// they go through `--opt`, which `podman volume create` accepts.
+				"type" if has_device => vol.add("Type", val),
 				"device" => vol.add("Device", val),
-				"o" => vol.add("Options", val),
+				"o" if has_device => vol.add("Options", val),
 				// Quoted for the same reason the container sites are (#1734):
 				// `PodmanArgs=` is exempt from `escape_unit_value`, so an
 				// unquoted value here smuggles extra `podman volume create`

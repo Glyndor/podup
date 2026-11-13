@@ -377,3 +377,36 @@ networks:
 	assert!(!net.contains("IPAMDriver"), "in:\n{net}");
 	assert!(net.contains("Subnet=10.8.0.0/16"), "in:\n{net}");
 }
+
+/// Quadlet drops the whole `.volume` unit when `Options=` or `Type=` is there
+/// without a `Device=` (`key Options can't be used without Device`, measured
+/// with Podman 5.7.0's generator), so the volume would not exist at all. Without
+/// a device the options go through `--opt`, which `podman volume create` takes.
+#[test]
+fn volume_options_without_a_device_go_through_opt() {
+	let yaml = r#"
+services:
+  web:
+    image: nginx
+    volumes:
+      - data:/data
+volumes:
+  data:
+    driver_opts:
+      o: uid=1000
+      type: tmpfs
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
+	let vol = &unit_named(&out, "proj-data.volume").contents;
+	assert!(!vol.contains("\nOptions="), "in:\n{vol}");
+	assert!(!vol.contains("\nType="), "in:\n{vol}");
+	assert!(
+		vol.contains("PodmanArgs=--opt \"o\"=\"uid=1000\""),
+		"in:\n{vol}"
+	);
+	assert!(
+		vol.contains("PodmanArgs=--opt \"type\"=\"tmpfs\""),
+		"in:\n{vol}"
+	);
+}

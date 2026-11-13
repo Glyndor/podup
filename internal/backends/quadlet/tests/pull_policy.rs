@@ -102,3 +102,19 @@ fn prebuilt_policy_override_suppresses_time_warning() {
 		out.warnings
 	);
 }
+
+/// Compose accepts `if_not_present` and `build`, and the live runner reads both
+/// as `missing`. Written verbatim they reach `podman run --pull`, which refuses
+/// them (`unsupported pull policy "if_not_present"`), so the unit would not
+/// start. Quadlet itself does not check the value.
+#[test]
+fn compose_only_pull_policies_are_written_as_missing() {
+	for policy in ["if_not_present", "build"] {
+		let yaml = format!("services:\n  web:\n    image: nginx\n    pull_policy: {policy}\n");
+		let file = parse_str(&yaml).unwrap();
+		let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
+		let unit = &unit_named(&out, "proj-web.container").contents;
+		assert!(unit.contains("\nPull=missing\n"), "{policy}: in:\n{unit}");
+		assert!(!unit.contains(policy), "{policy} survived: in:\n{unit}");
+	}
+}
