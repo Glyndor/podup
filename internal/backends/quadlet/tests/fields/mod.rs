@@ -5,6 +5,7 @@ mod lifecycle;
 mod logging;
 mod mounts;
 mod networks;
+mod normalized_paths;
 mod resources;
 mod subpath;
 mod tmpfs_owner;

@@ -46,7 +46,9 @@ pub(in super::super) fn render_volume(
 			// is the project's `data` directory, as `up` reads it, not a volume
 			// named `data` that Podman would create empty.
 			let src = if matches!(volume_type, VolumeType::Bind) && !src.is_empty() {
-				crate::engine::container::resolve_bind_source(&src, base_dir)
+				without_current_dir(&crate::engine::container::resolve_bind_source(
+					&src, base_dir,
+				))
 			} else if declared_volumes.contains(&src.as_str()) {
 				format!("{}.volume", unit_stem(project, &src))
 			} else if let Some(name) = external_volumes.get(src.as_str()) {
@@ -117,7 +119,31 @@ fn resolve_source_path(src: &str, base_dir: &std::path::Path) -> String {
 	if !(src.starts_with('.') || src.starts_with('~')) {
 		return src.to_string();
 	}
-	crate::engine::container::resolve_bind_source(src, base_dir)
+	without_current_dir(&crate::engine::container::resolve_bind_source(
+		src, base_dir,
+	))
+}
+
+/// Drop the `.` components of a resolved path (`/srv/app/./data` is
+/// `/srv/app/data`). Quadlet turns a `Volume=` source into
+/// `RequiresMountsFor=`, and systemd ignores a path that is not normalized
+/// there, so the unit lost its ordering after the mount. `..` is kept: through
+/// a symlink it does not name the same directory read lexically, and Podman
+/// resolves it on the host.
+fn without_current_dir(path: &str) -> String {
+	// Done on the text so the separators stay as the engine wrote them (a
+	// rebuilt `PathBuf` would turn `/` into `\` on Windows).
+	let mut out = path.to_string();
+	for sep in ["/", "\\"] {
+		let dot = format!("{sep}.{sep}");
+		while out.contains(&dot) {
+			out = out.replace(&dot, sep);
+		}
+		if let Some(stripped) = out.strip_suffix(&format!("{sep}.")) {
+			out = stripped.to_string();
+		}
+	}
+	out
 }
 
 /// If `vol` is a long-form `type: tmpfs` mount, render it as a Quadlet `Tmpfs=`
