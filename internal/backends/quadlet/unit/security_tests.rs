@@ -147,8 +147,7 @@ fn inline_secret_resolves_to_project_scoped_name() {
 	let s = ServiceSecretRef::Short("tok".into());
 	assert_eq!(render_secret(&s, "proj", &defs), "proj_secret_tok");
 
-	// A file-based secret keeps its compose name (it is a host source, not a
-	// project-scoped native secret).
+	// A file-based secret is created by `up` under the project-scoped name too.
 	let mut file_defs = IndexMap::new();
 	file_defs.insert(
 		"tok".to_string(),
@@ -157,8 +156,8 @@ fn inline_secret_resolves_to_project_scoped_name() {
 			..Default::default()
 		},
 	);
-	assert!(!is_inline_secret(file_defs.get("tok")));
-	assert_eq!(render_secret(&s, "proj", &file_defs), "tok");
+	assert!(is_inline_secret(file_defs.get("tok")));
+	assert_eq!(render_secret(&s, "proj", &file_defs), "proj_secret_tok");
 
 	// An external secret is referenced by its existing name, never scoped.
 	let mut ext_defs = IndexMap::new();
@@ -172,6 +171,18 @@ fn inline_secret_resolves_to_project_scoped_name() {
 	);
 	assert!(!is_inline_secret(ext_defs.get("tok")));
 	assert_eq!(render_secret(&s, "proj", &ext_defs), "tok");
+
+	// With a `name:` the engine attaches that existing secret, so the unit does too.
+	let mut named = IndexMap::new();
+	named.insert(
+		"tok".to_string(),
+		SecretConfig {
+			external: Some(true),
+			name: Some("real-name".into()),
+			..Default::default()
+		},
+	);
+	assert_eq!(render_secret(&s, "proj", &named), "real-name");
 }
 
 #[test]
