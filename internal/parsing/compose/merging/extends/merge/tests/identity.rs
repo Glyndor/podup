@@ -27,11 +27,13 @@ fn a_secret_or_config_at_the_same_target_is_one_entry() {
 		"services:\n  s:\n    secrets: [{source: x, mode: 0400}, {source: y, target: t2}]\n    \
 		 configs: [{source: x, uid: \"1\"}]\n",
 	);
-	let secrets = serde_json::to_value(&svc.secrets).unwrap();
-	assert_eq!(secrets.as_array().map(Vec::len), Some(3), "{secrets}");
-	assert_eq!(
-		secrets[0]["mode"], 0o400,
-		"the later entry replaces in place: {secrets}"
+	// Only counts and one field are compared, never printed: the list holds
+	// secret references, and a failure message must not echo them.
+	assert_eq!(svc.secrets.len(), 3, "one entry per mount target");
+	let first = serde_json::to_value(&svc.secrets[0]).unwrap();
+	assert!(
+		first["mode"] == 0o400,
+		"the later entry must replace the earlier one in place"
 	);
 	let configs = serde_json::to_value(&svc.configs).unwrap();
 	assert_eq!(configs.as_array().map(Vec::len), Some(1), "{configs}");
