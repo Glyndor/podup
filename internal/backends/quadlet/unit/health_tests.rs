@@ -97,3 +97,31 @@ fn an_empty_test_means_no_notify() {
 	let (body, _) = render("image: x\nhealthcheck:\n  test: []\n");
 	assert!(!body.contains("Notify"), "{body}");
 }
+
+/// `HealthCmd=` is read by Podman as one shell command line. Joined with plain
+/// spaces, `["CMD", "sh", "-c", "wget -q x || exit 1"]` became
+/// `sh -c wget -q x || exit 1`, which runs `wget` with no argument and then
+/// `exit 1`. Each word of the vector is quoted so the line means what the file said.
+#[test]
+fn an_exec_form_healthcheck_keeps_the_words_it_was_given() {
+	let (body, _) = render(
+		"image: x\nhealthcheck:\n  test: [\"CMD\", \"sh\", \"-c\", \"wget -q x || exit 1\"]\n",
+	);
+	assert!(
+		body.contains("HealthCmd=sh -c 'wget -q x || exit 1'"),
+		"{body}"
+	);
+}
+
+#[test]
+fn a_shell_form_healthcheck_is_written_as_it_is() {
+	let (body, _) =
+		render("image: x\nhealthcheck:\n  test: [\"CMD-SHELL\", \"wget -q x || exit 1\"]\n");
+	assert!(body.contains("HealthCmd=wget -q x || exit 1"), "{body}");
+}
+
+#[test]
+fn a_quote_inside_an_exec_word_is_closed_and_reopened() {
+	let (body, _) = render("image: x\nhealthcheck:\n  test: [\"CMD\", \"echo\", \"it's\"]\n");
+	assert!(body.contains("HealthCmd=echo 'it'\\''s'"), "{body}");
+}

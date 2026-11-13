@@ -258,3 +258,16 @@ fn spec_negation_keeps_reinclude_authoritative() {
 
 // Legacy cases live with the watch fix that introduces the fallback; here
 // the matcher file only needs to pin its own semantics.
+
+/// The weekly fuzz run compared `glob_match("[", "[")` with a reference that
+/// knows only `?`, `*` and `**`. A pattern with `[` goes to the character-class
+/// matcher, where an unclosed class is a malformed pattern that matches nothing,
+/// and a well-formed class picks one of its characters. This pins both.
+#[test]
+fn a_bracket_is_a_character_class_not_a_literal() {
+	assert!(!glob_match("[", "["));
+	assert!(!glob_match("[a", "[a"));
+	assert!(glob_match("[ab]c", "bc"));
+	assert!(!glob_match("[ab]c", "cc"));
+	assert!(glob_match("[^ab]c", "cc"));
+}

@@ -72,7 +72,7 @@ pub fn parse_cpus(s: &str) -> Option<i64> {
 pub fn parse_duration_secs(s: &str) -> Option<u64> {
 	let nanos = duration_nanos(s)?;
 	let secs = nanos / NANOS_PER_SEC;
-	u64::try_from(secs).ok()
+	whole_seconds(secs)
 }
 
 /// Parse a duration into seconds, rounding the fraction up.
@@ -83,6 +83,20 @@ pub fn parse_duration_secs(s: &str) -> Option<u64> {
 pub fn parse_duration_secs_rounded_up(s: &str) -> Option<u64> {
 	let nanos = duration_nanos(s)?;
 	let secs = nanos.div_ceil(NANOS_PER_SEC);
+	whole_seconds(secs)
+}
+
+/// A count of seconds as a `u64`, or `None` for the one value a saturating cast
+/// also produces, and for anything above it.
+///
+/// The arithmetic here is exact, so `u64::MAX` seconds would be a true reading, but
+/// a result of `u64::MAX` cannot be told from a number that overflowed and was
+/// clamped, and nobody writes a timeout of 584 billion years. Reserving it keeps a
+/// caller from mistaking one for the other.
+fn whole_seconds(secs: u128) -> Option<u64> {
+	if secs >= u128::from(u64::MAX) {
+		return None;
+	}
 	u64::try_from(secs).ok()
 }
 

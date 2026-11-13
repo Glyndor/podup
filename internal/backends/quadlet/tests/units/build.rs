@@ -109,3 +109,40 @@ fn generate_at_still_references_the_build_unit_for_a_buildable_service() {
 		container.contents
 	);
 }
+
+/// A remote build context names a repository, not a directory next to the
+/// compose file. Joined to the base directory it became
+/// `SetWorkingDirectory=/srv/app/https://…`, a path that does not exist.
+#[test]
+fn a_remote_build_context_is_written_as_it_is() {
+	for context in [
+		"https://github.com/example/repo.git#main",
+		"git://example.org/repo.git",
+		"git@github.com:example/repo.git",
+	] {
+		let yaml = format!(
+			"services:\n  app:\n    image: app:latest\n    build:\n      context: \"{context}\"\n"
+		);
+		let file = parse_str(&yaml).unwrap();
+		let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
+		let build = &unit_named(&out, "proj-app.build").contents;
+		assert!(
+			build.contains(&format!("SetWorkingDirectory={context}\n")),
+			"{context}: in:\n{build}"
+		);
+	}
+}
+
+#[test]
+fn a_relative_build_context_is_still_made_absolute() {
+	let file = parse_str("services:\n  app:\n    image: app:latest\n    build: ./src\n").unwrap();
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
+	let build = &unit_named(&out, "proj-app.build").contents;
+	// The base directory is joined with the platform's separator, so the
+	// expectation is built the same way and not written with a `/`.
+	let expected = std::path::Path::new("/srv/app").join("src");
+	assert!(
+		build.contains(&format!("SetWorkingDirectory={}\n", expected.display())),
+		"{build}"
+	);
+}

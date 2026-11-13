@@ -12,7 +12,7 @@ podup [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS] [SERVICE...]
 
 | Flag | Env | Description |
 |---|---|---|
-| `-f, --file <PATH>` | `COMPOSE_FILE` | Compose file. Repeatable; later files merge over earlier ones. When unset, the compose-spec precedence list is probed: `compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`. Only the current directory is probed: unlike docker compose, podup does not look in the parent directories, so from a subdirectory of a project pass `-f` or `--project-directory`. When the file is found by probing, a `compose.override.yaml` (or `.yml`) next to it is merged over it, as docker compose does. |
+| `-f, --file <PATH>` | `COMPOSE_FILE` | Compose file. Repeatable; later files merge over earlier ones. When unset, the compose-spec precedence list is probed: `compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`. Only the current directory is probed: unlike docker compose, podup does not look in the parent directories, so from a subdirectory of a project pass `-f` or `--project-directory`. When the file is found by probing, the first override next to it is merged over it, as docker compose does; the candidates, in order, are `compose.override.yaml`, `compose.override.yml`, `docker-compose.override.yaml` and `docker-compose.override.yml`, and only one is used. When several of the base names exist at once, podup warns `found several compose files with supported names` and uses the first. |
 | `-p, --project <NAME>` (alias `--project-name`) | `COMPOSE_PROJECT_NAME` | Project name, prefixing container/network/volume names. When unset: the top-level `name:`, then the sanitized project-directory basename. The result is also available to the file as `${COMPOSE_PROJECT_NAME}`. |
 | `--socket <PATH>` | `PODMAN_SOCKET` | Podman socket path; overrides auto-detection. |
 | `--connection-pool-size <N>` | `PODUP_LIBPOD_POOL` | HTTP/1.1 connections the libpod client keeps open to the Podman socket. Streaming calls each take a dedicated connection outside this cap. Valid range: 0–1024. Default 0 disables pooling. `PODUP_LIBCOD_POOL` is read as a fallback when the new name is unset. |
@@ -56,8 +56,8 @@ A container that already exists is left in place when two facts both hold: its r
 | `--no-recreate` | Leave existing containers as they are: a stopped one is started without applying configuration changes. | off |
 | `--force-recreate` | Recreate containers even if their config is unchanged. | off |
 | `--no-deps` | Do not start the `depends_on` services of the named services. | off |
-| `-t, --timeout <SECS>` | Seconds to wait for a container to stop when recreating. | Podman default |
-| `--scale <SERVICE=N>` | Override a service's replica count for this run. Repeatable. | from file |
+| `-t, --timeout <SECS>` | Seconds to wait for a container to stop when recreating; zero or more. | Podman default |
+| `--scale <SERVICE=N>` | Override a service's replica count for this run. Repeatable; N is a whole number of at least 1, so `0` and `+3` are refused (use `down` or `stop` to remove a service). | from file |
 | `--pull <POLICY>` | Pull policy before starting: `always`, `missing`, `never`, `newer`, `build`. (`newer` is Podman's extension.) | per service; otherwise `missing` |
 | `--no-build` | Do not build images, even for services with a `build:` section. | off |
 | `--quiet-pull` | Suppress image-pull progress output. | off |
@@ -94,7 +94,7 @@ Stop and remove containers, networks, and (with `-v`) volumes. With service name
 | `-v, --volumes` | Also remove named volumes declared in the compose file. | off |
 | `--remove-orphans` | Remove containers for services no longer in the file. | off |
 | `--rmi <SCOPE>` | Also remove service images: `all`, or `local` (only the images built from a `build:` section that set no `image:` tag of their own). | keep images |
-| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them. | Podman default |
+| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them; zero or more. | Podman default |
 
 ### `create`
 Create the containers for services without starting them. Accepts a trailing service list.
@@ -107,7 +107,7 @@ Create the containers for services without starting them. Accepts a trailing ser
 | `--no-deps` | Do not create the `depends_on` services of the named ones. | off |
 | `--pull <POLICY>` | Pull policy before creating: `always`, `missing`, `never`, `newer`, `build`. | per service; otherwise `missing` |
 | `--no-build` | Do not build images, even for services with a `build:` section. Cannot be combined with `--build`. | off |
-| `--scale <SERVICE=N>` | Override a service's replica count for this run. Repeatable; a service the file does not declare is rejected before anything is created. | from file |
+| `--scale <SERVICE=N>` | Override a service's replica count for this run. Repeatable; N is a whole number of at least 1, and a service the file does not declare is rejected before anything is created. | from file |
 | `--remove-orphans` | Remove containers for services no longer in the file. | off |
 | `--quiet-pull` | Suppress image-pull progress output. | off |
 
@@ -124,7 +124,7 @@ Stop running containers without removing them. Accepts a trailing service list.
 
 | Flag | Description | Default |
 |---|---|---|
-| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them. | Podman default |
+| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them; zero or more. | Podman default |
 
 ### `restart`
 Restart service containers (default: all, or the named ones).
@@ -132,7 +132,7 @@ Restart reuses the existing containers and does not apply compose changes (ports
 
 | Flag | Description | Default |
 |---|---|---|
-| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them. | Podman default |
+| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them; zero or more. | Podman default |
 | `--no-deps` | Do not cascade-restart dependents that declare a `depends_on` restart condition. | off |
 
 ### `build`
@@ -160,7 +160,7 @@ List project containers.
 | Flag | Description | Default |
 |---|---|---|
 | `-a, --all` | Include stopped containers. | running only |
-| `-q, --quiet` | Print container IDs only. Conflicts with `--format`. | off |
+| `-q, --quiet` | Print container IDs only. Conflicts with `--format`, `--services` and `--all-services`. | off |
 | `--format <FMT>` | `table`, `json` (a JSON array), or `ndjson` (one Compose-shaped object per container, sorted by Name). | `table` |
 | `--status <STATE>` | Match container state/status by case-insensitive prefix. Repeatable; folded together with any `status=` from `--filter`. | all |
 | `--filter <KEY=VAL>` | `name=<NAME>` or `status=<STATE>`. An unknown key is an error. | none |
@@ -196,6 +196,7 @@ View container output for the named services (or all).
 | `-t, --timestamps` | Prefix each line with an RFC3339 timestamp. | off |
 | `--no-color` | Monochrome prefix even on a colour-capable stdout. | off |
 | `--no-log-prefix` | Drop the `{service} \| ` tag entirely. | off |
+| `--index <N>` | Show only replica N (1-based) of a scaled service, by its number. A number no replica holds fails the command. | all replicas |
 
 ### `events [SERVICE...]`
 Stream Podman events for this project's containers. The default output is one `TIME TYPE ACTION NAME` line per event; the timestamp is the engine event's time in the local zone (UTC marked `Z` if no zone is available; missing times are blank). `--format json` emits one object per line (NDJSON) with an added `Action` field (the original `status` stays), normalized image-remove/death verbs, and `exitCode` copied only for `died` events. `--json` is a hidden deprecated alias for `--format json`. With one or more service names the feed is narrowed client-side to events for those services; an unknown name fails with `service 'NAME' not found` before the stream is opened.

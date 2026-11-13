@@ -111,14 +111,13 @@ fn a_file_without_jobs_is_filtered_as_before() {
 	assert_eq!(file.services.len(), 1);
 }
 
-#[test]
-fn a_chain_of_twenty_thousand_jobs_is_resolved_in_one_pass() {
-	// The first job needs a service behind an inactive profile, so the loss
-	// travels down the whole chain. Looking for the next job to drop from the
-	// start each time made this quadratic in the length of the chain.
+/// How long `retain_active_profiles_with_targets` takes on a chain of `length` jobs,
+/// the first of which needs a service behind an inactive profile, so the loss
+/// travels down the whole chain.
+fn time_the_chain(length: usize) -> std::time::Duration {
 	let mut yaml = String::from("services:\n  db:\n    image: x\n    profiles: [data]\njobs:\n");
 	yaml.push_str("  j0:\n    image: x\n    depends_on: [db]\n    triggers: {manual: true}\n");
-	for index in 1..20_000 {
+	for index in 1..length {
 		yaml.push_str(&format!(
 			"  j{index}:\n    image: x\n    depends_on: [j{}]\n    triggers: {{manual: true}}\n",
 			index - 1
@@ -129,9 +128,23 @@ fn a_chain_of_twenty_thousand_jobs_is_resolved_in_one_pass() {
 	retain_active_profiles_with_targets(&mut file, &[], &[]);
 	let elapsed = started.elapsed();
 	assert!(file.jobs.is_empty(), "every job in the chain needs db");
+	elapsed
+}
+
+#[test]
+fn a_chain_of_twenty_thousand_jobs_is_resolved_in_one_pass() {
+	// Looking for the next job to drop from the start each time made this
+	// quadratic in the length of the chain. A budget in seconds cannot tell that
+	// from a slow runner (a loaded macOS one took 2.6 s for the linear version),
+	// so the test measures how the time grows: four times the chain must cost
+	// about four times as much. Quadratic would cost sixteen times, and the limit
+	// of ten sits between them. The short chain is floored at 20 ms so that timer
+	// noise on a fast machine cannot make the baseline zero.
+	let short = time_the_chain(5_000).max(std::time::Duration::from_millis(20));
+	let long = time_the_chain(20_000);
 	assert!(
-		elapsed < std::time::Duration::from_secs(2),
-		"took {elapsed:?}"
+		long <= short * 10,
+		"four times the chain took {long:?} against {short:?} for the short one"
 	);
 }
 

@@ -29,6 +29,12 @@ mod fields;
 /// generated unit carries needs it, which is why the resolution itself lives in
 /// [`abs_against`].
 fn abs_context(base_dir: &Path, context: &str) -> String {
+	// A remote context (`https://…`, `git://…`, `git@host:…`) names a repository,
+	// not a directory under the compose file; joined to the base directory it
+	// became `/base/https://…`, a path that does not exist.
+	if context.contains("://") || context.starts_with("git@") {
+		return context.to_string();
+	}
 	super::abs_against(base_dir, context)
 }
 

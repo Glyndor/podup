@@ -72,6 +72,9 @@ pub struct LogsOptions {
 	pub until: Option<String>,
 	/// Prefix each line with an RFC3339 timestamp, `-t/--timestamps`.
 	pub timestamps: bool,
+	/// Show only this replica (1-based) of each selected service, `--index`
+	/// (`None` = every replica).
+	pub index: Option<u32>,
 }
 
 impl LogsOptions {
@@ -91,7 +94,16 @@ impl LogsOptions {
 			since,
 			until,
 			timestamps,
+			index: None,
 		}
+	}
+
+	/// Show only this replica (1-based) of each selected service, `--index`.
+	/// Builder-style.
+	#[must_use]
+	pub fn with_index(mut self, index: Option<u32>) -> Self {
+		self.index = index;
+		self
 	}
 
 	/// Show logs since a timestamp/relative time, `--since`. Builder-style.

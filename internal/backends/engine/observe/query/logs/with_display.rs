@@ -76,7 +76,7 @@ impl Engine {
 		}
 		let selected: std::collections::HashSet<&str> =
 			target_services.iter().map(String::as_str).collect();
-		let (targets, first_err) = self.resolve_log_targets(file, &selected).await;
+		let (targets, first_err) = self.resolve_log_targets(file, &selected, opts.index).await;
 
 		// A container that is simply not there yet is tolerated per-container so
 		// the services that *do* exist still stream; that is deliberate. Anything
@@ -189,6 +189,7 @@ impl Engine {
 		&self,
 		file: &ComposeFile,
 		selected: &std::collections::HashSet<&str>,
+		index: Option<u32>,
 	) -> (Vec<String>, Option<ComposeError>) {
 		let mut first_err: Option<ComposeError> = None;
 		let live_by_service = match self.live_project_replicas_sorted().await {
@@ -211,6 +212,20 @@ impl Engine {
 					Some(names) if !names.is_empty() => names.clone(),
 					_ => self.replica_names(n, s),
 				};
+				if index.is_some() {
+					// `--index` names one replica of each selected service, by its
+					// number and not its position, the way `exec` and `cp` read it.
+					// A number no replica holds is the command failing, so nothing
+					// from the services before it is printed.
+					let base = self.container_name(n, s);
+					match crate::backends::engine::project::replicas::resolve_replica_name(
+						n, &base, &names, index,
+					) {
+						Ok(name) => targets.push(name),
+						Err(e) => return (Vec::new(), Some(e)),
+					}
+					continue;
+				}
 				for cname in names {
 					targets.push(cname);
 				}

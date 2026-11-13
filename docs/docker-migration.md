@@ -432,7 +432,7 @@ The `[Build]` keys `Annotation=`, `Volume=` and `DNS=` have no compose `build:` 
 | Field | Why it has no effect |
 |---|---|
 | `pull_refresh_after` | strictly validated after interpolation, syntax only; no last-pull clock is available, so it has no runtime effect |
-| `attach` | podup follows its own attach/detach logic for `up` log streaming |
+| `attach` | Honoured by `up`: a service with `attach: false` is never followed. Ignored only by `generate quadlet`, where there is no log following |
 | `use_api_socket` | no podup equivalent |
 | `provider:` / top-level `models:` | podup runs no model runner; the service/model is not honored |
 | volume long-form `driver_config` | not forwarded to Podman |

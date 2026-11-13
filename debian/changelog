@@ -1,3 +1,22 @@
+podup (5.19.0) unstable; urgency=medium
+
+  * `logs` takes `--index N`, which shows only replica N of a scaled service, as
+    `docker compose logs --index` does. The number is the replica's own, so it stays
+    right after a scale; a number no replica holds, and `0`, fail the command and read
+    no log.
+  * `generate quadlet` no longer writes values that Quadlet or Podman reject. A
+    `pull_policy` of `if_not_present` or `build` is written as `missing`, an exec-form
+    healthcheck keeps the words it was given instead of running `wget` with no argument,
+    a volume with `driver_opts` `o` or `type` and no `device` goes through `--opt`
+    instead of making Quadlet drop the whole unit, `security_opt` entries written with
+    a colon (`label:disable`, `seccomp:unconfined`) are mapped like the ones written
+    with an equals sign, and a remote build context (`https://`, `git://`, `git@`) is
+    written as given instead of being joined to the project directory.
+  * A duration of exactly 18446744073709551615 seconds is refused, as it cannot be told
+    from a number that overflowed.
+
+ -- Glyndor <packages@glyndor.net>  Fri, 13 Nov 2026 03:15:00 -0500
+
 podup (5.18.0) unstable; urgency=medium
 
   * Several `-f` files merge the way `docker compose config` does. `command: null`,
