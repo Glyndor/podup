@@ -15,6 +15,7 @@ fn log_query_includes_set_options() {
 		since: Some("10m".into()),
 		until: Some("2024-01-01T00:00:00".into()),
 		timestamps: true,
+		index: None,
 	});
 	assert!(q.contains("follow=true"));
 	assert!(q.contains("timestamps=true"));
