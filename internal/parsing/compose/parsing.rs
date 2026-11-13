@@ -242,7 +242,18 @@ pub fn parse_files_with_project_in(
 		// from the file itself and passed alongside.
 		let directives = tags::collect_from_file(path);
 		let resets = tags::entry_resets_from_file(path);
-		let nested = nested_resets::nested_resets_from_file(path);
+		let overrides = tags::entry_overrides_from_file(path);
+		let (nested, nested_overrides) = nested_resets::nested_tags_from_file(path);
+		// An entry or a nested key tagged `!override` replaces the earlier one
+		// whole: drop what the earlier files said there, then merge as usual.
+		for (section, name) in &overrides {
+			drop_entry(&mut merged, section, name);
+		}
+		for (name, paths) in &nested_overrides {
+			if let Some(base) = merged.services.get_mut(name) {
+				nested_resets::apply_nested_resets(base, paths);
+			}
+		}
 		merge_override(&mut merged, other, &directives, &resets, &nested);
 	}
 	drop(budget);
@@ -366,7 +377,8 @@ pub(crate) fn normalize_default_network(file: &mut ComposeFile) {
 	}
 }
 
-/// Remove the top-level entry a later file reset with `!reset`.
+/// Remove the top-level entry a later file reset with `!reset` or replaces with
+/// `!override`.
 fn drop_entry(target: &mut ComposeFile, section: &str, name: &str) {
 	match section {
 		"services" => drop(target.services.shift_remove(name)),
