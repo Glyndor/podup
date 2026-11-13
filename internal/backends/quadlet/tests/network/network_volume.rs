@@ -410,3 +410,46 @@ volumes:
 		"in:\n{vol}"
 	);
 }
+
+/// Podman pairs the n-th `Gateway=`/`IPRange=` with the n-th `Subnet=` (measured
+/// with `quadlet -dryrun` and `podman network inspect`), so a second pool's
+/// gateway must not slide onto the first subnet when the first pool has none.
+#[test]
+fn network_unit_keeps_pool_values_aligned_with_their_subnet() {
+	let yaml = r#"
+services:
+  s:
+    image: x
+networks:
+  net:
+    ipam:
+      config:
+        - subnet: 10.1.0.0/24
+        - subnet: 10.2.0.0/24
+          gateway: 10.2.0.9
+          ip_range: 10.2.0.0/25
+        - subnet: fd00:3::/64
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let net = &unit_named(&out, "p-net.network").contents;
+	let keys: Vec<&str> = net
+		.lines()
+		.filter(|l| {
+			l.starts_with("Subnet=") || l.starts_with("Gateway=") || l.starts_with("IPRange=")
+		})
+		.collect();
+	assert_eq!(
+		keys,
+		[
+			"Subnet=10.1.0.0/24",
+			"Gateway=10.1.0.1",
+			"IPRange=10.1.0.0/24",
+			"Subnet=10.2.0.0/24",
+			"Gateway=10.2.0.9",
+			"IPRange=10.2.0.0/25",
+			"Subnet=fd00:3::/64",
+		],
+		"in:\n{net}"
+	);
+}
