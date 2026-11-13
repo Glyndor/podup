@@ -4,8 +4,9 @@ use crate::compose::types::{
 };
 
 use super::collections::{
-	merge_block, merge_devices, merge_networks, merge_ports, merge_sysctls, merge_volumes,
+	merge_block, merge_devices, merge_networks, merge_sysctls, merge_volumes,
 };
+use super::keyed::{config_key, merge_keyed, port_key, secret_key};
 
 pub(in crate::parsing::compose) fn merge_service(
 	mut base: Service,
@@ -104,15 +105,11 @@ pub(in crate::parsing::compose) fn merge_service(
 		if base.is_empty() {
 			return over;
 		}
-		let mut out = base.to_entries();
-		let mut seen: std::collections::HashSet<String> =
-			out.iter().map(|e| e.path().to_string()).collect();
-		for entry in over.to_entries() {
-			if seen.insert(entry.path().to_string()) {
-				out.push(entry);
-			}
-		}
-		EnvFile::List(out)
+		// A path both files list is one entry, and the later one wins in place, so
+		// a later `required: false` is not lost behind an earlier bare path.
+		EnvFile::List(merge_keyed(base.to_entries(), over.to_entries(), |e| {
+			Some(e.path().to_string())
+		}))
 	}
 
 	// compose-go unions `depends_on` across `extends`: the base's dependencies and
@@ -129,6 +126,8 @@ pub(in crate::parsing::compose) fn merge_service(
 		fn to_map(d: DependsOn) -> indexmap::IndexMap<String, DependsOnCondition> {
 			match d {
 				DependsOn::Empty => indexmap::IndexMap::new(),
+				// A list entry is what docker reads it as before merging: started
+				// and required. `restart` is left unset, so an earlier one stays.
 				DependsOn::List(v) => v
 					.into_iter()
 					.map(|name| {
@@ -137,7 +136,7 @@ pub(in crate::parsing::compose) fn merge_service(
 							DependsOnCondition {
 								condition: ServiceCondition::ServiceStarted,
 								restart: None,
-								required: None,
+								required: Some(true),
 							},
 						)
 					})
@@ -145,9 +144,21 @@ pub(in crate::parsing::compose) fn merge_service(
 				DependsOn::Map(m) => m,
 			}
 		}
+		// Field by field, as `docker compose config` 5.7.0 does: the later
+		// condition wins, and a `restart` or `required` it leaves out keeps the
+		// earlier file's.
 		let mut merged = to_map(base);
 		for (k, v) in to_map(over) {
-			merged.insert(k, v);
+			match merged.get_mut(&k) {
+				Some(earlier) => {
+					earlier.condition = v.condition;
+					earlier.restart = v.restart.or(earlier.restart);
+					earlier.required = v.required.or(earlier.required);
+				}
+				None => {
+					merged.insert(k, v);
+				}
+			}
 		}
 		DependsOn::Map(merged)
 	}
@@ -174,15 +185,15 @@ pub(in crate::parsing::compose) fn merge_service(
 			override_svc.entrypoint.or(base.entrypoint)
 		},
 		entrypoint_reset,
-		ports: merge_ports(base.ports, override_svc.ports),
+		ports: merge_keyed(base.ports, override_svc.ports, port_key),
 		expose: merge_vec(base.expose, override_svc.expose),
 		environment: merge_envvars(base.environment, override_svc.environment),
 		env_file: merge_env_file(base.env_file, override_svc.env_file),
 		volumes: merge_volumes(base.volumes, override_svc.volumes),
 		tmpfs: merge_sol(base.tmpfs, override_svc.tmpfs),
 		volumes_from: merge_vec(base.volumes_from, override_svc.volumes_from),
-		configs: merge_vec(base.configs, override_svc.configs),
-		secrets: merge_vec(base.secrets, override_svc.secrets),
+		configs: merge_keyed(base.configs, override_svc.configs, config_key),
+		secrets: merge_keyed(base.secrets, override_svc.secrets, secret_key),
 		// Union, not replace. A service on `backend` in the base and `monitoring`
 		// in the override silently lost `backend`, dropped off the network, and
 		// service discovery failed at run time, far from the config that caused

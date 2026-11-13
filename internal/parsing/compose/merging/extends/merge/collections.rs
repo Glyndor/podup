@@ -41,36 +41,6 @@ fn target_key(target: &str) -> String {
 	}
 }
 
-/// Merge `ports:` dropping an entry that repeats one already there. A short
-/// entry with no protocol is TCP, so `8080:80` and `8080:80/tcp` are the same
-/// mapping; a long-form entry is compared as written, as docker does.
-pub(super) fn merge_ports(
-	base: Vec<crate::compose::types::PortMapping>,
-	over: Vec<crate::compose::types::PortMapping>,
-) -> Vec<crate::compose::types::PortMapping> {
-	use crate::compose::types::PortMapping;
-
-	/// `None` when a long entry cannot be serialised to compare: it is then kept
-	/// rather than guessed equal to another.
-	fn key(port: &PortMapping) -> Option<String> {
-		match port {
-			PortMapping::Short(text) if !text.contains('/') => Some(format!("{text}/tcp")),
-			PortMapping::Short(text) => Some(text.clone()),
-			long => serde_yaml::to_string(long).ok(),
-		}
-	}
-
-	let mut seen: std::collections::HashSet<String> = base.iter().filter_map(key).collect();
-	let mut out = base;
-	for item in over {
-		let repeated = key(&item).is_some_and(|k| !seen.insert(k));
-		if !repeated {
-			out.push(item);
-		}
-	}
-	out
-}
-
 /// Merge `devices:` by **container path**, with the override winning.
 ///
 /// docker compose keeps one entry per path a device appears at, so remapping a
