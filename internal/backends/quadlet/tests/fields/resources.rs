@@ -65,8 +65,14 @@ services:
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
+	// Podman refuses `--cpus` next to `--cpu-quota`/`--cpu-period`
+	// (`--cpu-quota and --cpus cannot be set together`); `up` lets `cpu_quota`
+	// win, so the unit does too.
+	assert!(
+		!c.contains("--cpus="),
+		"--cpus with a quota fails to start:\n{c}"
+	);
 	for expected in [
-		"PodmanArgs=--cpus=\"1.5\"",
 		"PodmanArgs=--cpuset-cpus=\"0,1\"",
 		"PodmanArgs=--cpu-shares=512",
 		"PodmanArgs=--cpu-quota=50000",
@@ -380,4 +386,16 @@ services:
 		c.contains("PodmanArgs=--memory=\"%%h/mem\""),
 		"`%%h` must be doubled on the PodmanArgs path; got:\n{c}"
 	);
+}
+
+/// With only `cpu_period` set, `cpus` goes out as the quota `up` derives from it.
+#[test]
+fn cpus_with_a_period_become_a_quota() {
+	let yaml = "services:\n  s:\n    image: app:1.0\n    cpus: \"1.5\"\n    cpu_period: 50000\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "p-s.container").contents;
+	assert!(!c.contains("--cpus="), "{c}");
+	assert!(c.contains("PodmanArgs=--cpu-quota=150000\n"), "{c}");
+	assert!(c.contains("PodmanArgs=--cpu-period=50000\n"), "{c}");
 }

@@ -54,11 +54,17 @@ pub(in super::super) fn emit_limits(
 		.and_then(|d| d.resources.as_ref())
 		.and_then(|r| r.limits.as_ref())
 		.and_then(|l| l.cpus.as_deref());
+	// Podman refuses `--cpus` next to `--cpu-quota` or `--cpu-period`. `up`
+	// sends one CFS quota (`cpu_quota` first, else derived from `cpus`), so with
+	// either of those set the same quota goes out as `--cpu-quota` instead.
+	let cfs_explicit = service.cpu_quota.is_some() || service.cpu_period.is_some();
 	if let Some(c) = service.cpus.as_deref().or(deploy_cpus) {
-		container.add(
-			"PodmanArgs",
-			format!("--cpus={}", quote_podman_arg_value(c)),
-		);
+		if !cfs_explicit {
+			container.add(
+				"PodmanArgs",
+				format!("--cpus={}", quote_podman_arg_value(c)),
+			);
+		}
 	}
 	if let Some(cs) = &service.cpuset {
 		container.add(
@@ -69,7 +75,11 @@ pub(in super::super) fn emit_limits(
 	if let Some(sh) = service.cpu_shares {
 		container.add("PodmanArgs", format!("--cpu-shares={sh}"));
 	}
-	if let Some(q) = service.cpu_quota {
+	if let Some(q) = service.cpu_quota.or_else(|| {
+		cfs_explicit
+			.then(|| crate::engine::effective_cpu_quota(service))
+			.flatten()
+	}) {
 		container.add("PodmanArgs", format!("--cpu-quota={q}"));
 	}
 	if let Some(p) = service.cpu_period {

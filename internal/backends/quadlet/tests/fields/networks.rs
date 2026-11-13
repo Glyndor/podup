@@ -18,6 +18,18 @@ services:
 	assert!(!c.contains("PublishPort=:80"));
 }
 
+/// A host address with no host port keeps the empty slot; without it Podman
+/// read the address as the host port (`parsing host port: ... invalid syntax`).
+#[test]
+fn a_host_address_without_a_host_port_keeps_the_empty_slot() {
+	let yaml = "services:\n  s:\n    image: x\n    ports: [\"127.0.0.1::8080\", \"[::1]::90\"]\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "p-s.container").contents;
+	assert!(c.contains("PublishPort=127.0.0.1::8080\n"), "{c}");
+	assert!(c.contains("PublishPort=[::1]::90\n"), "{c}");
+}
+
 #[test]
 fn ipv6_published_port_carries_brackets() {
 	// An IPv6 address carries colons, so Podman needs the brackets to tell
