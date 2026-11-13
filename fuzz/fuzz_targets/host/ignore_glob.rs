@@ -4,7 +4,10 @@
 //! an input of at most 256 bytes taking over 200 ms means the matcher went back
 //! to the exponential backtracking it was rewritten to avoid. For a short
 //! pattern and path it is also compared with a plain recursive matcher written
-//! from the documented rules, which is slow but easy to believe.
+//! from the documented rules, which is slow but easy to believe. The matcher
+//! models `?`, `*` and `**` only, so it is used where `glob_rec` uses its own
+//! fast path: ASCII text with no `[` and no `\`. Anything else goes to the
+//! character-class matcher there, which the reference does not model.
 
 use std::time::{Duration, Instant};
 
@@ -82,7 +85,8 @@ fuzz_target!(|data: &[u8]| {
 		podup::fuzz_api::evaluate(path, &patterns).unwrap_or(false)
 	);
 
-	if pattern.len() <= REFERENCE_LIMIT && path.len() <= REFERENCE_LIMIT {
+	let modelled = pattern.is_ascii() && path.is_ascii() && !pattern.contains(['[', '\\']);
+	if modelled && pattern.len() <= REFERENCE_LIMIT && path.len() <= REFERENCE_LIMIT {
 		assert_eq!(
 			globbed,
 			reference_glob(pattern, path),
