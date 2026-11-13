@@ -14,8 +14,9 @@ use super::security::{is_inline_secret, map_security_opt, render_secret};
 use super::pod::PodFields;
 use super::{
 	abs_against, collect_warnings, owner_marker, quote_podman_arg_value, render_command,
-	render_publish_port, render_restart, render_tmpfs_mount, render_volume, safe_unit_stem,
-	sorted_label_pairs, sorted_pairs, unit_stem, ExternalNames, QuadletUnit, Section,
+	render_publish_port, render_restart, render_subpath_mount, render_tmpfs_mount, render_volume,
+	safe_unit_stem, sorted_label_pairs, sorted_pairs, unit_stem, ExternalNames, QuadletUnit,
+	Section,
 };
 
 mod confinement;

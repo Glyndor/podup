@@ -14,7 +14,7 @@ mod unit;
 
 pub(crate) use exec::has_lone_semicolon_word;
 pub(super) use exec::render_command;
-pub(super) use mounts::{render_tmpfs_mount, render_volume};
+pub(super) use mounts::{render_subpath_mount, render_tmpfs_mount, render_volume};
 pub(super) use unit::Section;
 
 #[cfg(test)]
