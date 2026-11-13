@@ -25,13 +25,20 @@ pub(super) fn render_healthcheck(
 	if let Some(test) = &hc.test {
 		let cmd = match test {
 			Command::Shell(s) => s.clone(),
-			Command::Exec(parts) => {
-				let body = match parts.first().map(String::as_str) {
-					Some("CMD") | Some("CMD-SHELL") | Some("NONE") => &parts[1..],
-					_ => &parts[..],
-				};
-				body.join(" ")
-			}
+			Command::Exec(parts) => match parts.first().map(String::as_str) {
+				// `CMD-SHELL` carries one string that is already a shell command.
+				Some("CMD-SHELL") | Some("NONE") => parts[1..].join(" "),
+				// `CMD` is an argument vector, but `HealthCmd=` is read by Podman as
+				// a shell command line, so each word is quoted: joined with plain
+				// spaces, `["CMD", "sh", "-c", "wget -q x || exit 1"]` ran `wget`
+				// with no argument and then `exit 1`.
+				Some("CMD") => parts[1..]
+					.iter()
+					.map(|word| shell_word(word))
+					.collect::<Vec<_>>()
+					.join(" "),
+				_ => parts.join(" "),
+			},
 		};
 		if !cmd.is_empty() {
 			container.add("HealthCmd", cmd);
@@ -93,3 +100,17 @@ pub(super) fn render_healthcheck(
 #[cfg(test)]
 #[path = "health_tests.rs"]
 mod tests;
+
+/// One word of a command line, quoted for `sh` only when it needs it.
+fn shell_word(word: &str) -> String {
+	let plain = !word.is_empty()
+		&& word.chars().all(|c| {
+			c.is_ascii_alphanumeric()
+				|| matches!(c, '-' | '_' | '.' | '/' | ':' | '=' | ',' | '@' | '%' | '+')
+		});
+	if plain {
+		word.to_string()
+	} else {
+		format!("'{}'", word.replace('\'', "'\\''"))
+	}
+}

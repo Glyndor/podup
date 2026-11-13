@@ -67,6 +67,10 @@ pub(in super::super) fn emit_pull(
 				"Pull",
 				if crate::engine::build::is_time_based_pull_policy(pull) {
 					"newer".to_string()
+				} else if matches!(pull.as_str(), "if_not_present" | "build") {
+					// Compose spellings Podman refuses (`unsupported pull policy`);
+					// the live runner reads both as `missing`, and so does this.
+					"missing".to_string()
 				} else {
 					pull.clone()
 				},
