@@ -11,7 +11,10 @@ use crate::error::{ComposeError, Result};
 
 /// Refuse `cpus` (top level or `deploy.resources.limits.cpus`) next to
 /// `cpu_period`. An empty `cpus` (`${CPUS:-}`) counts as unset.
-pub(super) fn validate_cpu_limits(name: &str, service: &Service) -> Result<()> {
+pub(in crate::parsing::compose::resolve) fn validate_cpu_limits(
+	name: &str,
+	service: &Service,
+) -> Result<()> {
 	let deploy_cpus = service
 		.deploy
 		.as_ref()
@@ -34,5 +37,5 @@ pub(super) fn validate_cpu_limits(name: &str, service: &Service) -> Result<()> {
 }
 
 #[cfg(test)]
-#[path = "validate_cpus_tests.rs"]
+#[path = "cpus_tests.rs"]
 mod tests;

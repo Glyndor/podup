@@ -7,7 +7,7 @@ fn validate_volume(attrs: &str) -> Result<()> {
 	);
 	let mut file = parse_str(&yaml).unwrap();
 	crate::compose::normalize_default_network(&mut file);
-	super::super::validate::validate(&file)
+	super::super::super::validate::validate(&file)
 }
 
 fn message(attrs: &str) -> String {
@@ -47,5 +47,5 @@ fn a_name_on_an_external_volume_and_attributes_on_a_created_one_are_fine() {
 	validate_volume("    name: shared\n").expect("external with a name");
 	let yaml = "services:\n  web:\n    image: alpine\nvolumes:\n  data:\n    driver: local\n    labels:\n      team: a\n";
 	let file = parse_str(yaml).unwrap();
-	super::super::validate::validate(&file).expect("a created volume keeps its attributes");
+	super::super::super::validate::validate(&file).expect("a created volume keeps its attributes");
 }
