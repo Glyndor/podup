@@ -129,3 +129,44 @@ fn an_explicit_env_file_with_control_escapes_still_loads() {
 	assert_eq!(vars["A"], "L\\aR");
 	assert_eq!(vars["V"], "L\\vR");
 }
+
+/// The project `.env` is read as strictly as `--env-file`, as in Docker
+/// Compose: a required variable with no value is an error naming the file and
+/// the key, where it used to pass through as the literal text.
+#[test]
+fn a_required_variable_missing_in_dotenv_is_an_error() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(
+		dir.path().join(".env"),
+		"V=${PODUP_SURELY_UNSET_9F2:?boom}\n",
+	)
+	.unwrap();
+	let err = crate::substitute::build_vars_with_env_files_strict(dir.path(), &[]).unwrap_err();
+	let text = err.to_string();
+	assert!(
+		text.contains(".env") && text.contains("V") && text.contains("boom"),
+		"{text}"
+	);
+}
+
+/// A project with no `.env` still loads: the file is optional.
+#[test]
+fn a_missing_dotenv_is_still_an_empty_layer() {
+	let dir = tempfile::tempdir().unwrap();
+	crate::substitute::build_vars_with_env_files_strict(dir.path(), &[]).expect("no .env loads");
+}
+
+/// The same holds for a `.env` value: its message is escaped before it is shown.
+#[test]
+fn a_dotenv_error_message_is_escaped() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(
+		dir.path().join(".env"),
+		"V=${PODUP_SURELY_UNSET_9F2:?\u{1b}[2Jgone}\n",
+	)
+	.unwrap();
+	let err = crate::substitute::build_vars_with_env_files_strict(dir.path(), &[])
+		.unwrap_err()
+		.to_string();
+	assert!(!err.contains('\u{1b}'), "raw escape in: {err:?}");
+}

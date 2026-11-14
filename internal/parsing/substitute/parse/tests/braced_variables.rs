@@ -33,12 +33,12 @@ fn parse_bare_var_consumes_closing_brace() {
 	assert_eq!(it.collect::<String>(), "tail");
 }
 
+/// `${FOO` with no closing brace is refused, as Docker Compose refuses it
+/// (`invalid interpolation format`); it used to read as `${FOO}`.
 #[test]
-fn parse_unterminated_var_is_none_modifier() {
+fn parse_unterminated_var_is_an_error() {
 	let mut it = peekable("FOO");
-	let (name, modifier) = parse_braced_var(&mut it).unwrap();
-	assert_eq!(name, "FOO");
-	assert!(matches!(modifier, Modifier::None));
+	assert!(parse_braced_var(&mut it).is_err());
 }
 
 #[test]
@@ -75,11 +75,14 @@ fn parse_each_modifier_form() {
 	}
 }
 
+/// A `:` followed by anything but `-`, `+` or `?` is not a modifier Docker
+/// knows (`${V:x}`, `${V:=x}`), and is refused; it used to read as `:-`.
 #[test]
-fn parse_colon_without_known_op_defaults_to_default_if_unset_or_empty() {
-	let mut it = peekable("V:x}");
-	let (_, modifier) = parse_braced_var(&mut it).unwrap();
-	assert!(matches!(modifier, Modifier::DefaultIfUnsetOrEmpty(s) if s == "x"));
+fn parse_colon_without_known_op_is_an_error() {
+	for input in ["V:x}", "V:=x}"] {
+		let mut it = peekable(input);
+		assert!(parse_braced_var(&mut it).is_err(), "{input}");
+	}
 }
 
 // --- parse_braced_var: name validation ---
