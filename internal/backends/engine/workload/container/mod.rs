@@ -12,9 +12,8 @@ use crate::libpod::API_PREFIX;
 use crate::size;
 
 mod anon_volumes;
-mod daemon_rootless;
 mod fields;
-mod host_log_driver;
+pub(in crate::backends::engine) mod host;
 mod image_healthcheck;
 mod inputs;
 mod oneoff;
@@ -202,6 +201,11 @@ impl Engine {
 				.get_or_insert_with(LinuxResources::default)
 				.block_io = Some(blkio);
 		}
+		// A limit the host's cgroup layout cannot honour makes the OCI
+		// runtime refuse the container, so it is dropped before the spec
+		// goes out and the operator is told which one went.
+		self.drop_unsupported_limits(service_name, &mut resource_limits)
+			.await;
 
 		// --- Ulimits ---
 		let ulimits = build_ulimits(service);
