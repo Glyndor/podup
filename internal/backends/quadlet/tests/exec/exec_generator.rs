@@ -113,3 +113,19 @@ fn the_semicolon_check_agrees_with_what_quadlet_emits() {
 		);
 	}
 }
+
+#[test]
+fn quadlet_puts_the_runtime_before_run_and_keeps_platform_and_gpus() {
+	let Some(generator) = generator() else {
+		return;
+	};
+	let line = exec_start(
+		&generator,
+		"services:\n  web:\n    image: docker.io/library/nginx\n    runtime: runc\n    platform: linux/arm64/v8\n    gpus: all\n",
+	)
+	.expect("no ExecStart line");
+	let (before_run, after_run) = line.split_once(" run ").expect("no run subcommand");
+	assert!(before_run.ends_with("--runtime=runc"), "{line}");
+	assert!(after_run.contains("--platform=linux/arm64/v8"), "{line}");
+	assert!(after_run.contains("--device nvidia.com/gpu=all"), "{line}");
+}

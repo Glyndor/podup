@@ -30,6 +30,9 @@ use warnings::host_mode;
 use warnings::rootless;
 
 pub(crate) use fields::device_spec_parts;
+pub(crate) use fields::{
+	read_label_file_labels, resolve_container_labels, LabelFileIssue, LabelFileLabels,
+};
 pub(crate) use host_mode::check_host_mode;
 pub(crate) use security::parse_device_cgroup_rule;
 

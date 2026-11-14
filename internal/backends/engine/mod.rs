@@ -18,6 +18,9 @@ mod observe;
 pub(crate) mod project;
 mod workload;
 
+pub(crate) use container::{
+	read_label_file_labels, resolve_container_labels, LabelFileIssue, LabelFileLabels,
+};
 pub(crate) use host_files::copy;
 #[cfg(feature = "watch")]
 use host_files::watch;
@@ -46,7 +49,7 @@ pub use project::ProjectLock;
 
 pub(crate) use container_config::build_log_config;
 pub(crate) use container_config::resources::{
-	effective_cpu_quota, effective_memory_limit, effective_pids_limit, is_known_ulimit,
+	cdi_devices, effective_cpu_quota, effective_memory_limit, effective_pids_limit, is_known_ulimit,
 };
 pub(crate) use network::apply_default_isolation;
 /// Re-exported so `startup::config_render` (in the binary crate) can call the
