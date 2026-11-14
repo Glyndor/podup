@@ -20,3 +20,28 @@ fn a_bind_source_carries_no_current_dir_component() {
 	assert!(c.contains("Volume=/srv/app/cache:/c\n"), "{c}");
 	assert!(c.contains("Volume=/srv/app/../up:/u\n"), "{c}");
 }
+
+/// `/.` is the root: dropping the `.` must leave `/`, not an empty source that
+/// Quadlet would read as an anonymous volume at the target.
+#[cfg(unix)]
+#[test]
+fn the_root_keeps_its_separator() {
+	let yaml = "services:\n  s:\n    image: x\n    volumes:\n      - {type: bind, source: /., target: /host}\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "p-s.container").contents;
+	assert!(c.contains("Volume=/:/host\n"), "{c}");
+}
+
+/// A short absolute source is normalized too, and on Unix a backslash is part
+/// of a file name, not a separator.
+#[cfg(unix)]
+#[test]
+fn absolute_short_sources_are_normalized_and_backslashes_kept() {
+	let yaml = "services:\n  s:\n    image: x\n    volumes:\n      - /srv/./data:/short\n      - {type: bind, source: './foo\\.\\bar', target: /b}\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "p-s.container").contents;
+	assert!(c.contains("Volume=/srv/data:/short\n"), "{c}");
+	assert!(c.contains("foo\\.\\bar:/b"), "{c}");
+}

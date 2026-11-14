@@ -116,6 +116,11 @@ pub(in super::super) fn render_volume(
 /// An absolute source, and a bare name (a volume reference, not a path), are
 /// returned unchanged.
 fn resolve_source_path(src: &str, base_dir: &std::path::Path) -> String {
+	// An absolute source is kept, but without its `.` components, for the same
+	// `RequiresMountsFor=` reason as a relative one.
+	if std::path::Path::new(src).is_absolute() {
+		return without_current_dir(src);
+	}
 	if !(src.starts_with('.') || src.starts_with('~')) {
 		return src.to_string();
 	}
@@ -132,15 +137,24 @@ fn resolve_source_path(src: &str, base_dir: &std::path::Path) -> String {
 /// resolves it on the host.
 fn without_current_dir(path: &str) -> String {
 	// Done on the text so the separators stay as the engine wrote them (a
-	// rebuilt `PathBuf` would turn `/` into `\` on Windows).
+	// rebuilt `PathBuf` would turn `/` into `\` on Windows). A backslash is a
+	// separator only on Windows: on Unix it is a character of a file name, so
+	// `foo\.\bar` is left alone there.
+	let separators: &[&str] = if cfg!(windows) { &["/", "\\"] } else { &["/"] };
 	let mut out = path.to_string();
-	for sep in ["/", "\\"] {
+	for sep in separators {
 		let dot = format!("{sep}.{sep}");
 		while out.contains(&dot) {
 			out = out.replace(&dot, sep);
 		}
 		if let Some(stripped) = out.strip_suffix(&format!("{sep}.")) {
-			out = stripped.to_string();
+			// `/.` is the root and `C:\.` the root of a drive: keep the
+			// separator, or the path would be empty or relative to the drive.
+			out = if stripped.is_empty() || stripped.ends_with(':') {
+				format!("{stripped}{sep}")
+			} else {
+				stripped.to_string()
+			};
 		}
 	}
 	out
