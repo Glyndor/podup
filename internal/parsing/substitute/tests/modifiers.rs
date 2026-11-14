@@ -213,3 +213,16 @@ fn an_invalid_interpolation_format_is_refused() {
 		);
 	}
 }
+
+/// The refused template comes from the compose file; a terminal escape in it
+/// is shown escaped and a long one is cut, so the error cannot drive the
+/// terminal or flood it.
+#[test]
+fn a_refused_template_is_escaped_and_bounded_in_the_message() {
+	let hostile = format!("${{A:\u{1b}[31m{}}}", "x".repeat(10_000));
+	let err = substitute(&hostile, &vars(&[("A", "set")]))
+		.unwrap_err()
+		.to_string();
+	assert!(!err.contains('\u{1b}'), "raw escape in: {err:?}");
+	assert!(err.len() < 1_000, "{} bytes", err.len());
+}

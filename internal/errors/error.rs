@@ -295,6 +295,10 @@ impl fmt::Display for ComposeError {
 				write!(f, "invalid variable substitution: {s}")
 			}
 			Self::InvalidInterpolationFormat { path, template } => {
+				// Both come from the compose file: escape control characters
+				// and bound the length before they reach a terminal.
+				let path = sanitize_name(path);
+				let template = super::clip::clip_for_message(template);
 				if path.is_empty() {
 					write!(
 						f,

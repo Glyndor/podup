@@ -61,15 +61,24 @@ fn expand(
 /// the file and the variable in its own message.
 fn env_error(source: &str, key: &str, error: ComposeError) -> ComposeError {
 	let detail = match error {
-		ComposeError::RequiredVarNotSet { var, msg } => {
-			format!("required variable '{var}' is missing a value: {msg}")
-		}
-		ComposeError::InvalidInterpolationFormat { template, .. } => {
-			format!("invalid template: \"{template}\"")
-		}
+		// The message and the template come from the env file: escaped and
+		// bounded like any other echoed value.
+		ComposeError::RequiredVarNotSet { var, msg } => format!(
+			"required variable '{}' is missing a value: {}",
+			crate::error::sanitize_name(&var),
+			crate::errors::clip::clip_for_message(&msg)
+		),
+		ComposeError::InvalidInterpolationFormat { template, .. } => format!(
+			"invalid template: \"{}\"",
+			crate::errors::clip::clip_for_message(&template)
+		),
 		other => other.to_string(),
 	};
-	ComposeError::EnvFile(format!("env file {source}: value of '{key}': {detail}"))
+	ComposeError::EnvFile(format!(
+		"env file {}: value of '{}': {detail}",
+		crate::error::sanitize_name(source),
+		crate::error::sanitize_name(key)
+	))
 }
 
 /// The values of the optional `.env` of `dir`. A missing or unreadable file
