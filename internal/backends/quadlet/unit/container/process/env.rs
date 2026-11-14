@@ -31,16 +31,20 @@ pub(in super::super) fn emit_env_files(
 	// looking for `~/.config/containers/systemd/.env`, and `--env-file` on a
 	// missing path is fatal, so the container never starts. Resolve against the
 	// compose base directory, the same way the build context is.
-	for entry in service.env_file.to_entries() {
+	let entries = service.env_file.to_entries();
+	// What each file gives the container under `podman --env-file`, next to
+	// what it gives it under `up`, which resolves the files, the service's own
+	// `environment:` and the project environment together.
+	let reads = super::env_file_check::reads(&entries, &service.environment.to_map(), base_dir);
+	for (entry, read) in entries.iter().zip(reads) {
 		let path = abs_against(base_dir, entry.path());
-		let keys = super::env_file_check::keys_read_differently(&entry, Path::new(&path), base_dir);
-		if !keys.is_empty() {
+		if !read.is_empty() {
 			warnings.push(format!(
 				"{name}: env_file {:?} uses dotenv syntax (quotes, `export`, inline comments \
 				 or `${{VAR}}`) that `podman --env-file` reads as written, so the container \
 				 gets other values for: {}",
 				entry.path(),
-				keys.join(", ")
+				read.detail()
 			));
 		}
 		container.add("EnvironmentFile", path);
