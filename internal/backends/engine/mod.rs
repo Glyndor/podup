@@ -33,6 +33,7 @@ pub(crate) use observe::query;
 use observe::stats;
 pub(crate) use observe::terminal;
 pub(crate) use workload::container;
+use workload::container::host::info::Info;
 use workload::container_config;
 use workload::declared;
 use workload::pod;
@@ -163,6 +164,15 @@ pub struct Engine {
 	/// podman-container-tools/podman#29848. Two podup processes creating
 	/// `keep-id` containers at the same moment can still race.
 	pub(crate) keep_id_create: tokio::sync::Mutex<()>,
+	/// What the daemon says about its host, read on first use and kept for
+	/// the rest of the invocation.
+	///
+	/// Every container of one `up` meets the same host, so the daemon is
+	/// asked once instead of once per container and per question. `None`
+	/// inside means the daemon did not answer, which is remembered too: a
+	/// host that cannot be asked is not a host whose limits are known to be
+	/// unsupported.
+	pub(in crate::backends::engine) host_info: tokio::sync::OnceCell<Option<Info>>,
 	/// SHA-256 of every `file:` secret/config this engine actually uploaded
 	/// during the current invocation, keyed by the project-scoped Podman
 	/// secret name `create_project_secrets` used to create it. Populated
