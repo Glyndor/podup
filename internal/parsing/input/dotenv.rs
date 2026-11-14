@@ -192,8 +192,14 @@ fn find_closing(s: &str, quote: char) -> Option<usize> {
 	None
 }
 
-/// Expand escape sequences for double-quoted values; single-quoted values are
-/// returned verbatim.
+/// Expand escape sequences for double-quoted values the way Docker Compose's
+/// dotenv reader does (measured against `docker compose config` 5.7.0);
+/// single-quoted values are returned verbatim.
+///
+/// `\$` is a literal dollar. The value is interpolated afterwards, so it is
+/// written as `$$`, which interpolation turns back into one `$`; a bare `$`
+/// would expand the variable that follows, which is what `\$` asks not to do.
+/// An escape Docker does not know keeps its backslash.
 fn unescape(s: &str, quote: char) -> String {
 	if quote == '\'' {
 		return s.to_string();
@@ -209,10 +215,17 @@ fn unescape(s: &str, quote: char) -> String {
 			Some('n') => out.push('\n'),
 			Some('r') => out.push('\r'),
 			Some('t') => out.push('\t'),
+			Some('a') => out.push('\u{7}'),
+			Some('b') => out.push('\u{8}'),
+			Some('f') => out.push('\u{c}'),
+			Some('v') => out.push('\u{b}'),
 			Some('\\') => out.push('\\'),
 			Some('"') => out.push('"'),
-			Some('\'') => out.push('\''),
-			Some(other) => out.push(other),
+			Some('$') => out.push_str("$$"),
+			Some(other) => {
+				out.push('\\');
+				out.push(other);
+			}
 			None => out.push('\\'),
 		}
 	}

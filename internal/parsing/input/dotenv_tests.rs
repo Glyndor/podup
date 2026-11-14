@@ -60,12 +60,26 @@ fn unquoted_keeps_internal_spaces() {
 
 #[test]
 fn double_quoted_expands_all_escape_kinds() {
-	// `\r`, `\\`, `\"`, `\'`, and an unknown escape (`\z` → `z`) all resolve.
+	// Measured against `docker compose config` 5.7.0: `\r`, `\\`, `\"` and the
+	// control escapes resolve; an escape Docker does not know (`\'`, `\z`)
+	// keeps its backslash.
 	assert_eq!(map("FOO=\"a\\rb\"\n")["FOO"], "a\rb");
 	assert_eq!(map("FOO=\"x\\\\y\"\n")["FOO"], "x\\y");
 	assert_eq!(map("FOO=\"q\\\"q\"\n")["FOO"], "q\"q");
-	assert_eq!(map("FOO=\"p\\'p\"\n")["FOO"], "p'p");
-	assert_eq!(map("FOO=\"a\\zb\"\n")["FOO"], "azb");
+	assert_eq!(
+		map("FOO=\"a\\ab\\bc\\fd\\ve\"\n")["FOO"],
+		"a\u{7}b\u{8}c\u{c}d\u{b}e"
+	);
+	assert_eq!(map("FOO=\"p\\'p\"\n")["FOO"], "p\\'p");
+	assert_eq!(map("FOO=\"a\\zb\"\n")["FOO"], "a\\zb");
+}
+
+/// `\$` is a literal dollar. The value is interpolated afterwards, so it comes
+/// out of the parser as `$$`, which interpolation reads as one `$` and never as
+/// the start of a variable.
+#[test]
+fn an_escaped_dollar_survives_interpolation_as_a_literal() {
+	assert_eq!(map("FOO=\"a\\$HOME\"\n")["FOO"], "a$$HOME");
 }
 
 #[test]

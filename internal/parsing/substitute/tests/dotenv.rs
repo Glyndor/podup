@@ -81,3 +81,31 @@ fn load_dotenv_ignores_a_link_that_leads_nowhere() {
 	std::os::unix::fs::symlink("missing.env", dir.path().join(".env")).unwrap();
 	assert!(load_dotenv(dir.path()).is_empty());
 }
+
+/// `\$` in a double-quoted value is a literal dollar, as in Docker Compose: the
+/// `$FOO` after it is not expanded, even with `FOO` set in the same file. The
+/// backslash used to be dropped and the bare `$` expanded, so the value took
+/// the contents of whatever variable followed.
+#[test]
+fn load_dotenv_keeps_an_escaped_dollar_literal() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(
+		dir.path().join(".env"),
+		"FOO=bar\nV=\"a\\$FOO\"\nW=\"a\\${FOO}\"\nX=\"a$FOO\"\n",
+	)
+	.unwrap();
+	let map = load_dotenv(dir.path());
+	assert_eq!(map["V"], "a$FOO");
+	assert_eq!(map["W"], "a${FOO}");
+	assert_eq!(map["X"], "abar", "an unescaped reference still expands");
+}
+
+/// A service `env_file:` goes through the same reader, so the escape holds there.
+#[test]
+fn a_service_env_file_keeps_an_escaped_dollar_literal() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(dir.path().join("svc.env"), "FOO=bar\nV=\"a\\$FOO\"\n").unwrap();
+	let entries = [crate::compose::types::EnvFileEntry::Path("svc.env".into())];
+	let map = crate::env_file::load_env_file_entries(&entries, dir.path()).unwrap();
+	assert_eq!(map["V"], "a$FOO");
+}
