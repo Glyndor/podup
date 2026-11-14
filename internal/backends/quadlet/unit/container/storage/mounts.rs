@@ -99,7 +99,9 @@ pub(in super::super) fn emit_bind_dirs(
 	};
 	for dir in bind_dirs_to_create(service, base_dir) {
 		if dir.chars().all(plain) {
-			svc.add("ExecStartPre", format!("mkdir -p -- \"{dir}\""));
+			// `-`: a source that already exists as a file makes `mkdir` fail,
+			// and the bind still works; that failure must not stop the unit.
+			svc.add("ExecStartPre", format!("-mkdir -p -- \"{dir}\""));
 		} else {
 			warnings.push(format!(
 				"{name}: bind source {dir:?} is not created by the unit (it has characters \

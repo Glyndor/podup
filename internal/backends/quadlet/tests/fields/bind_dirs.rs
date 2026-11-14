@@ -1,5 +1,6 @@
 //! The unit creates the bind sources `up` would create before the container
-//! starts, with `ExecStartPre=mkdir -p`.
+//! starts, with `ExecStartPre=-mkdir -p`: the `-` keeps a failure (a source
+//! that is already a file) from stopping the unit.
 
 use crate::parse_str;
 use crate::quadlet::generate_at;
@@ -18,10 +19,13 @@ fn bind_sources_are_created_before_the_container_starts() {
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
-		c.contains("ExecStartPre=mkdir -p -- \"/srv/app/./cache\"\n"),
+		c.contains("ExecStartPre=-mkdir -p -- \"/srv/app/./cache\"\n"),
 		"{c}"
 	);
-	assert!(c.contains("ExecStartPre=mkdir -p -- \"/srv/a b\"\n"), "{c}");
+	assert!(
+		c.contains("ExecStartPre=-mkdir -p -- \"/srv/a b\"\n"),
+		"{c}"
+	);
 	assert_eq!(c.matches("ExecStartPre=").count(), 2, "{c}");
 	assert!(
 		out.warnings
