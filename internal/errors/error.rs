@@ -31,13 +31,27 @@ pub enum ComposeError {
 		/// The variable name as it appeared in the compose file, without the
 		/// `${}` or the `:?` suffix.
 		var: String,
-		/// The author's own explanation, taken verbatim from the text after
-		/// `:?` in the interpolation. Empty when the form was bare `${VAR?}`.
+		/// The author's own explanation, taken from the text after `:?` in the
+		/// interpolation and interpolated like any other value. Empty when the
+		/// form was bare `${VAR?}`.
 		msg: String,
 	},
 	/// A `${…}` interpolation reference is malformed (e.g. an invalid character
 	/// in the variable name, as in `${FOO BAR}` or `${FOO.BAR}`).
 	InvalidSubstitution(String),
+	/// A `${…}` reference uses a syntax Docker Compose does not accept: a
+	/// modifier that is not one of `:-`, `-`, `:+`, `+`, `:?`, `?`, or a
+	/// reference that is never closed. Carries the path of the value it was
+	/// found in and the offending text, the two things Docker Compose names
+	/// in its own message.
+	InvalidInterpolationFormat {
+		/// The path of the value in the compose document, the way Docker
+		/// Compose writes it (`services.a.environment.V`). Empty when the
+		/// place the reference was found in is not known.
+		path: String,
+		/// The offending reference, as it was written.
+		template: String,
+	},
 	/// A service did not become healthy within its dependency wait window.
 	HealthCheckTimeout(String),
 	/// A `ports:` entry could not be parsed.
@@ -279,6 +293,21 @@ impl fmt::Display for ComposeError {
 			}
 			Self::InvalidSubstitution(s) => {
 				write!(f, "invalid variable substitution: {s}")
+			}
+			Self::InvalidInterpolationFormat { path, template } => {
+				if path.is_empty() {
+					write!(
+						f,
+						"invalid interpolation format.\nYou may need to escape any $ with \
+						 another $.\n{template}"
+					)
+				} else {
+					write!(
+						f,
+						"invalid interpolation format for {path}.\nYou may need to escape any \
+						 $ with another $.\n{template}"
+					)
+				}
 			}
 			Self::HealthCheckTimeout(s) => {
 				write!(

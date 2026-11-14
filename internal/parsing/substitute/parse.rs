@@ -69,9 +69,16 @@ impl Modifier {
 /// `$VAR` path and the compose-spec grammar). It must be non-empty and start
 /// with `[A-Za-z_]`; `${}` and `${1BAD}` are rejected as malformed rather than
 /// resolved to an empty string. After the name, only a modifier delimiter
-/// (`}`, `:`, `-`, `+`, `?`) or end-of-input may follow; any other trailing
-/// character (a space in `${FOO BAR}`, a dot in `${FOO.BAR}`, …) makes the
-/// reference malformed and is rejected rather than folded into the lookup key.
+/// (`}`, `:`, `-`, `+`, `?`) may follow; any other trailing character (a space
+/// in `${FOO BAR}`, a dot in `${FOO.BAR}`, …) makes the reference malformed and
+/// is rejected rather than folded into the lookup key.
+///
+/// The reference must also be closed and its modifier must be one Docker
+/// Compose accepts. `${A` with no closing brace, and `${A:foo}` or `${A:=foo}`
+/// with a modifier that is not `:-`, `-`, `:+`, `+`, `:?` or `?`, are refused
+/// with [`ComposeError::InvalidInterpolationFormat`], the way Docker Compose
+/// refuses them. The text of the offending reference and the path it was found
+/// in are filled in by the caller, which knows both.
 pub(super) fn parse_braced_var(
 	chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
 ) -> Result<(String, Modifier)> {
@@ -87,14 +94,22 @@ pub(super) fn parse_braced_var(
 	}
 
 	match chars.peek() {
-		None => Ok((name, Modifier::None)),
+		// The reference ends with the input: `${A` with no closing brace is a
+		// malformed reference, not a variable that resolves to its value.
+		None => Err(ComposeError::InvalidInterpolationFormat {
+			path: String::new(),
+			template: String::new(),
+		}),
 		Some('}') => {
 			chars.next();
 			Ok((name, Modifier::None))
 		}
 		Some(':') => {
 			chars.next();
-			// Peek at what follows `:`.
+			// Peek at what follows `:`. Only the modifiers Docker Compose
+			// accepts are read as one; anything else (`:=`, `:foo`, `:`) is a
+			// malformed reference and is refused instead of being taken for a
+			// default value.
 			let modifier = match chars.peek() {
 				Some('-') => {
 					chars.next();
@@ -108,7 +123,12 @@ pub(super) fn parse_braced_var(
 					chars.next();
 					Modifier::ErrorIfUnsetOrEmpty(collect_until_close(chars)?)
 				}
-				_ => Modifier::DefaultIfUnsetOrEmpty(collect_until_close(chars)?),
+				_ => {
+					return Err(ComposeError::InvalidInterpolationFormat {
+						path: String::new(),
+						template: String::new(),
+					})
+				}
 			};
 			Ok((name, modifier))
 		}
@@ -135,30 +155,60 @@ pub(super) fn parse_braced_var(
 /// `${FOO:-${BAR}}` the default is `${BAR}` (not `${BAR`), enabling nested
 /// interpolation in [`resolve_modifier`].
 ///
-/// If the input ends before the matching `}` is reached the reference is
-/// unterminated (e.g. `${TAG:-latest` with no closing brace), which would
-/// otherwise silently swallow the rest of the document as the modifier value;
-/// that is reported as [`ComposeError::InvalidSubstitution`] instead.
+/// A `{` in the value is text, so a value whose braces do not balance still
+/// closes: compose reads `${FOO:-{}` as the default `{`. Such a value ends at
+/// its last `}`.
+///
+/// The end of the group is found on a copy of the iterator, because an
+/// unbalanced value only ends at the last `}` of the input, and the text that
+/// follows the group must stay in the input for the caller.
+///
+/// If the input ends before any `}` is reached the reference is unterminated
+/// (e.g. `${TAG:-latest` with no closing brace), which would otherwise
+/// silently swallow the rest of the document as the modifier value; that is
+/// reported as [`ComposeError::InvalidSubstitution`] instead.
 fn collect_until_close(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<String> {
+	let mut probe = chars.clone();
+	let end = find_group_end(&mut probe)?;
+
 	let mut buf = String::new();
+	for c in chars.by_ref().take(end) {
+		buf.push(c);
+	}
+	// The last character is the `}` that closed the group, not part of the
+	// value.
+	buf.pop();
+	Ok(buf)
+}
+
+/// The number of characters the group spans, its closing `}` included.
+///
+/// The group ends at the first `}` that no `{` of the value claims. A value
+/// whose braces do not balance has no such `}`: it ends at the last `}` that
+/// closed a pair. A value with no `}` at all is unterminated.
+fn find_group_end(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<usize> {
 	let mut depth = 0u32;
+	let mut end = 0usize;
+	let mut pair_close: Option<usize> = None;
 	for c in chars.by_ref() {
+		end += 1;
 		match c {
-			'{' => {
-				depth += 1;
-				buf.push(c);
-			}
-			'}' if depth == 0 => return Ok(buf),
+			'{' => depth += 1,
 			'}' => {
+				if depth == 0 {
+					return Ok(end);
+				}
 				depth -= 1;
-				buf.push(c);
+				pair_close = Some(end);
 			}
-			_ => buf.push(c),
+			_ => {}
 		}
 	}
-	Err(ComposeError::InvalidSubstitution(
-		"unterminated variable substitution: missing closing '}'".to_string(),
-	))
+	pair_close.ok_or_else(|| {
+		ComposeError::InvalidSubstitution(
+			"unterminated variable substitution: missing closing '}'".to_string(),
+		)
+	})
 }
 
 /// Apply a parsed `Modifier` to `var`, implementing compose's
@@ -215,14 +265,36 @@ pub(super) fn resolve_modifier(
 
 		Modifier::ErrorIfUnsetOrEmpty(msg) => match value {
 			Some(v) if !v.is_empty() => Ok(v.clone()),
-			_ => Err(ComposeError::RequiredVarNotSet { var, msg }),
+			_ => Err(ComposeError::RequiredVarNotSet {
+				var,
+				msg: interpolate_message(&msg, vars, depth, spent, warned)?,
+			}),
 		},
 
 		Modifier::ErrorIfUnset(msg) => match value {
 			Some(v) => Ok(v.clone()),
-			None => Err(ComposeError::RequiredVarNotSet { var, msg }),
+			None => Err(ComposeError::RequiredVarNotSet {
+				var,
+				msg: interpolate_message(&msg, vars, depth, spent, warned)?,
+			}),
 		},
 	}
+}
+
+/// Interpolate the message of a `:?` / `?` modifier.
+///
+/// The message is a template like any other modifier value, so
+/// `${MISSING:?${B}}` reports the value of `B` and not the literal text
+/// `${B}`. It is interpolated only when the error is raised, because the
+/// message is unused while the variable holds a value.
+fn interpolate_message(
+	msg: &str,
+	vars: &HashMap<String, String>,
+	depth: usize,
+	spent: &mut usize,
+	warned: &mut HashSet<String>,
+) -> Result<String> {
+	super::substitute_depth(msg, vars, depth + 1, spent, warned)
 }
 
 // ---------------------------------------------------------------------------

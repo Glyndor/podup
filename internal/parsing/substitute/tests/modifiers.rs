@@ -153,3 +153,63 @@ fn nested_default_with_trailing_text() {
 		"b/tail"
 	);
 }
+
+/// A `{` inside a default is text, as in Docker Compose: only `${` opens a
+/// nested reference. `${A:-{}` used to fail as unterminated.
+#[test]
+fn a_brace_inside_a_default_is_text() {
+	for (template, unset, set) in [
+		("${A:-{}", "{", "a"),
+		("${A:-{x}", "{x", "a"),
+		("${A:-a{b}c}", "a{b}c", "a"),
+		("${A:-${B:-{}}", "{", "a"),
+	] {
+		assert_eq!(
+			substitute(template, &vars(&[])).unwrap(),
+			unset,
+			"{template}"
+		);
+		assert_eq!(
+			substitute(template, &vars(&[("A", "a")])).unwrap(),
+			set,
+			"{template}"
+		);
+	}
+}
+
+/// The message of `:?` is interpolated with the same variables, as Docker does.
+#[test]
+fn the_message_of_a_required_variable_is_interpolated() {
+	let err = substitute("${MISSING:?${B}}", &vars(&[("B", "bval")])).unwrap_err();
+	assert!(err.to_string().contains("bval"), "{err}");
+	assert!(!err.to_string().contains("${B}"), "{err}");
+}
+
+/// The forms Docker refuses as `invalid interpolation format` are refused; the
+/// valid ones next to them still resolve.
+#[test]
+fn an_invalid_interpolation_format_is_refused() {
+	for template in ["${A:foo}", "${A:=foo}", "${A", "x ${A:=b} y"] {
+		assert!(
+			substitute(template, &vars(&[("A", "set")])).is_err(),
+			"{template}"
+		);
+	}
+	for (template, want) in [
+		("$$", "$"),
+		("a$", "a$"),
+		("$A", "set"),
+		("${A}", "set"),
+		("${A-d}", "set"),
+		("${A:+alt}", "alt"),
+		("${A+alt}", "alt"),
+		("${A:?m}", "set"),
+		("${A?m}", "set"),
+	] {
+		assert_eq!(
+			substitute(template, &vars(&[("A", "set")])).unwrap(),
+			want,
+			"{template}"
+		);
+	}
+}
