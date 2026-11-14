@@ -191,6 +191,13 @@ impl DownGuard {
 	pub(crate) fn name(&self) -> &str {
 		&self.name
 	}
+
+	/// The directory the compose file is in. An engine the test builds
+	/// itself has to use it as the project directory: `down -v` refuses a
+	/// project whose volumes were created from another directory.
+	pub(crate) fn dir(&self) -> std::path::PathBuf {
+		self._dir.path().to_path_buf()
+	}
 }
 
 impl Drop for DownGuard {

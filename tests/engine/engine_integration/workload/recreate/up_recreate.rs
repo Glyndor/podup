@@ -26,7 +26,9 @@ async fn up_is_idempotent_over_existing_named_volume() {
 	// both the network and the volume, and the guard makes it fire on drop.
 	let _down = super::DownGuard::new("idv", compose_body);
 	let proj = _down.name();
-	let engine = Engine::new(client, proj.to_owned());
+	// From the guard's directory, so its `down -v` is not refused as a
+	// teardown of a project created elsewhere.
+	let engine = Engine::with_base_dir(client, proj.to_owned(), _down.dir());
 	let file = parse_str(compose_body).unwrap();
 
 	engine.up(&file).await.unwrap();
