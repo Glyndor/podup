@@ -4,6 +4,7 @@ mod bind_dirs;
 mod container;
 mod lifecycle;
 mod logging;
+mod memory;
 mod mounts;
 mod networks;
 mod normalized_paths;
