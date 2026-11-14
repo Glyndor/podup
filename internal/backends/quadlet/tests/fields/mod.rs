@@ -6,6 +6,7 @@ mod lifecycle;
 mod logging;
 mod memory;
 mod mounts;
+mod namespaces;
 mod networks;
 mod normalized_paths;
 mod resources;

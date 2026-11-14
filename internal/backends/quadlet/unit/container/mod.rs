@@ -21,6 +21,7 @@ use super::{
 
 mod confinement;
 mod definition;
+mod namespaces;
 mod networking;
 mod process;
 mod storage;
@@ -198,7 +199,13 @@ fn render_container_unit(
 		// raw compose key, or the ordering would target a non-existent unit.
 		let dep_service = format!("{}.service", unit_stem(project, &dep));
 		unit.add("After", dep_service.clone());
-		if deps.required_for(&dep) {
+		// A shared namespace needs its donor even when an explicit depends_on
+		// marks it optional; emit it here to keep both directives unique.
+		let namespace_donor = [&service.ipc, &service.pid]
+			.into_iter()
+			.flatten()
+			.any(|m| m.strip_prefix("service:") == Some(dep.as_str()));
+		if deps.required_for(&dep) || namespace_donor {
 			unit.add("Requires", dep_service);
 		} else {
 			unit.add("Wants", dep_service);
@@ -209,6 +216,7 @@ fn render_container_unit(
 	emit_identity(project, name, service, in_pod, &mut container);
 	emit_image(project, name, service, mode, &mut container);
 	emit_runtime(name, service, &mut container);
+	namespaces::emit_namespaces(service, ctx, &mut container);
 	emit_ports(service, in_pod, &mut container);
 	emit_environment(service, &mut container);
 	emit_volumes(
