@@ -1,21 +1,44 @@
 //! The metadata a container carries: its labels, its auto-update policy, its
 //! annotations and its sysctls.
 
-use crate::compose::types::Service;
+use std::path::Path;
 
-use super::super::super::shared_values::label_values;
+use crate::compose::types::Service;
+use crate::engine::{
+	read_label_file_labels, resolve_container_labels, LabelFileIssue, LabelFileLabels,
+};
+
 use super::super::{sorted_label_pairs, Section};
 
-/// Emit the service's own `Label=` lines, the two ownership labels, and the
-/// `AutoUpdate=` line the `x-podman-autoupdate` extension maps to.
+/// Emit the service's own and label-file `Label=` lines, the two ownership
+/// labels, and the `AutoUpdate=` line the `x-podman-autoupdate` extension maps
+/// to.
 pub(in super::super) fn emit_labels(
 	name: &str,
 	project: &str,
 	service: &Service,
+	base_dir: &Path,
 	container: &mut Section,
 	warnings: &mut Vec<String>,
 ) {
-	for (key, val) in label_values(service) {
+	let LabelFileLabels {
+		labels: file_labels,
+		issues,
+	} = read_label_file_labels(service, base_dir);
+	for issue in issues {
+		match issue {
+			LabelFileIssue::Unreadable { path, error } => warnings.push(format!(
+				"{name}: label_file: cannot read {}: {error}",
+				path.display()
+			)),
+			LabelFileIssue::Rejected { path, line, reason } => warnings.push(format!(
+				"{name}: label_file {} line {line}: rejected ({reason}); the label is omitted",
+				path.display()
+			)),
+		}
+	}
+	let labels = resolve_container_labels(service, file_labels);
+	for (key, val) in sorted_label_pairs(labels) {
 		container.add("Label", format!("{key}={val}"));
 	}
 	// Ownership labels, mirroring the live engine: tag every generated container

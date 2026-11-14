@@ -2,6 +2,8 @@
 
 mod bind_dirs;
 mod container;
+mod host_runtime;
+mod label_files;
 mod lifecycle;
 mod logging;
 mod memory;

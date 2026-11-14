@@ -21,6 +21,7 @@ use super::{
 
 mod confinement;
 mod definition;
+mod host_runtime;
 mod networking;
 mod process;
 mod storage;
@@ -35,6 +36,7 @@ use confinement::{
 use definition::{
 	emit_annotations, emit_identity, emit_image, emit_labels, emit_pull, emit_sysctls,
 };
+use host_runtime::{emit_cdi_devices, emit_platform_and_runtime};
 use networking::{
 	emit_expose, emit_host_config, emit_network_extras, emit_network_mode, emit_networks,
 	emit_ports,
@@ -228,7 +230,7 @@ fn render_container_unit(
 		in_pod,
 		&mut container,
 	);
-	emit_labels(name, project, service, &mut container, warnings);
+	emit_labels(name, project, service, base_dir, &mut container, warnings);
 	emit_capabilities(service, &mut container);
 	emit_command(service, &mut container);
 	emit_annotations(service, &mut container);
@@ -237,6 +239,8 @@ fn render_container_unit(
 	emit_sysctls(service, &mut container);
 	emit_ulimits(service, &mut container);
 	emit_host_config(service, in_pod, pod_fields, &mut container);
+	emit_cdi_devices(service, &mut container);
+	emit_platform_and_runtime(service, &mut container);
 	emit_limits(service, in_pod, pod_fields, &mut container);
 	emit_memory_options(name, service, &mut container, warnings);
 	emit_userns(service, in_pod, pod_fields, &mut container);
