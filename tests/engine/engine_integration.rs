@@ -277,6 +277,8 @@ mod pod_fixtures;
 mod pod_on_pasta;
 #[path = "engine_integration/workload/pod/pod_recreate.rs"]
 mod pod_recreate;
+#[path = "engine_integration/workload/pod/pod_shm_hostname.rs"]
+mod pod_shm_hostname;
 #[path = "engine_integration/workload/pod/pod_teardown.rs"]
 mod pod_teardown;
 #[path = "engine_integration/workload/pod/pod_userns_mode.rs"]

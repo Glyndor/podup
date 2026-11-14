@@ -16,11 +16,6 @@ use crate::libpod::types::container::{
 	LinuxBlockIO, LinuxDevice, LinuxDeviceCgroup, LinuxThrottleDevice, LinuxWeightDevice,
 };
 
-mod label_files;
-
-use label_files::read_label_file_labels_limited;
-pub(crate) use label_files::{read_label_file_labels, LabelFileIssue, LabelFileLabels};
-
 // ---------------------------------------------------------------------------
 // Device helpers
 // ---------------------------------------------------------------------------
@@ -268,21 +263,41 @@ pub(super) fn build_label_file_labels(
 	service: &Service,
 	base_dir: &Path,
 ) -> Result<HashMap<String, String>, ComposeError> {
-	let read = read_label_file_labels_limited(service, base_dir, 1);
-	for issue in read.issues {
-		match issue {
-			LabelFileIssue::Unreadable { path, error } => {
-				warn!("label_file: cannot read {}: {error}", path.display());
+	let mut labels = HashMap::new();
+	for path in service.label_file.to_list() {
+		let full = if std::path::Path::new(&path).is_absolute() {
+			std::path::PathBuf::from(&path)
+		} else {
+			base_dir.join(&path)
+		};
+		let content = match crate::filesystem::read_to_string_capped(&full) {
+			Ok(c) => c,
+			Err(e) => {
+				warn!("label_file: cannot read {}: {e}", full.display());
+				continue;
 			}
-			LabelFileIssue::Rejected { path, line, reason } => {
+		};
+		for (line_idx, line) in content.lines().enumerate() {
+			let trimmed = line.trim();
+			if trimmed.is_empty() || trimmed.starts_with('#') {
+				continue;
+			}
+			let mut parts = trimmed.splitn(2, '=');
+			let key = parts.next().unwrap_or("").trim();
+			let val = parts.next().unwrap_or("");
+			if key.is_empty() {
+				continue;
+			}
+			if let Err(why) = sanitize_kv_pair(&mut labels, key, val) {
 				return Err(ComposeError::Unsupported(format!(
-					"label_file {} line {line}: rejected ({reason})",
-					path.display(),
+					"label_file {} line {}: rejected ({why:?})",
+					full.display(),
+					line_idx + 1,
 				)));
 			}
 		}
 	}
-	Ok(read.labels)
+	Ok(labels)
 }
 
 /// Resolve the user-facing labels for a container.
@@ -291,7 +306,7 @@ pub(super) fn build_label_file_labels(
 /// `service.labels` taking precedence. Per the Compose Specification,
 /// `deploy.labels` are set on the service only and are deliberately NOT applied
 /// to containers, matching docker-compose v2 behaviour.
-pub(crate) fn resolve_container_labels(
+pub(super) fn resolve_container_labels(
 	service: &Service,
 	label_file_labels: HashMap<String, String>,
 ) -> HashMap<String, String> {

@@ -83,6 +83,7 @@ services:
     uts: host
     cgroup: private
     cgroup_parent: /sys/fs/cgroup/p
+    runtime: crun
     tty: true
     stdin_open: true
     mac_address: "02:42:ac:11:00:02"
@@ -90,6 +91,8 @@ services:
     mem_reservation: 256m
     oom_kill_disable: true
     oom_score_adj: -500
+    label_file:
+      - ./labels.env
     blkio_config:
       weight: 300
 "#;
@@ -103,11 +106,13 @@ services:
 		"uts",
 		"cgroup",
 		"cgroup_parent",
+		"runtime",
 		"tty",
 		"stdin_open",
 		"mac_address",
 		"memswap_limit",
 		"oom_kill_disable",
+		"label_file",
 		"blkio_config",
 	] {
 		assert!(
@@ -123,6 +128,8 @@ fn warns_for_additional_silently_dropped_fields() {
 services:
   s:
     image: x
+    gpus: all
+    platform: linux/arm64
     domainname: example.internal
     links:
       - other
@@ -141,6 +148,8 @@ services:
 		.warnings
 		.join("\n");
 	for field in [
+		"gpus",
+		"platform",
 		"domainname",
 		"links",
 		"external_links",

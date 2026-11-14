@@ -22,8 +22,9 @@ use super::container::{PerNetworkOptions, PortMapping};
 /// the namespace modes it asks Podman to share (network only; UTS and IPC
 /// stay per container so `hostname:` keeps working as today), the union of
 /// every service's `portmappings`, the list of networks to attach the infra
-/// container to, and the `/etc/hosts` entries that make sibling service
-/// names resolve on the shared namespace.
+/// container to, the `/etc/hosts` entries that make sibling service names
+/// resolve on the shared namespace, and the shared-memory size applied to
+/// every member.
 #[derive(Serialize, Default)]
 pub struct PodSpecGenerator {
 	/// Pod name; matches the project name by convention.
@@ -39,6 +40,12 @@ pub struct PodSpecGenerator {
 	/// `hostname:` keeps working as it does on a project network.
 	#[serde(skip_serializing_if = "Vec::is_empty", default)]
 	pub shared_namespaces: Vec<String>,
+
+	/// Size of the pod's shared memory mount in bytes. Podman gives every
+	/// member the pod's `/dev/shm` and ignores a member's own size, so the
+	/// pod carries the value selected from the services.
+	#[serde(skip_serializing_if = "Option::is_none", default)]
+	pub shm_size: Option<i64>,
 
 	/// Host-port mappings the infra container publishes. Containers inside a
 	/// pod cannot publish ports themselves; the union of every service's

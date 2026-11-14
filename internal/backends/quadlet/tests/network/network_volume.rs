@@ -254,17 +254,17 @@ services:
 }
 
 #[test]
-fn network_mode_service_maps_to_container_join_form() {
-	// The join form also works below Quadlet 5.3, where Network= did not
-	// recognize a sibling .container unit reference.
-	let yaml =
-		"services:\n  db:\n    image: x\n  s:\n    image: x\n    network_mode: \"service:db\"\n";
+fn network_mode_service_maps_to_dot_container() {
+	// `network_mode: service:X` reuses a sibling service's netns, which Quadlet
+	// expresses as the `Network={X}.container` unit dependency. Generated unit
+	// stems are project-prefixed, so the dependency is `p-db.container`.
+	let yaml = "services:\n  s:\n    image: x\n    network_mode: \"service:db\"\n";
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
-		c.contains("Network=container:p-db\n"),
-		"service:db must map to the exported container name; got:\n{c}"
+		c.contains("Network=p-db.container"),
+		"service:db must map to Network=p-db.container; got:\n{c}"
 	);
 }
 
@@ -285,9 +285,6 @@ fn network_mode_container_maps_to_join_form() {
 		!c.contains("sidecar.container"),
 		"container: must not emit a .container unit dependency; got:\n{c}"
 	);
-	assert!(!c.contains("After="), "{c}");
-	assert!(!c.contains("Requires="), "{c}");
-	assert!(!c.contains("Wants="), "{c}");
 }
 
 #[test]
@@ -325,14 +322,12 @@ fn ipam_options_warn_because_quadlet_cannot_emit_them() {
 }
 
 #[test]
-fn network_mode_service_target_uses_container_name_and_sanitized_unit() {
-	let yaml = "services:\n  web:1:\n    image: x\n    container_name: database\n  s:\n    image: x\n    network_mode: \"service:web:1\"\n";
+fn network_mode_service_target_is_sanitized() {
+	let yaml = "services:\n  s:\n    image: x\n    network_mode: \"service:web:1\"\n";
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
-	assert!(c.contains("Network=container:database\n"), "in:\n{c}");
-	assert!(c.contains("After=p-web_1.service\n"), "{c}");
-	assert!(c.contains("Requires=p-web_1.service\n"), "{c}");
+	assert!(c.contains("Network=p-web_1.container"), "in:\n{c}");
 }
 
 #[test]

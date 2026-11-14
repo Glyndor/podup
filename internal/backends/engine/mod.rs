@@ -18,9 +18,6 @@ mod observe;
 pub(crate) mod project;
 mod workload;
 
-pub(crate) use container::{
-	read_label_file_labels, resolve_container_labels, LabelFileIssue, LabelFileLabels,
-};
 pub(crate) use host_files::copy;
 #[cfg(feature = "watch")]
 use host_files::watch;
@@ -50,13 +47,13 @@ pub use project::ProjectLock;
 
 pub(crate) use container_config::build_log_config;
 pub(crate) use container_config::resources::{
-	cdi_devices, effective_cpu_quota, effective_memory_limit, effective_pids_limit, is_known_ulimit,
+	effective_cpu_quota, effective_memory_limit, effective_pids_limit, is_known_ulimit,
 };
 pub(crate) use network::apply_default_isolation;
 /// Re-exported so `startup::config_render` (in the binary crate) can call the
 /// same function `up` uses, instead of duplicating the resolution rule.
 pub use network::resolve_network_name;
-pub(crate) use pod::pod_network_mode;
+pub(crate) use pod::{pod_network_mode, pod_shm_size, PodShmSize};
 pub use project::is_safe_project_name;
 pub use project::{list_projects, list_projects_filtered, LsOptions};
 pub use project::{retain_active_profiles, retain_active_profiles_with_targets, retain_up_scope};

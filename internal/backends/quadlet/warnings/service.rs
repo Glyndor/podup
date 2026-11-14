@@ -147,6 +147,9 @@ pub(crate) fn collect_warnings(
 	if service.cgroup_parent.is_some() {
 		warn("cgroup_parent", skipped);
 	}
+	if service.runtime.is_some() {
+		warn("runtime", skipped);
+	}
 	if service.tty.is_some() {
 		warn("tty", skipped);
 	}
@@ -155,6 +158,15 @@ pub(crate) fn collect_warnings(
 	}
 	if service.blkio_config.is_some() {
 		warn("blkio_config", skipped);
+	}
+	if service.gpus.is_some() {
+		warn(
+			"gpus",
+			"has no Quadlet equivalent and is skipped; GPU devices are not assigned",
+		);
+	}
+	if service.platform.is_some() {
+		warn("platform", skipped);
 	}
 	if !service.device_cgroup_rules.is_empty() {
 		warn("device_cgroup_rules", skipped);
@@ -200,6 +212,9 @@ pub(crate) fn collect_warnings(
 	}
 	if service.use_api_socket.is_some() {
 		warn("use_api_socket", skipped);
+	}
+	if !service.label_file.to_list().is_empty() {
+		warn("label_file", skipped);
 	}
 	// MAC addresses have no Quadlet key (service-level or per-network), and a
 	// per-network value cannot be expressed via the whole-container PodmanArgs=.
