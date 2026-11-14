@@ -34,11 +34,22 @@ pub(super) fn render_healthcheck(
 				// a shell command line, so each word is quoted: joined with plain
 				// spaces, `["CMD", "sh", "-c", "wget -q x || exit 1"]` ran `wget`
 				// with no argument and then `exit 1`.
-				Some("CMD") => parts[1..]
-					.iter()
-					.map(|word| shell_word(word))
-					.collect::<Vec<_>>()
-					.join(" "),
+				Some("CMD") => {
+					// Podman 5 reads `HealthCmd=` only as a shell command line, so the
+					// exec form cannot be kept: the probe runs through `/bin/sh -c`,
+					// where `up` runs it directly. In an image without a shell
+					// (distroless, scratch) it then fails every time and a
+					// `Notify=healthy` unit never starts.
+					warnings.push(format!(
+						"{name}: healthcheck test [\"CMD\", ...] runs through /bin/sh in the \
+						 Quadlet unit (HealthCmd= is a shell command line); the image needs a shell"
+					));
+					parts[1..]
+						.iter()
+						.map(|word| shell_word(word))
+						.collect::<Vec<_>>()
+						.join(" ")
+				}
 				_ => parts.join(" "),
 			},
 		};

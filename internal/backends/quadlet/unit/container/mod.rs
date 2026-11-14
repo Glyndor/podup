@@ -43,7 +43,7 @@ use process::{
 	emit_command, emit_env_files, emit_environment, emit_logging, emit_restart, emit_runtime,
 	emit_stop, emit_timeouts,
 };
-use storage::{emit_secrets, emit_tmpfs, emit_volumes};
+use storage::{emit_bind_dirs, emit_secrets, emit_tmpfs, emit_volumes};
 
 /// Project-wide inputs every generated unit needs, as opposed to the per-service
 /// ones (`name`, `service`). Grouped rather than passed loose because the set
@@ -268,6 +268,7 @@ fn render_container_unit(
 		// is only valid next to `oneshot` as `no` or `on-failure`.
 		UnitRole::Job => svc.add("Type", "oneshot".to_string()),
 	}
+	emit_bind_dirs(name, service, base_dir, &mut svc, warnings);
 
 	collect_warnings(
 		name,
