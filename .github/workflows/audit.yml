@@ -83,10 +83,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: write
-    # Bound: the dispatched audit installs its tools and runs both
-    # checks; forty minutes covers that plus a queue, and no run has
-    # been measured yet.
-    timeout-minutes: 40
+    # Bound: both checks take under a minute, but the dispatched run
+    # waits for a runner behind the rest of the CI. Measured from
+    # dispatch to completion: 23 min (2026-11-11), 14 min (11-12) and
+    # 77 min (11-13), when a forty-minute bound cancelled this job and
+    # opened #2509 for a develop audit that later passed.
+    timeout-minutes: 150
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
