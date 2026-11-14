@@ -232,7 +232,7 @@ fn render_container_unit(
 	emit_capabilities(service, &mut container);
 	emit_command(service, &mut container);
 	emit_annotations(service, &mut container);
-	emit_env_files(service, base_dir, &mut container);
+	emit_env_files(name, service, base_dir, &mut container, warnings);
 	emit_tmpfs(service, &mut container);
 	emit_sysctls(service, &mut container);
 	emit_ulimits(service, &mut container);

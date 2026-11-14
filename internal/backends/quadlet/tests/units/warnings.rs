@@ -78,3 +78,111 @@ fn no_env_file_warning_when_every_entry_is_required() {
 		out.warnings
 	);
 }
+
+/// `podman --env-file` reads each line as written, while `up` reads the file as
+/// dotenv. A file that quotes, exports, comments inline or interpolates gives
+/// the container other values under Quadlet, so the keys are named (never the
+/// values, which may be secrets).
+#[test]
+fn warns_when_podman_reads_an_env_file_differently() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(
+		dir.path().join("app.env"),
+		"Q1=\"quoted value\"\nexport EX=1\nC1=val # comment\nPLAIN=ok\n",
+	)
+	.unwrap();
+	std::fs::write(dir.path().join("clean.env"), "PLAIN=ok\n# note\nOTHER=2\n").unwrap();
+	let yaml = "services:\n  s:\n    image: x\n    env_file: [app.env, clean.env]\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", dir.path());
+	let joined = out.warnings.join("\n");
+	assert!(joined.contains("\"app.env\""), "{joined}");
+	for key in ["Q1", "EX", "C1"] {
+		assert!(joined.contains(key), "{key} missing from: {joined}");
+	}
+	assert!(!joined.contains("quoted value"), "a value leaked: {joined}");
+	assert!(!joined.contains("PLAIN"), "{joined}");
+	assert!(!joined.contains("clean.env"), "{joined}");
+}
+
+/// The warnings of `generate_at` for one service whose files are in `dir`.
+fn env_warnings(dir: &std::path::Path, service: &str) -> String {
+	let yaml = format!("services:\n  s:\n    image: x\n{service}");
+	let file = parse_str(&yaml).unwrap();
+	generate_at(&file, "p", dir).warnings.join("\n")
+}
+
+/// A line inside a multi-line value is read by `podman --env-file` as a key of
+/// its own; naming it would print part of the value. Only the keys `up` reads
+/// are named.
+#[test]
+fn a_multi_line_value_is_never_named_in_the_warning() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(
+		dir.path().join("app.env"),
+		"TOKEN=\"first\nS3CR3T_FRAGMENT=tail\"\n",
+	)
+	.unwrap();
+	let joined = env_warnings(dir.path(), "    env_file: app.env\n");
+	assert!(joined.contains("TOKEN"), "{joined}");
+	assert!(
+		!joined.contains("S3CR3T_FRAGMENT"),
+		"part of a value leaked: {joined}"
+	);
+}
+
+/// A FIFO as an env file does not hang the export.
+#[cfg(unix)]
+#[test]
+fn a_fifo_env_file_does_not_hang_the_export() {
+	let dir = tempfile::tempdir().unwrap();
+	let fifo = dir.path().join("app.env");
+	let status = std::process::Command::new("mkfifo")
+		.arg(&fifo)
+		.status()
+		.unwrap();
+	assert!(status.success());
+	let (tx, rx) = std::sync::mpsc::channel();
+	let path = dir.path().to_path_buf();
+	std::thread::spawn(move || {
+		let _ = tx.send(env_warnings(&path, "    env_file: app.env\n"));
+	});
+	rx.recv_timeout(std::time::Duration::from_secs(10))
+		.expect("generate blocked on the FIFO");
+}
+
+/// The comparison resolves a value the way `up` does, with the service's
+/// `environment:` and the files before it in scope.
+#[test]
+fn the_check_sees_the_service_environment_and_earlier_files() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(
+		dir.path().join("app.env"),
+		"TOKEN=${PODUP_SRC_7Q:?required}\n",
+	)
+	.unwrap();
+	std::fs::write(dir.path().join("first.env"), "PODUP_SRC_7Q=present\n").unwrap();
+	let from_env = env_warnings(
+		dir.path(),
+		"    env_file: app.env\n    environment:\n      PODUP_SRC_7Q: present\n",
+	);
+	assert!(from_env.contains("TOKEN"), "{from_env}");
+	let from_file = env_warnings(dir.path(), "    env_file: [first.env, app.env]\n");
+	assert!(from_file.contains("TOKEN"), "{from_file}");
+}
+
+/// A key the service's `environment:` or a later file sets again never reaches
+/// the container from this file, so it is not named.
+#[test]
+fn an_overridden_key_is_not_named() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(dir.path().join("app.env"), "TOKEN=\"quoted\"\n").unwrap();
+	std::fs::write(dir.path().join("later.env"), "TOKEN=safe\n").unwrap();
+	let by_env = env_warnings(
+		dir.path(),
+		"    env_file: app.env\n    environment:\n      TOKEN: safe\n",
+	);
+	assert!(!by_env.contains("TOKEN"), "{by_env}");
+	let by_file = env_warnings(dir.path(), "    env_file: [app.env, later.env]\n");
+	assert!(!by_file.contains("TOKEN"), "{by_file}");
+}

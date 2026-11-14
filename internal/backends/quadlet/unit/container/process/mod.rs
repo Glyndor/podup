@@ -3,6 +3,7 @@
 
 mod command;
 mod env;
+mod env_file_check;
 mod lifecycle;
 mod logging;
 mod runtime;
