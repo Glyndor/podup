@@ -13,6 +13,8 @@
 // Windows transport is a named pipe and has no counterpart here.
 #![cfg(unix)]
 
+#[path = "hostile_podman/drip_deadline.rs"]
+mod drip_deadline;
 #[path = "hostile_podman/endpoints.rs"]
 mod endpoints;
 #[path = "hostile_podman/run.rs"]
