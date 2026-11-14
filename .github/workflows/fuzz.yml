@@ -12,6 +12,7 @@ on:
     paths:
       - "fuzz/**"
       - "internal/lib.rs"
+      - "internal/parsing/input/**"
       - "internal/backends/engine/host_files/copy/extract/archive.rs"
       - "internal/backends/engine/images/context/**"
       - "Cargo.toml"
