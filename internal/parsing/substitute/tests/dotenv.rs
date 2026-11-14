@@ -109,3 +109,23 @@ fn a_service_env_file_keeps_an_escaped_dollar_literal() {
 	let map = crate::env_file::load_env_file_entries(&entries, dir.path()).unwrap();
 	assert_eq!(map["V"], "a$FOO");
 }
+
+/// `\a \b \f \v` keep their backslash, so a file passed with `--env-file` that
+/// uses them still loads: decoded, they would be control characters, which
+/// that path refuses.
+#[test]
+fn an_explicit_env_file_with_control_escapes_still_loads() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(
+		dir.path().join("explicit.env"),
+		"A=\"L\\aR\"\nB=\"L\\bR\"\nF=\"L\\fR\"\nV=\"L\\vR\"\n",
+	)
+	.unwrap();
+	let vars = crate::substitute::build_vars_with_env_files_strict(
+		dir.path(),
+		&["explicit.env".to_string()],
+	)
+	.expect("the file loads");
+	assert_eq!(vars["A"], "L\\aR");
+	assert_eq!(vars["V"], "L\\vR");
+}

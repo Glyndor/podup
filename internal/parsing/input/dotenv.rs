@@ -215,10 +215,8 @@ fn unescape(s: &str, quote: char) -> String {
 			Some('n') => out.push('\n'),
 			Some('r') => out.push('\r'),
 			Some('t') => out.push('\t'),
-			Some('a') => out.push('\u{7}'),
-			Some('b') => out.push('\u{8}'),
-			Some('f') => out.push('\u{c}'),
-			Some('v') => out.push('\u{b}'),
+			// Docker keeps the backslash and drops this one zero (`\077` is `\77`).
+			Some('0') => out.push('\\'),
 			Some('\\') => out.push('\\'),
 			Some('"') => out.push('"'),
 			Some('$') => out.push_str("$$"),
