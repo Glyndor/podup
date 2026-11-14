@@ -174,8 +174,9 @@ fn audit_sensitive_host_source_reads_a_tilde_in_env_file_and_build_as_written() 
 }
 
 /// A secret whose path crosses a link inside the project lands where the link
-/// points; the host filesystem says where, so the check asks it.
-#[cfg(unix)]
+/// points; the host filesystem says where, so the check asks it. Linux only:
+/// on macOS `/etc` is itself a link to `/private/etc`, where no shadow file is.
+#[cfg(target_os = "linux")]
 #[test]
 fn audit_sensitive_host_source_follows_a_link_inside_the_project() {
 	let root = tempfile::tempdir().unwrap();
