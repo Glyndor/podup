@@ -8,6 +8,8 @@ use std::collections::HashSet;
 
 use crate::compose::types::Service;
 
+use super::sorted_label_pairs;
+
 /// DNS and host-entry values declared by one service.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct HostValues {
@@ -50,6 +52,11 @@ pub(super) fn host_values(service: &Service) -> HostValues {
 			.cloned()
 			.collect(),
 	}
+}
+
+/// Return the user labels declared by one service, sorted by label name.
+pub(super) fn label_values(service: &Service) -> Vec<(String, String)> {
+	sorted_label_pairs(service.labels.to_map())
 }
 
 /// Return the user-namespace mode declared by one service.

@@ -1,11 +1,11 @@
-//! Whole-unit output retained from the parent of the pod-field change.
+//! Whole-unit output for pod sharing and standalone container mounts.
 
 use super::fields_test_support::{pod_contents, render, unit};
 
 #[test]
-fn old_pod_inputs_match_parent_output() {
+fn pod_output_shares_only_the_network() {
 	let yaml = "x-podman-pod: true\nservices:\n  web:\n    image: nginx\n    ports: [\"8080:80\"]\n  db:\n    image: postgres\n    ports: [\"5432:5432\"]\nnetworks:\n  front: {}\n";
-	let expected = "# podup-owner: demo\n[Pod]\nPodName=demo\nNetwork=demo-front.network\nPublishPort=5432:5432\nPublishPort=8080:80\nPodmanArgs=--add-host=\"db:127.0.0.1\"\nPodmanArgs=--add-host=\"web:127.0.0.1\"\nPodmanArgs=--label=\"podup.project=demo\"\nPodmanArgs=--exit-policy=continue\n";
+	let expected = "# podup-owner: demo\n[Pod]\nPodName=demo\nPodmanArgs=--share=net\nNetwork=demo-front.network\nPublishPort=5432:5432\nPublishPort=8080:80\nPodmanArgs=--add-host=\"db:127.0.0.1\"\nPodmanArgs=--add-host=\"web:127.0.0.1\"\nPodmanArgs=--label=\"podup.project=demo\"\nPodmanArgs=--exit-policy=continue\n";
 	assert_eq!(pod_contents(yaml), expected);
 }
 

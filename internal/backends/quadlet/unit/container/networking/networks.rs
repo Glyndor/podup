@@ -2,14 +2,12 @@
 //! `network_mode:` namespace it joins, and the per-network addresses and
 //! aliases.
 
-use indexmap::IndexMap;
-
 use crate::compose::types::Service;
 use crate::quadlet::is_no_warn_set;
 
 use super::super::super::pod::{PodField, PodFields};
 use super::super::super::shared_values::network_values;
-use super::super::{container_name, quote_podman_arg_value, unit_stem, ExternalNames, Section};
+use super::super::{quote_podman_arg_value, unit_stem, ExternalNames, Section};
 
 /// Emit a `Network=` line per declared network the service attaches to, unless
 /// the pod carries the attachment instead.
@@ -55,16 +53,16 @@ pub(in super::super) fn emit_network_mode(
 	name: &str,
 	project: &str,
 	service: &Service,
-	services: &IndexMap<String, Service>,
 	in_pod: bool,
 	pod_network_mode: Option<&str>,
 	container: &mut Section,
 ) {
 	// `network_mode: host`/`none` map to `Network=host`/`Network=none`.
-	// Use Podman's `container:` join form for sibling services too: Quadlet
-	// only gained `.container` references in `Network=` in 5.3, above the 5.0
-	// floor. The caller writes the service dependency explicitly. External
-	// `container:X` references pass through without one. `pasta` and `slirp4netns`,
+	// `service:X` reuses a *sibling service's* netns, which Quadlet expresses as
+	// `Network={X}.container` (the `.container` unit dependency). `container:X`
+	// reuses an *existing* container's netns by id/name and maps to podman's
+	// `Network=container:X` join form, not a `.container` unit, which would name
+	// a non-existent dependency and fail to start. `pasta` and `slirp4netns`,
 	// with or without `:options`, pass through as written: `Network=` takes the
 	// same value as `podman run --network` (#1994). Other modes (bridge:,
 	// custom, …) have no key and are reported by collect_warnings.
@@ -86,16 +84,10 @@ pub(in super::super) fn emit_network_mode(
 		Some("none") => container.add("Network", "none".to_string()),
 		Some(m) => {
 			if let Some(target) = m.strip_prefix("service:") {
-				// Validation rejects unknown targets before any units are written.
-				if let Some(target_service) = services.get(target) {
-					container.add(
-						"Network",
-						format!(
-							"container:{}",
-							container_name(project, target, target_service)
-						),
-					);
-				}
+				container.add(
+					"Network",
+					format!("{}.container", unit_stem(project, target)),
+				);
 			} else if is_rootless_user_mode(m) {
 				if !in_pod {
 					container.add("Network", m.to_string());

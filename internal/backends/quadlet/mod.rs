@@ -57,21 +57,6 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 		return Err(e);
 	}
 	for (name, svc) in &file.services {
-		// Implicit dependencies omit unknown services, but a namespace donor
-		// must exist in the project to resolve its exported container name.
-		if let Some(target) = svc
-			.network_mode
-			.as_deref()
-			.and_then(|m| m.strip_prefix("service:"))
-		{
-			if !file.services.contains_key(target) {
-				return Err(ComposeError::Unsupported(format!(
-					"service '{}': network_mode references undefined service '{}'",
-					crate::error::sanitize_name(name),
-					crate::error::sanitize_name(target)
-				)));
-			}
-		}
 		if let Some(text) = svc.umask.as_deref() {
 			crate::compose::types::service::umask::validate_runtime(name, text)?;
 		}

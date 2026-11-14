@@ -45,13 +45,11 @@ fn dns_search_control_only_entry_stays_on_containers() {
 }
 
 #[test]
-fn promoted_hostname_trims_native_boundary_spaces() {
+fn container_hostname_trims_native_boundary_spaces() {
 	let out = render(&two_services("    hostname: ' shared-host '\n"));
-	assert!(unit(&out, "demo.pod")
-		.contents
-		.contains("PodmanArgs=--hostname=\"shared-host\"\n"));
+	assert!(!unit(&out, "demo.pod").contents.contains("--hostname="));
 	for name in ["demo-web.container", "demo-db.container"] {
-		assert!(!unit(&out, name).contents.contains("HostName="));
+		assert!(unit(&out, name).contents.contains("HostName=shared-host\n"));
 	}
 }
 

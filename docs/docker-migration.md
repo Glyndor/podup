@@ -73,24 +73,25 @@ Pod mode writes one `.pod` unit for the project. Fields that every service decla
 
 | Compose field | Pod unit value |
 |---|---|
-| `hostname` | `--hostname` |
 | `dns` | `--dns` |
 | `dns_opt` | `--dns-option` |
 | `dns_search` | `--dns-search` |
 | `extra_hosts` | `--add-host` |
 | `userns_mode` | `--userns` |
-| `shm_size` | `--shm-size` |
+| `shm_size` | `--shm-size` (largest declared size, in bytes) |
 | `networks.*.ipv4_address` | `--ip` |
 | `networks.*.ipv6_address` | `--ip6` |
 | `networks.*.aliases` | `--network-alias` |
 
-Service labels stay on every container and never become pod labels. All volumes stay on their containers, including named, bind, anonymous and long-form tmpfs mounts. The `tmpfs` field also stays container-level. Mounting a named volume on the infra container could change which image initializes its contents.
+Each service's `hostname` stays on its `.container` unit as `HostName=` and is never promoted to the pod. Service labels stay on every container and never become pod labels. All volumes stay on their containers, including named, bind, anonymous and long-form tmpfs mounts. The `tmpfs` field also stays container-level. Mounting a named volume on the infra container could change which image initializes its contents.
 
-If services disagree, or only some services declare the field, podup emits a warning and keeps the value on each container. It never chooses one service's value for the whole pod. DNS lists move only when every entry is nonempty and nonblank after control characters are stripped; otherwise they remain on the containers with a warning, preserving native list-reset behavior. Static IPv4 and IPv6 addresses move only when the pod attaches to exactly one declared network. With multiple networks, including unused top-level declarations, addresses remain on the containers with a warning. The native Quadlet keys added after 5.0 travel through `PodmanArgs=`, so the unit still loads on Podman 5.0.
+If services disagree, or only some services declare the field, podup emits a warning and keeps the value on each container. DNS lists move only when every entry is nonempty and nonblank after control characters are stripped; otherwise they remain on the containers with a warning, preserving native list-reset behavior. Static IPv4 and IPv6 addresses move only when the pod attaches to exactly one declared network. With multiple networks, including unused top-level declarations, addresses remain on the containers with a warning. The native Quadlet keys added after 5.0 travel through `PodmanArgs=`, so the unit still loads on Podman 5.0.
 
-Promoted native container values, including hostname and DNS, discard boundary whitespace after control characters are stripped. Extra hosts and network aliases keep the same quoted argument values as their container emitters, including boundary spaces.
+`shm_size` is the exception. Podman ignores a member's own shared-memory size and mounts the pod's size in every member, so podup puts the largest declared size on the pod and warns when the declaring services disagree. The warning names those services and the selected size. A service that does not declare `shm_size` does not count as a disagreement.
 
-The pod keeps `PodmanArgs=--exit-policy=continue`, so its infra container stays running when the last service exits. Pod-level stop timeout has no Compose source and stays unset. A service's `stop_grace_period` remains a container-level timeout.
+Promoted native container values, including DNS, discard boundary whitespace after control characters are stripped. Extra hosts and network aliases keep the same quoted argument values as their container emitters, including boundary spaces.
+
+The pod keeps `PodmanArgs=--share=net` and `PodmanArgs=--exit-policy=continue`. Only the network namespace is shared, so every member keeps its own hostname and UTS namespace; the exit policy keeps the infra container running when the last service exits. Pod-level stop timeout has no Compose source and stays unset. A service's `stop_grace_period` remains a container-level timeout.
 
 ### Bridge network isolation
 

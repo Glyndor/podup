@@ -3,7 +3,7 @@
 use super::fields_test_support::{pod_contents, render, unit};
 
 #[test]
-fn conflicting_service_value_stays_on_containers_with_warning() {
+fn different_hostnames_stay_on_containers_without_warning() {
 	let yaml = "x-podman-pod: true\nservices:\n  web:\n    image: nginx\n    hostname: web-host\n  db:\n    image: postgres\n    hostname: db-host\n";
 	let out = render(yaml);
 	let pod = unit(&out, "demo.pod").contents.clone();
@@ -21,8 +21,8 @@ fn conflicting_service_value_stays_on_containers_with_warning() {
 	assert!(
 		out.warnings
 			.iter()
-			.any(|warning| warning.contains("hostname") && warning.contains("stays")),
-		"missing hostname disagreement warning: {:?}",
+			.all(|warning| !warning.contains("hostname")),
+		"unexpected hostname disagreement warning: {:?}",
 		out.warnings
 	);
 }
@@ -43,7 +43,7 @@ fn pod_keeps_exit_policy_and_omits_stop_timeout() {
 }
 
 #[test]
-fn scalar_with_a_double_quote_stays_on_the_containers() {
+fn quoted_scalars_are_not_promoted_and_pod_containers_omit_shm_size() {
 	for (field, flag, native) in [
 		("userns_mode", "--userns=", "UserNS="),
 		("shm_size", "--shm-size=", "ShmSize="),
@@ -60,8 +60,12 @@ fn scalar_with_a_double_quote_stays_on_the_containers() {
 			"{field} was promoted with a quote in:\n{pod}"
 		);
 		assert!(
-			web.contains(native),
-			"{field} left the container in:\n{web}"
+			if field == "shm_size" {
+				!web.contains(native)
+			} else {
+				web.contains(native)
+			},
+			"unexpected container value for {field}:\n{web}"
 		);
 	}
 }

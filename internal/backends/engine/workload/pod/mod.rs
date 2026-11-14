@@ -10,6 +10,9 @@ mod hash;
 mod validate;
 
 #[cfg(test)]
+#[path = "shm_tests.rs"]
+mod shm_tests;
+#[cfg(test)]
 #[path = "validate_tests.rs"]
 mod validate_tests;
 
@@ -33,8 +36,8 @@ use crate::ports::ParsedPort;
 /// `down --remove-orphans` to find the pod.
 pub(in crate::backends::engine) const POD_PROJECT_LABEL: &str = "podup.project";
 
-/// The label that records the hash of the pod's port set, network set and
-/// host entries. A change in any of these three means the pod has to be
+/// The label that records the hash of the pod's create-time surface. A change
+/// in any value fixed when the pod is created means the pod has to be
 /// recreated.
 pub(in crate::backends::engine) const POD_HASH_LABEL: &str = "podup.pod-config-hash";
 
@@ -90,6 +93,59 @@ pub(in crate::backends::engine) fn pod_userns(
 	file.services
 		.values()
 		.find_map(|s| s.userns_mode.as_deref())
+}
+
+/// The shared-memory size selected for a pod and the warning raised when the
+/// services disagree about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PodShmSize {
+	/// Size in bytes, or `None` when no service declares one.
+	pub(crate) bytes: Option<i64>,
+	/// Warning naming every declaring service and the selected size.
+	pub(crate) warning: Option<String>,
+}
+
+/// Select the shared-memory size for a pod.
+///
+/// Podman mounts the pod's `/dev/shm` in every member and ignores the
+/// member's own size. The largest declared size therefore wins, so no
+/// service receives less shared memory than it asked for. Services that do
+/// not declare `shm_size` do not participate in the disagreement.
+pub(crate) fn pod_shm_size(file: &crate::compose::types::ComposeFile) -> PodShmSize {
+	let mut declarations: Vec<(String, i64)> = file
+		.services
+		.iter()
+		.filter_map(|(name, service)| {
+			service
+				.shm_size
+				.as_deref()
+				.and_then(crate::size::parse_memory)
+				.map(|bytes| (name.clone(), bytes))
+		})
+		.collect();
+	declarations.sort_by(|left, right| left.0.cmp(&right.0));
+
+	let Some(bytes) = declarations.iter().map(|(_, bytes)| *bytes).max() else {
+		return PodShmSize {
+			bytes: None,
+			warning: None,
+		};
+	};
+	let disagreement = declarations.iter().any(|(_, value)| *value != bytes);
+	let warning = disagreement.then(|| {
+		let services = declarations
+			.iter()
+			.map(|(name, value)| format!("{name}={value}"))
+			.collect::<Vec<_>>()
+			.join(", ");
+		format!(
+			"x-podman-pod: shm_size: services disagree; the pod uses {bytes} bytes ({services})"
+		)
+	});
+	PodShmSize {
+		bytes: Some(bytes),
+		warning,
+	}
 }
 
 /// The pasta or slirp4netns `network_mode` the pod runs on, or `None` when the
@@ -171,6 +227,7 @@ pub(in crate::backends::engine) fn build_pod_spec_with_hash(
 		name: project.to_string(),
 		labels,
 		shared_namespaces: vec!["net".to_string()],
+		shm_size: pod_shm_size(file).bytes,
 		portmappings: portmappings_for_services(parsed_ports.iter().cloned()),
 		netns: if network_mode.is_some() {
 			netns

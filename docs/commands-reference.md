@@ -42,7 +42,7 @@ The `.build` unit carries the compose `build:` fields. `context` and `dockerfile
 
 A value the flag cannot take is reported instead of being passed through: an `additional_contexts` entry that names a service (`service:other`) instead of pointing at a path or a URL, a `ulimits` name outside the Linux rlimit set, an `isolation` that is not one of the buildah isolation types (`oci`, `rootless`, `chroot`), and a `secrets` entry whose id or path holds a comma (the `Secret=` value is a comma-separated option list).
 
-In pod mode, shared-field warnings use `x-podman-pod: <field>: <reason>; the value stays on each container`. Reasons include service disagreement, empty or blank DNS entries, and static pod addresses without exactly one declared network. See the [pod field mapping](docker-migration.md#pod-mode-x-podman-pod-true).
+In pod mode, most shared-field warnings use `x-podman-pod: <field>: <reason>; the value stays on each container`. Reasons include service disagreement, empty or blank DNS entries, and static pod addresses without exactly one declared network. `shm_size` is different: its warning uses `x-podman-pod: shm_size: services disagree; the pod uses <bytes> bytes (<services>)`, because the largest declared size still moves to the pod. See the [pod field mapping](docker-migration.md#pod-mode-x-podman-pod-true).
 
 | Flag | Description | Default |
 |---|---|---|
@@ -311,7 +311,7 @@ The infra container stays running when the last service exits, in both API and Q
 - Services reach each other on `localhost`. `up` adds one `<service>:127.0.0.1` host entry per service. They share one port space, so two services cannot listen on the same container port.
 - `ports:` are published by the pod.
 - Only the network namespace is shared. UTS and IPC stay per container.
-- `up` records a hash of the pod's ports, networks and host entries. When it changes, `up` recreates the pod and every member container, which discards their writable layers.
+- `up` records a hash of the pod's create-time settings: ports, networks, host entries, user namespace, network mode and shared-memory size. When it changes, `up` recreates the pod and every member container, which discards their writable layers.
 
 What is refused, before anything is created:
 

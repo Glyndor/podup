@@ -2,8 +2,6 @@
 
 mod bind_dirs;
 mod container;
-mod host_runtime;
-mod label_files;
 mod lifecycle;
 mod logging;
 mod memory;
@@ -11,6 +9,5 @@ mod mounts;
 mod networks;
 mod normalized_paths;
 mod resources;
-mod service_network;
 mod subpath;
 mod tmpfs_owner;

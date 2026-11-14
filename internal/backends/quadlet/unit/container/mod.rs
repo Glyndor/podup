@@ -21,7 +21,6 @@ use super::{
 
 mod confinement;
 mod definition;
-mod host_runtime;
 mod networking;
 mod process;
 mod storage;
@@ -36,7 +35,6 @@ use confinement::{
 use definition::{
 	emit_annotations, emit_identity, emit_image, emit_labels, emit_pull, emit_sysctls,
 };
-use host_runtime::{emit_cdi_devices, emit_platform_and_runtime};
 use networking::{
 	emit_expose, emit_host_config, emit_network_extras, emit_network_mode, emit_networks,
 	emit_ports,
@@ -194,19 +192,13 @@ fn render_container_unit(
 	};
 	unit.add("Description", format!("{name} ({kind})"));
 	let deps = effective_depends_on(service, services);
-	let network_target = service
-		.network_mode
-		.as_deref()
-		.and_then(|m| m.strip_prefix("service:"));
 	for dep in deps.service_names() {
 		// The dependency's generated unit is named `{unit_stem(project, dep)}.container`,
 		// so its service is `{unit_stem(project, dep)}.service`; reference that, not the
 		// raw compose key, or the ordering would target a non-existent unit.
 		let dep_service = format!("{}.service", unit_stem(project, &dep));
 		unit.add("After", dep_service.clone());
-		// A shared network needs its donor even when an explicit depends_on
-		// marks it optional; emit it here to keep both directives unique.
-		if deps.required_for(&dep) || network_target == Some(dep.as_str()) {
+		if deps.required_for(&dep) {
 			unit.add("Requires", dep_service);
 		} else {
 			unit.add("Wants", dep_service);
@@ -216,7 +208,7 @@ fn render_container_unit(
 	let mut container = Section::new("Container");
 	emit_identity(project, name, service, in_pod, &mut container);
 	emit_image(project, name, service, mode, &mut container);
-	emit_runtime(name, service, in_pod, pod_fields, &mut container);
+	emit_runtime(name, service, &mut container);
 	emit_ports(service, in_pod, &mut container);
 	emit_environment(service, &mut container);
 	emit_volumes(
@@ -236,7 +228,7 @@ fn render_container_unit(
 		in_pod,
 		&mut container,
 	);
-	emit_labels(name, project, service, base_dir, &mut container, warnings);
+	emit_labels(name, project, service, &mut container, warnings);
 	emit_capabilities(service, &mut container);
 	emit_command(service, &mut container);
 	emit_annotations(service, &mut container);
@@ -245,9 +237,7 @@ fn render_container_unit(
 	emit_sysctls(service, &mut container);
 	emit_ulimits(service, &mut container);
 	emit_host_config(service, in_pod, pod_fields, &mut container);
-	emit_cdi_devices(service, &mut container);
-	emit_platform_and_runtime(service, &mut container);
-	emit_limits(service, in_pod, pod_fields, &mut container);
+	emit_limits(service, in_pod, &mut container);
 	emit_memory_options(name, service, &mut container, warnings);
 	emit_userns(service, in_pod, pod_fields, &mut container);
 	emit_stop(service, &mut container);
@@ -255,7 +245,6 @@ fn render_container_unit(
 		name,
 		project,
 		service,
-		services,
 		in_pod,
 		*pod_network_mode,
 		&mut container,

@@ -3,7 +3,6 @@
 use crate::compose::types::Service;
 use crate::size;
 
-use super::super::super::pod::{PodField, PodFields};
 use super::super::super::shared_values::shm_size;
 use super::super::{quote_podman_arg_value, Section};
 
@@ -21,14 +20,13 @@ pub(in super::super) fn emit_ulimits(service: &Service, container: &mut Section)
 	}
 }
 
-/// Emit `ShmSize=` plus the memory, CPU and pids limits of the service.
-pub(in super::super) fn emit_limits(
-	service: &Service,
-	in_pod: bool,
-	pod_fields: &PodFields,
-	container: &mut Section,
-) {
-	if !(in_pod && pod_fields.owns(PodField::ShmSize)) {
+/// Emit `ShmSize=` outside pod mode, plus the memory, CPU and pids limits
+/// of the service.
+pub(in super::super) fn emit_limits(service: &Service, in_pod: bool, container: &mut Section) {
+	// Podman ignores a member's own shared-memory size and mounts the pod's
+	// size instead. Keeping the directive on the member would describe a
+	// value the runtime never applies.
+	if !in_pod {
 		if let Some(shm) = shm_size(service) {
 			container.add("ShmSize", shm.to_string());
 		}

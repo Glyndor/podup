@@ -3,10 +3,10 @@
 //! Emitted alongside the `.container` units when the compose file declares
 //! `x-podman-pod: true`. The unit carries every port the pod publishes
 //! (the union of every service's `ports:`), every declared network
-//! (`Network=`), the fields every service agrees to share and the project
-//! ownership label; each `.container` unit references this pod by
-//! `Pod=<stem>.pod` and drops its own shared fields. The `.container` side
-//! of that contract is in `super::container::container_unit_with_mode`.
+//! (`Network=`), the pod-wide fields derived from the services and the
+//! project ownership label; each `.container` unit references this pod by
+//! `Pod=<stem>.pod` and drops the fields the pod carries. The `.container`
+//! side of that contract is in `super::container::container_unit_with_mode`.
 //!
 //! Every promoted pod key arrived after Podman 5.0, so
 //! those values travel through `PodmanArgs=` and keep the unit loadable on
@@ -28,8 +28,8 @@ use super::{
 /// Build the `.pod` unit for one project. The contents are a single
 /// `[Pod]` section with `PodName=`, one `Network=` per declared network,
 /// one `PublishPort=` per port (the union of every service's `ports:`),
-/// every shared field agreed by the services and one `--add-host` flag per
-/// service. Each `.container` unit references this pod by `Pod=<stem>.pod`;
+/// every pod-level field derived from the services and one `--add-host` flag
+/// per service. Each `.container` unit references this pod by `Pod=<stem>.pod`;
 /// see [`super::container::container_unit_with_mode`].
 ///
 /// Returns `None` when the project has no pod-mode extension, so callers
@@ -51,6 +51,12 @@ pub(crate) fn pod_unit(
 		// live engine creates.
 		project.to_string(),
 	);
+
+	// Podman's default shares the network, UTS and IPC namespaces. The live
+	// engine shares only the network so every member keeps its own hostname
+	// and IPC namespace. Quadlet 5.0 has no native key for this setting,
+	// so pass Podman's `--share` through `PodmanArgs=`.
+	pod.add("PodmanArgs", "--share=net".to_string());
 
 	// Every non-external network the file declares, plus the external ones by
 	// their own name. Mirrors the live engine's `pod_networks` builder.
@@ -179,3 +185,5 @@ mod fields_normalization_tests;
 mod fields_test_support;
 #[cfg(test)]
 mod fields_write_tests;
+#[cfg(test)]
+mod share_tests;
