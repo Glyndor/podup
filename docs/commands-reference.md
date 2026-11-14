@@ -146,10 +146,10 @@ podup audit --list-checks --format json | jq -r '.checks[].id'
 | `swap_unbounded` | A memory limit is in effect but `memswap_limit` is absent, `-1`, or differs from the memory limit | The service can page to disk. |
 | `no_cpu_limit` | No positive effective CPU quota and no nonblank `cpuset` | Quota comes from `cpus:`, `deploy.resources.limits.cpus:` or `cpu_quota:`. |
 | `host_device` | `devices:` has an entry | One finding per device. |
-| `unconfined_security_opt` | `security_opt` has `seccomp`, `apparmor` or `systempaths` set to `unconfined`, or `label` set to `disable` | Both `=` and `:` spellings match. A profile path such as `seccomp=/path/profile.json` does not fire. |
+| `unconfined_security_opt` | `security_opt` has `seccomp` or `apparmor` set to `unconfined`, or `label` set to `disable` | Both `=` and `:` spellings match. A profile path such as `seccomp=/path/profile.json` does not fire. An option podup does not pass on, such as `systempaths`, does not fire either. |
 | `device_cgroup_rule` | `device_cgroup_rules:` has an entry | One finding per rule. |
-| `sensitive_host_source` | A secret or config `file:` the service uses, `env_file`, `build.context`, `build.dockerfile` or a local `build.additional_contexts` entry resolves to a sensitive host path | Sensitive means the `sensitive_bind_mount` paths, the home itself, `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.docker`, `~/.config/gcloud`, `/etc/shadow` and `/etc/sudoers`. `~` is expanded in every field. |
-| `bind_outside_project` | A relative or `~` bind source resolves outside the project directory, or reaches outside through a symbolic link inside it | Absolute sources do not fire. The link test reads the host filesystem. |
+| `sensitive_host_source` | A secret or config `file:` the service uses, `env_file`, `build.context`, `build.dockerfile` or a local `build.additional_contexts` entry resolves to a sensitive host path | Sensitive means the `sensitive_bind_mount` paths, the home itself, `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.docker`, `~/.config/gcloud`, `/etc/shadow` and `/etc/sudoers`. Every path is judged as the engine reads it: `~` is expanded in a secret or config `file:` and left as written in the other fields. A path that lands on a sensitive place through a symbolic link fires too. |
+| `bind_outside_project` | A relative or `~` bind source resolves outside the project directory, or reaches outside through a symbolic link inside it | Absolute sources do not fire. The link test reads the host filesystem: a link that points back inside the project does not fire. |
 
 | Flag | Description | Default |
 |---|---|---|

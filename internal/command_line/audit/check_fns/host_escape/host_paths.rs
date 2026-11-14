@@ -1,7 +1,8 @@
 //! Path helpers shared by the checks that resolve a host path the compose file
-//! names: where it lands once the engine resolves it, and its shortest
-//! spelling.
+//! names: where it lands once the engine resolves it, its shortest spelling,
+//! and its canonical form.
 
+use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
 /// The host path `src` names, resolved the way the engine resolves a bind or
@@ -14,6 +15,40 @@ pub(super) fn resolve(src: &str, base_dir: &Path) -> PathBuf {
 		return PathBuf::from(src);
 	}
 	PathBuf::from(podup::resolve_bind_source(src, base_dir))
+}
+
+/// The host path the engine reads for a field it joins to the project
+/// directory as written: `env_file:`, `build.context`, `build.dockerfile` and
+/// a local `build.additional_contexts`. The engine does not expand `~` in
+/// them, so `~` names a directory called `~` inside the project, and that is
+/// the file it reads.
+pub(super) fn join_as_written(src: &str, base_dir: &Path) -> PathBuf {
+	base_dir.join(src)
+}
+
+/// `path` with every symbolic link resolved, or, when it does not exist, its
+/// deepest ancestor that does, with the rest of the path appended. `None`
+/// when the path cannot be resolved at all.
+///
+/// The ancestor decides where the path lands: a link in the middle of it can
+/// move the whole tail somewhere else. The tail that does not exist yet keeps
+/// the place it would take, so the result is the path the engine would read.
+pub(super) fn canonical_form(path: &Path) -> Option<PathBuf> {
+	let mut candidate = path.to_path_buf();
+	let mut tail: Vec<OsString> = Vec::new();
+	loop {
+		if let Ok(real) = std::fs::canonicalize(&candidate) {
+			let mut out = real;
+			for part in tail.iter().rev() {
+				out.push(part);
+			}
+			return Some(out);
+		}
+		tail.push(candidate.file_name()?.to_os_string());
+		if !candidate.pop() {
+			return None;
+		}
+	}
 }
 
 /// The home directory `~` expands to, read the way the engine reads it:

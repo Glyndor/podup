@@ -4,15 +4,16 @@ use super::{finding, Finding};
 
 /// `security_opt` entry that switches off a confinement layer the runtime
 /// applies by default: `seccomp=unconfined` drops the syscall filter,
-/// `apparmor=unconfined` the AppArmor profile, `label=disable` SELinux
-/// separation, and `systempaths=unconfined` unmasks `/proc` and `/sys` paths
-/// the runtime hides. One finding per entry.
+/// `apparmor=unconfined` the AppArmor profile, and `label=disable` SELinux
+/// separation. One finding per entry.
 ///
 /// The entry is split the way the engine splits it, on the first `:` or `=`,
 /// so both spellings match. A value that names a profile
 /// (`seccomp=/etc/podman/strict.json`, `apparmor=my-profile`) or another
 /// label option (`label=type:spc_t`) is a choice of confinement, not its
-/// absence, and stays silent.
+/// absence, and stays silent. An option the engine does not pass on, such as
+/// `systempaths=unconfined`, is no layer this container loses, so it stays
+/// silent too.
 pub fn check_unconfined_security_opt(
 	name: &str,
 	service: &Service,
@@ -28,7 +29,6 @@ pub fn check_unconfined_security_opt(
 			("seccomp", "unconfined") => "the seccomp syscall filter",
 			("apparmor", "unconfined") => "the AppArmor profile",
 			("label", "disable") => "SELinux label separation",
-			("systempaths", "unconfined") => "the masking of /proc and /sys paths",
 			_ => continue,
 		};
 		out.push(finding(

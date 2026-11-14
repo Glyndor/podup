@@ -273,7 +273,7 @@ pub(super) const CHECK_REGISTRY: &[CheckDescriptor] = &[
 	},
 	CheckDescriptor {
 		id: "unconfined_security_opt",
-		description: "security_opt turns off a confinement layer: seccomp, AppArmor or SELinux unconfined, or systempaths=unconfined.",
+		description: "security_opt turns off a confinement layer: the seccomp or the AppArmor profile, or the SELinux label separation.",
 		run: CheckRun::Service(check_unconfined_security_opt),
 		opt_in: None,
 	},
