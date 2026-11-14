@@ -9,5 +9,6 @@ mod mounts;
 mod networks;
 mod normalized_paths;
 mod resources;
+mod service_network;
 mod subpath;
 mod tmpfs_owner;

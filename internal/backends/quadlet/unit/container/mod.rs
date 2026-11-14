@@ -192,13 +192,19 @@ fn render_container_unit(
 	};
 	unit.add("Description", format!("{name} ({kind})"));
 	let deps = effective_depends_on(service, services);
+	let network_target = service
+		.network_mode
+		.as_deref()
+		.and_then(|m| m.strip_prefix("service:"));
 	for dep in deps.service_names() {
 		// The dependency's generated unit is named `{unit_stem(project, dep)}.container`,
 		// so its service is `{unit_stem(project, dep)}.service`; reference that, not the
 		// raw compose key, or the ordering would target a non-existent unit.
 		let dep_service = format!("{}.service", unit_stem(project, &dep));
 		unit.add("After", dep_service.clone());
-		if deps.required_for(&dep) {
+		// A shared network needs its donor even when an explicit depends_on
+		// marks it optional; emit it here to keep both directives unique.
+		if deps.required_for(&dep) || network_target == Some(dep.as_str()) {
 			unit.add("Requires", dep_service);
 		} else {
 			unit.add("Wants", dep_service);
@@ -245,6 +251,7 @@ fn render_container_unit(
 		name,
 		project,
 		service,
+		services,
 		in_pod,
 		*pod_network_mode,
 		&mut container,
