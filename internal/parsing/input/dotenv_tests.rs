@@ -60,18 +60,19 @@ fn unquoted_keeps_internal_spaces() {
 
 #[test]
 fn double_quoted_expands_all_escape_kinds() {
-	// Measured against `docker compose config` 5.7.0: `\r`, `\\`, `\"` and the
-	// control escapes resolve; an escape Docker does not know (`\'`, `\z`)
-	// keeps its backslash.
+	// Measured against `docker compose config` 5.7.0: `\r`, `\\` and `\"`
+	// resolve; an escape Docker does not know (`\'`, `\z`) keeps its backslash.
 	assert_eq!(map("FOO=\"a\\rb\"\n")["FOO"], "a\rb");
 	assert_eq!(map("FOO=\"x\\\\y\"\n")["FOO"], "x\\y");
 	assert_eq!(map("FOO=\"q\\\"q\"\n")["FOO"], "q\"q");
-	assert_eq!(
-		map("FOO=\"a\\ab\\bc\\fd\\ve\"\n")["FOO"],
-		"a\u{7}b\u{8}c\u{c}d\u{b}e"
-	);
 	assert_eq!(map("FOO=\"p\\'p\"\n")["FOO"], "p\\'p");
 	assert_eq!(map("FOO=\"a\\zb\"\n")["FOO"], "a\\zb");
+	// `\a \b \f \v` keep the backslash: decoded they would be control
+	// characters, which a value going into the compose file may not hold.
+	assert_eq!(map("FOO=\"a\\ab\\fc\"\n")["FOO"], "a\\ab\\fc");
+	// `\0` keeps the backslash and loses that one zero, as in Docker.
+	assert_eq!(map("FOO=\"a\\0b\"\n")["FOO"], "a\\b");
+	assert_eq!(map("FOO=\"a\\077b\"\n")["FOO"], "a\\77b");
 }
 
 /// `\$` is a literal dollar. The value is interpolated afterwards, so it comes
