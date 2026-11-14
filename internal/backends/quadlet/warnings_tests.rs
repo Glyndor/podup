@@ -111,9 +111,7 @@ services:
 		"stdin_open",
 		"mac_address",
 		"memswap_limit",
-		"mem_reservation",
 		"oom_kill_disable",
-		"oom_score_adj",
 		"label_file",
 		"blkio_config",
 	] {

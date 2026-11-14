@@ -29,8 +29,8 @@ pub(crate) use definition::container_name;
 pub(crate) use networking::is_rootless_user_mode;
 
 use confinement::{
-	emit_capabilities, emit_deploy_limits, emit_group_add, emit_limits, emit_security_opts,
-	emit_ulimits, emit_userns,
+	emit_capabilities, emit_deploy_limits, emit_group_add, emit_limits, emit_memory_options,
+	emit_security_opts, emit_ulimits, emit_userns,
 };
 use definition::{
 	emit_annotations, emit_identity, emit_image, emit_labels, emit_pull, emit_sysctls,
@@ -238,6 +238,7 @@ fn render_container_unit(
 	emit_ulimits(service, &mut container);
 	emit_host_config(service, in_pod, pod_fields, &mut container);
 	emit_limits(service, in_pod, pod_fields, &mut container);
+	emit_memory_options(name, service, &mut container, warnings);
 	emit_userns(service, in_pod, pod_fields, &mut container);
 	emit_stop(service, &mut container);
 	emit_network_mode(

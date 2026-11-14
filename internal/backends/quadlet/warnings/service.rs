@@ -156,18 +156,6 @@ pub(crate) fn collect_warnings(
 	if service.stdin_open.is_some() {
 		warn("stdin_open", skipped);
 	}
-	if service.memswap_limit.is_some() {
-		warn("memswap_limit", skipped);
-	}
-	if service.mem_reservation.is_some() {
-		warn("mem_reservation", skipped);
-	}
-	if service.oom_kill_disable.is_some() {
-		warn("oom_kill_disable", skipped);
-	}
-	if service.oom_score_adj.is_some() {
-		warn("oom_score_adj", skipped);
-	}
 	if service.blkio_config.is_some() {
 		warn("blkio_config", skipped);
 	}
@@ -194,9 +182,6 @@ pub(crate) fn collect_warnings(
 	}
 	if service.domainname.is_some() {
 		warn("domainname", skipped);
-	}
-	if service.mem_swappiness.is_some() {
-		warn("mem_swappiness", skipped);
 	}
 	if service.cpu_rt_runtime.is_some() {
 		warn("cpu_rt_runtime", skipped);
