@@ -24,8 +24,6 @@ fn audit_unconfined_security_opt_flags_each_layer_in_both_spellings() {
 		"apparmor:unconfined",
 		"label=disable",
 		"label:disable",
-		"systempaths=unconfined",
-		"systempaths:unconfined",
 	] {
 		let reasons = unconfined(entry);
 		assert_eq!(reasons.len(), 1, "{entry}: {reasons:#?}");
@@ -43,6 +41,9 @@ fn audit_unconfined_security_opt_passes_on_a_profile_or_other_option() {
 		"label=level:s0:c100,c200",
 		"no-new-privileges:true",
 		"unconfined",
+		// The engine does not pass `systempaths` on, so nothing is unmasked.
+		"systempaths=unconfined",
+		"systempaths:unconfined",
 	] {
 		let reasons = unconfined(entry);
 		assert!(reasons.is_empty(), "{entry}: {reasons:#?}");

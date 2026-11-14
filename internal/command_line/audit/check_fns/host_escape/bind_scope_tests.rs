@@ -92,3 +92,23 @@ fn audit_bind_outside_project_passes_on_a_symbolic_link_that_stays_inside() {
 	let reasons = outside(yaml, project.path());
 	assert!(reasons.is_empty(), "{reasons:#?}");
 }
+
+/// `../return/../data` with `return` a link back into the project lands inside
+/// it: the kernel follows the link before the `..`, so the check reads the
+/// host filesystem instead of folding the path as text.
+#[cfg(unix)]
+#[test]
+fn audit_bind_outside_project_passes_on_a_link_that_comes_back_in() {
+	let root = tempfile::tempdir().unwrap();
+	let project = root.path().join("app");
+	std::fs::create_dir_all(project.join("real/sub")).unwrap();
+	std::fs::create_dir_all(project.join("real/data")).unwrap();
+	std::os::unix::fs::symlink(project.join("real/sub"), root.path().join("return")).unwrap();
+	let yaml =
+		"services:\n  web:\n    image: alpine:3.20\n    volumes: [\"../return/../data:/data\"]\n";
+	assert!(
+		outside(yaml, &project).is_empty(),
+		"{:#?}",
+		outside(yaml, &project)
+	);
+}

@@ -9,7 +9,7 @@ use super::super::super::check_sensitive_bind::{
 	host_path_exposure, normalize_host_path, normalize_slashes, HostExposure,
 };
 use super::super::super::HostContext;
-use super::host_paths::{home_dir, resolve};
+use super::host_paths::{canonical_form, home_dir, join_as_written, resolve};
 use super::{finding, Finding};
 
 /// Directories under the home that hold credentials, paired with what they
@@ -54,12 +54,13 @@ struct HostSource {
 /// and sudo files under `/etc`. A path under the home that holds no
 /// credentials stays silent: projects live there.
 ///
-/// Every path is resolved as the engine resolves a bind source, so `~` is
-/// the home directory and a relative path is joined to the project
-/// directory. The engine joins `env_file:` and build paths to the project
-/// directory without expanding `~`; this check expands it anyway, because a
-/// compose file that names the home there means the home, and Docker Compose
-/// reads it so.
+/// Every path is resolved the way the engine resolves the field that names
+/// it. A `file:` secret or config is resolved as a bind source, so `~` is the
+/// home directory and a relative path is joined to the project directory. An
+/// `env_file:`, a `build.context`, a `build.dockerfile` and a local
+/// `build.additional_contexts` are joined to the project directory as
+/// written, because the engine does not expand `~` in them: the file it
+/// reads is the one this check judges.
 pub fn check_sensitive_host_source(name: &str, host: &HostContext<'_>) -> Vec<Finding> {
 	let home = home_dir().map(|h| normalize_host_path(&h.to_string_lossy()));
 	let mut out = Vec::new();
@@ -68,10 +69,19 @@ pub fn check_sensitive_host_source(name: &str, host: &HostContext<'_>) -> Vec<Fi
 		// The path as written (slashes folded) first, then with `.` and `..`
 		// folded: a symbolic link can make the two differ, and either one
 		// landing on the list is a finding.
-		let hit = [normalize_slashes(&resolved), normalize_host_path(&resolved)]
+		let mut forms = vec![normalize_slashes(&resolved), normalize_host_path(&resolved)];
+		// The canonical form too: a link inside the project can point at a
+		// credentials directory, and only the host filesystem knows where it
+		// lands.
+		if let Some(canonical) = canonical_form(&source.resolved) {
+			let canonical = canonical.to_string_lossy();
+			forms.push(normalize_slashes(&canonical));
+			forms.push(normalize_host_path(&canonical));
+		}
+		let Some((path, what)) = forms
 			.into_iter()
-			.find_map(|path| exposure(&path, home.as_deref()).map(|what| (path, what)));
-		let Some((path, what)) = hit else {
+			.find_map(|path| exposure(&path, home.as_deref()).map(|what| (path, what)))
+		else {
 			continue;
 		};
 		let HostSource {
@@ -137,7 +147,7 @@ fn host_sources(host: &HostContext<'_>) -> Vec<HostSource> {
 		push(
 			"env_file:".to_string(),
 			entry.path(),
-			resolve(entry.path(), base),
+			join_as_written(entry.path(), base),
 		);
 	}
 	if let Some(build) = &service.build {
@@ -164,10 +174,10 @@ fn build_sources(
 	}
 	let context = build.context();
 	if !is_remote(context) {
-		let context_dir = resolve(context, base);
+		let context_dir = join_as_written(context, base);
 		if let (None, Some(dockerfile)) = (build.dockerfile_inline(), build.dockerfile()) {
 			// The engine reads the Dockerfile relative to the context.
-			let path = resolve(dockerfile, &context_dir);
+			let path = join_as_written(dockerfile, &context_dir);
 			push("build.dockerfile:".to_string(), dockerfile, path);
 		}
 		push("build.context:".to_string(), context, context_dir);
@@ -175,7 +185,7 @@ fn build_sources(
 	for (name, value) in build.additional_contexts() {
 		if !is_remote(&value) && !value.starts_with("service:") {
 			let origin = format!("build.additional_contexts: {name}:");
-			push(origin, &value, resolve(&value, base));
+			push(origin, &value, join_as_written(&value, base));
 		}
 	}
 }

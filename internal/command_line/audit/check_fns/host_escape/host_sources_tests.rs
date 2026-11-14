@@ -95,7 +95,7 @@ fn audit_sensitive_host_source_passes_on_an_env_file_in_the_project() {
 #[test]
 fn audit_sensitive_host_source_flags_the_home_as_build_context() {
 	let home = test_home();
-	for context in ["~".to_string(), home.clone(), format!("{home}/")] {
+	for context in [home.clone(), format!("{home}/")] {
 		let yaml = format!("services:\n  web:\n    build: \"{context}\"\n");
 		let reasons = sources(&yaml);
 		assert_eq!(reasons.len(), 1, "{context}: {reasons:#?}");
@@ -145,12 +145,14 @@ fn audit_sensitive_host_source_passes_on_a_dockerfile_beside_the_context() {
 
 #[test]
 fn audit_sensitive_host_source_flags_a_local_additional_context() {
-	let yaml = "services:\n  web:\n    build:\n      context: .\n      additional_contexts:\n        keys: ~/.ssh\n        base: docker-image://alpine:3.20\n";
-	let _home = test_home();
-	let reasons = sources(yaml);
+	let home = test_home();
+	let yaml = format!(
+		"services:\n  web:\n    build:\n      context: .\n      additional_contexts:\n        keys: {home}/.ssh\n        base: docker-image://alpine:3.20\n"
+	);
+	let reasons = sources(&yaml);
 	assert_eq!(reasons.len(), 1, "{reasons:#?}");
 	assert!(
-		reasons[0].contains("build.additional_contexts: keys: ~/.ssh resolves to"),
+		reasons[0].contains("build.additional_contexts: keys:"),
 		"{reasons:#?}"
 	);
 	assert!(reasons[0].contains("SSH keys"), "{reasons:#?}");
@@ -160,4 +162,32 @@ fn audit_sensitive_host_source_flags_a_local_additional_context() {
 fn audit_sensitive_host_source_passes_on_image_and_service_contexts() {
 	let yaml = "services:\n  web:\n    build:\n      context: .\n      additional_contexts:\n        base: docker-image://alpine:3.20\n        lib: service:lib\n        assets: ./assets\n  lib:\n    build: ./lib\n";
 	assert!(sources(yaml).is_empty(), "{:#?}", sources(yaml));
+}
+
+/// The engine joins `env_file:` and build paths to the project as written, so
+/// `~` there is a directory called `~` inside the project, and that is the file
+/// podup reads. The audit judges that file, not the home.
+#[test]
+fn audit_sensitive_host_source_reads_a_tilde_in_env_file_and_build_as_written() {
+	let yaml = "services:\n  web:\n    env_file: ~/.ssh/key\n    build:\n      context: \"~\"\n";
+	assert!(sources(yaml).is_empty(), "{:#?}", sources(yaml));
+}
+
+/// A secret whose path crosses a link inside the project lands where the link
+/// points; the host filesystem says where, so the check asks it.
+#[cfg(unix)]
+#[test]
+fn audit_sensitive_host_source_follows_a_link_inside_the_project() {
+	let root = tempfile::tempdir().unwrap();
+	let project = root.path().join("app");
+	std::fs::create_dir(&project).unwrap();
+	std::os::unix::fs::symlink("/etc", project.join("keys")).unwrap();
+	let yaml = "services:\n  web:\n    image: alpine:3.20\n    secrets: [pw]\nsecrets:\n  pw:\n    file: ./keys/shadow\n";
+	let reasons: Vec<String> = report_in(yaml, &project)
+		.into_iter()
+		.filter(|f| f.check == "sensitive_host_source")
+		.map(|f| f.reason)
+		.collect();
+	assert_eq!(reasons.len(), 1, "{reasons:#?}");
+	assert!(reasons[0].contains("/etc/shadow"), "{reasons:#?}");
 }
