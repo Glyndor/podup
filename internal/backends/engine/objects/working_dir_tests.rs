@@ -184,3 +184,71 @@ async fn a_project_without_the_record_is_not_refused() {
 		.await
 		.expect("no record, no refusal");
 }
+
+/// After a `down` without `-v` the networks are gone and the volumes stay; the
+/// volumes still carry the directory, so a later `down -v` from elsewhere is
+/// refused.
+#[tokio::test]
+async fn a_volume_alone_still_records_the_directory() {
+	let here = tempfile::tempdir().unwrap();
+	let fake = fake_podman::start(|method, target| {
+		if method == "GET" && target.contains("/volumes/json") {
+			(
+				200,
+				r#"[{"Name":"proj_data","Labels":{"podup.project":"proj","podup.working_dir":"/srv/a"}},
+				   {"Name":"other_data","Labels":{"podup.project":"other","podup.working_dir":"/srv/x"}}]"#
+					.to_string(),
+			)
+		} else if method == "GET" && target.contains("/json") {
+			(200, "[]".to_string())
+		} else {
+			(404, r#"{"message":"not used"}"#.to_string())
+		}
+	});
+	let e = Engine::with_base_dir(fake.client(), "proj".into(), here.path().to_path_buf());
+	let err = e
+		.refuse_if_project_used_elsewhere("down -v", false)
+		.await
+		.expect_err("the volume's record refuses it");
+	assert!(err.to_string().contains("/srv/a"), "{err}");
+}
+
+/// The check decides whether `--force` is needed, so when the daemon cannot
+/// answer it the teardown is refused instead of let through.
+#[tokio::test]
+async fn a_failed_listing_refuses_the_teardown() {
+	let here = tempfile::tempdir().unwrap();
+	let fake = fake_podman::start(|_, _| (500, r#"{"message":"boom"}"#.to_string()));
+	let e = Engine::with_base_dir(fake.client(), "proj".into(), here.path().to_path_buf());
+	let err = e
+		.refuse_if_project_used_elsewhere("down -v", false)
+		.await
+		.expect_err("refused when the record cannot be read");
+	assert!(err.to_string().contains("--force"), "{err}");
+	e.refuse_if_project_used_elsewhere("down -v", true)
+		.await
+		.expect("--force still lets it run");
+}
+
+/// Two directories whose names differ only in bytes that are not UTF-8 keep
+/// different labels.
+#[tokio::test]
+async fn directories_that_are_not_utf8_keep_distinct_labels() {
+	use std::os::unix::ffi::OsStringExt;
+	let root = tempfile::tempdir().unwrap();
+	let a = root
+		.path()
+		.join(std::ffi::OsString::from_vec(b"dir-\xff".to_vec()));
+	let b = root
+		.path()
+		.join(std::ffi::OsString::from_vec(b"dir-\xfe".to_vec()));
+	if std::fs::create_dir(&a).is_err() || std::fs::create_dir(&b).is_err() {
+		// A file system that refuses such names has nothing to collide.
+		return;
+	}
+	let fake = fake_podman::start(|_, _| (404, "{}".to_string()));
+	let la = Engine::with_base_dir(fake.client(), "proj".into(), a).working_dir_label();
+	let lb = Engine::with_base_dir(fake.client(), "proj".into(), b).working_dir_label();
+	assert_ne!(la, lb);
+	assert!(la.ends_with("\\xff") && lb.ends_with("\\xfe"), "{la} {lb}");
+}

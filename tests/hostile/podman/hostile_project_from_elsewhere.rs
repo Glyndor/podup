@@ -70,3 +70,19 @@ fn force_lets_the_teardown_run() {
 	// The teardown itself runs against an engine that answers every removal.
 	assert_eq!(code, Some(0), "{text}");
 }
+
+/// Without a compose file `down -p NAME -v` tears the project down by its
+/// label alone, which is how a name shared with another directory reaches its
+/// volumes; it is refused the same way.
+#[test]
+fn down_by_label_with_volumes_from_another_directory_is_refused() {
+	let fake = FakeEngine::start(created_elsewhere);
+	let (code, text) = fake.run_with_status(None, &[], &["-p", "vzh-elsewhere", "down", "-v"]);
+	assert_ne!(code, Some(0), "not refused:\n{text}");
+	assert!(text.contains("--force"), "{text}");
+	assert_eq!(
+		deletes(&fake),
+		0,
+		"something was removed before the refusal"
+	);
+}
