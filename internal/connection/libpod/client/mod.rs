@@ -30,6 +30,7 @@ use std::sync::Arc;
 
 use super::error::PodmanError;
 
+mod dry_run;
 mod exchange;
 mod init_cleanup;
 mod link;
@@ -80,6 +81,9 @@ pub struct Client {
 	/// The removals of init containers whose owner was cancelled, still running
 	/// in the background; see [`Client::drain_init_cleanups`].
 	init_cleanups: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+	/// `--dry-run`: every request that is not a read is refused before it is
+	/// sent; see [`Client::with_dry_run`].
+	dry_run: bool,
 }
 
 /// Lowest libpod API major version podup supports. Podman 5.x reports `5.x.y`;

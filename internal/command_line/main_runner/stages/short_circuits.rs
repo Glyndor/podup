@@ -125,7 +125,7 @@ pub(crate) async fn run_ls(
 			)));
 		}
 	}
-	let client = connect_podman(socket, connection_pool_size).await?;
+	let client = connect_podman(socket, connection_pool_size, false).await?;
 	podup::list_projects_filtered(
 		&client,
 		podup::LsOptions::new(all, quiet, format == crate::cli::OutputFormat::Json),
@@ -213,7 +213,8 @@ pub(crate) async fn run_ps(
 		.with_all_services(true)
 		.print_configured_services(&file);
 	}
-	let client = connect_podman(cli.socket.as_deref(), cli.connection_pool_size).await?;
+	let client =
+		connect_podman(cli.socket.as_deref(), cli.connection_pool_size, cli.dry_run).await?;
 	let engine = podup::Engine::with_base_dir(client, project, base_dir);
 	engine
 		.ps_filtered_with_display(
@@ -269,7 +270,8 @@ pub(crate) async fn run_down_by_label(cli: &Cli, compose_files: &[PathBuf]) -> p
 	}
 	let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
 	let stop_timeout = podup::validate_stop_timeout(*timeout)?;
-	let client = connect_podman(cli.socket.as_deref(), cli.connection_pool_size).await?;
+	let client =
+		connect_podman(cli.socket.as_deref(), cli.connection_pool_size, cli.dry_run).await?;
 	let engine =
 		podup::Engine::with_base_dir(client, project, base_dir).with_stop_timeout(stop_timeout);
 	// `down` is mutating, so serialize it against concurrent runs as the

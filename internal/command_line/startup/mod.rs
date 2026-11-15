@@ -17,6 +17,7 @@ mod config_normalize;
 mod config_render;
 mod config_volumes;
 mod control_escape;
+pub(crate) mod dry_run;
 mod project_env;
 pub(crate) use config_normalize::anchor_service_bind_sources;
 #[cfg(test)]
@@ -372,6 +373,12 @@ pub(crate) fn parse_cli() -> Cli {
 				cli.env_file = resolve::anchor_env_files(&cli.env_file, &cwd);
 			}
 			project_env::apply(&mut cli);
+			// `--dry-run` refuses a command that would change something before
+			// anything else runs, so a refused command has touched nothing.
+			if let Some(message) = dry_run::refusal(&cli) {
+				let _ = podup::ui::errln!("podup: error: {message}");
+				process::exit(2);
+			}
 			cli
 		}
 		Err(e) => match e.kind() {
