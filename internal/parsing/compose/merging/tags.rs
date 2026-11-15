@@ -206,14 +206,26 @@ pub(crate) type EntryResets = Vec<(&'static str, String)>;
 /// ordinary default-configured network or volume. They are read from the raw
 /// document so the merge can drop the entry from the earlier files.
 pub(crate) fn entry_resets(raw: &Value) -> EntryResets {
+	entries_tagged(raw, "!reset")
+}
+
+/// The top-level entries a raw document replaces with `!override`, such as
+/// `networks: { n1: !override {driver: bridge} }`. The entry from the earlier
+/// files is dropped so this one is taken whole, as Docker Compose does, instead
+/// of being merged key by key into it.
+pub(crate) fn entry_overrides(raw: &Value) -> EntryResets {
+	entries_tagged(raw, "!override")
+}
+
+fn entries_tagged(raw: &Value, tag: &str) -> EntryResets {
 	let mut found = Vec::new();
 	for section in ENTRY_SECTIONS {
 		let Some(entries) = raw.get(section).and_then(Value::as_mapping) else {
 			continue;
 		};
 		for (name, entry) in entries {
-			let reset = matches!(entry, Value::Tagged(t) if t.tag == "!reset");
-			if let (true, Some(name)) = (reset, name.as_str()) {
+			let tagged = matches!(entry, Value::Tagged(t) if t.tag == tag);
+			if let (true, Some(name)) = (tagged, name.as_str()) {
 				found.push((section, name.to_string()));
 			}
 		}
@@ -234,11 +246,20 @@ pub(crate) fn drop_entry_resets(raw: &mut Value) {
 /// [`entry_resets`] of a compose file on disk; empty when it cannot be read or
 /// parsed, for the same reason as [`collect_from_file`].
 pub(crate) fn entry_resets_from_file(path: &std::path::Path) -> EntryResets {
+	entries_from_file(path, entry_resets)
+}
+
+/// [`entry_overrides`] of a compose file on disk, with the same fallback.
+pub(crate) fn entry_overrides_from_file(path: &std::path::Path) -> EntryResets {
+	entries_from_file(path, entry_overrides)
+}
+
+fn entries_from_file(path: &std::path::Path, read: fn(&Value) -> EntryResets) -> EntryResets {
 	let Ok(text) = std::fs::read_to_string(path) else {
 		return EntryResets::new();
 	};
 	serde_yaml::from_str::<Value>(&text)
-		.map(|raw| entry_resets(&raw))
+		.map(|raw| read(&raw))
 		.unwrap_or_default()
 }
 

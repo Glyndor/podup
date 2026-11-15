@@ -1,6 +1,6 @@
 [package]
 name = "podup"
-version = "5.19.0"
+version = "5.20.0"
 edition = "2021"
 rust-version = "1.88"
 # podup is a binary that happens to build a library, not a library that ships a
@@ -233,6 +233,10 @@ path = "tests/hostile/input/host_files/hostile_non_utf8_paths.rs"
 [[test]]
 name = "hostile_podman"
 path = "tests/hostile/podman/hostile_podman.rs"
+
+[[test]]
+name = "hostile_project_from_elsewhere"
+path = "tests/hostile/podman/hostile_project_from_elsewhere.rs"
 
 [[test]]
 name = "hostile_push"

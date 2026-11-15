@@ -41,36 +41,6 @@ fn target_key(target: &str) -> String {
 	}
 }
 
-/// Merge `ports:` dropping an entry that repeats one already there. A short
-/// entry with no protocol is TCP, so `8080:80` and `8080:80/tcp` are the same
-/// mapping; a long-form entry is compared as written, as docker does.
-pub(super) fn merge_ports(
-	base: Vec<crate::compose::types::PortMapping>,
-	over: Vec<crate::compose::types::PortMapping>,
-) -> Vec<crate::compose::types::PortMapping> {
-	use crate::compose::types::PortMapping;
-
-	/// `None` when a long entry cannot be serialised to compare: it is then kept
-	/// rather than guessed equal to another.
-	fn key(port: &PortMapping) -> Option<String> {
-		match port {
-			PortMapping::Short(text) if !text.contains('/') => Some(format!("{text}/tcp")),
-			PortMapping::Short(text) => Some(text.clone()),
-			long => serde_yaml::to_string(long).ok(),
-		}
-	}
-
-	let mut seen: std::collections::HashSet<String> = base.iter().filter_map(key).collect();
-	let mut out = base;
-	for item in over {
-		let repeated = key(&item).is_some_and(|k| !seen.insert(k));
-		if !repeated {
-			out.push(item);
-		}
-	}
-	out
-}
-
 /// Merge `devices:` by **container path**, with the override winning.
 ///
 /// docker compose keeps one entry per path a device appears at, so remapping a
@@ -279,13 +249,30 @@ where
 	}
 
 	/// The lists, by path from the block's root, that compose appends to instead
-	/// of replacing: measured against `docker compose config` 5.7.0.
+	/// of replacing: measured against `docker compose config` 5.7.0. The blocks
+	/// are `build`, `deploy`, `develop` and `blkio_config`, and no path is shared
+	/// between two of them.
+	const APPENDS: &[&[&str]] = &[
+		&["cache_from"],
+		&["cache_to"],
+		&["tags"],
+		&["extra_hosts"],
+		&["platforms"],
+		&["resources", "reservations", "devices"],
+		&["placement", "constraints"],
+		&["placement", "preferences"],
+		&["watch"],
+		&["weight_device"],
+		&["device_read_bps"],
+		&["device_write_bps"],
+		&["device_read_iops"],
+		&["device_write_iops"],
+	];
+
 	fn appends(path: &[String]) -> bool {
-		let path: Vec<&str> = path.iter().map(String::as_str).collect();
-		matches!(
-			path.as_slice(),
-			["cache_from"] | ["tags"] | ["extra_hosts"] | ["resources", "reservations", "devices"]
-		)
+		APPENDS
+			.iter()
+			.any(|known| known.iter().copied().eq(path.iter().map(String::as_str)))
 	}
 
 	match (base, over) {

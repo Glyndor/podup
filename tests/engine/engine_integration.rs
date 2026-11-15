@@ -115,6 +115,8 @@ mod container_options;
 mod depends_on_health;
 #[path = "engine_integration/observe/exec/exec_query.rs"]
 mod exec_query;
+#[path = "engine_integration/workload/lifecycle/host_limits.rs"]
+mod host_limits;
 #[path = "engine_integration/workload/dependencies/implicit_dependencies.rs"]
 mod implicit_dependencies;
 #[path = "engine_integration/compose_files/include_extends.rs"]
@@ -275,6 +277,8 @@ mod pod_fixtures;
 mod pod_on_pasta;
 #[path = "engine_integration/workload/pod/pod_recreate.rs"]
 mod pod_recreate;
+#[path = "engine_integration/workload/pod/pod_shm_hostname.rs"]
+mod pod_shm_hostname;
 #[path = "engine_integration/workload/pod/pod_teardown.rs"]
 mod pod_teardown;
 #[path = "engine_integration/workload/pod/pod_userns_mode.rs"]

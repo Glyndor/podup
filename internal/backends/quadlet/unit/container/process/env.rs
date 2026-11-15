@@ -16,11 +16,14 @@ pub(in super::super) fn emit_environment(service: &Service, container: &mut Sect
 	}
 }
 
-/// Emit one `EnvironmentFile=` line per `env_file:` entry.
+/// Emit one `EnvironmentFile=` line per `env_file:` entry, reporting a file
+/// Podman would read differently from `up`.
 pub(in super::super) fn emit_env_files(
+	name: &str,
 	service: &Service,
 	base_dir: &Path,
 	container: &mut Section,
+	warnings: &mut Vec<String>,
 ) {
 	// `EnvironmentFile=` is resolved by podman-systemd.unit(5) against the unit
 	// file's own directory, not the compose file's. Units are installed to
@@ -28,7 +31,22 @@ pub(in super::super) fn emit_env_files(
 	// looking for `~/.config/containers/systemd/.env`, and `--env-file` on a
 	// missing path is fatal, so the container never starts. Resolve against the
 	// compose base directory, the same way the build context is.
-	for entry in service.env_file.to_entries() {
-		container.add("EnvironmentFile", abs_against(base_dir, entry.path()));
+	let entries = service.env_file.to_entries();
+	// What each file gives the container under `podman --env-file`, next to
+	// what it gives it under `up`, which resolves the files, the service's own
+	// `environment:` and the project environment together.
+	let reads = super::env_file_check::reads(&entries, &service.environment.to_map(), base_dir);
+	for (entry, read) in entries.iter().zip(reads) {
+		let path = abs_against(base_dir, entry.path());
+		if !read.is_empty() {
+			warnings.push(format!(
+				"{name}: env_file {:?} uses dotenv syntax (quotes, `export`, inline comments \
+				 or `${{VAR}}`) that `podman --env-file` reads as written, so the container \
+				 gets other values for: {}",
+				entry.path(),
+				read.detail()
+			));
+		}
+		container.add("EnvironmentFile", path);
 	}
 }

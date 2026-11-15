@@ -12,6 +12,7 @@ pub(crate) fn collect_warnings(
 	services: &IndexMap<String, Service>,
 	warnings: &mut Vec<String>,
 	prebuilt: bool,
+	in_pod: bool,
 ) {
 	let mut warn = |field: &str, detail: &str| {
 		warnings.push(format!("{name}: {field} {detail}"));
@@ -127,27 +128,31 @@ pub(crate) fn collect_warnings(
 		);
 	}
 
+	// These modes are emitted, but sharing a namespace changes the isolation
+	// boundary. Report that consequence rather than claiming the key is lost.
+	for (field, mode, exposed) in [
+		("ipc", &service.ipc, "IPC objects and shared memory"),
+		("pid", &service.pid, "processes"),
+		("uts", &service.uts, "hostname and domain name"),
+		("cgroup", &service.cgroup, "cgroup hierarchy"),
+	] {
+		if let Some(mode) = mode.as_deref() {
+			if mode == "host" {
+				warn(
+					field,
+					&format!("host exposes the host's {exposed} and reduces isolation"),
+				);
+			} else if mode.starts_with("container:") || mode.starts_with("service:") {
+				warn(field, &format!("{mode} shares another container's {exposed} and reduces isolation; an external container must be available when this unit starts"));
+			}
+		}
+	}
 	// Fields that are honoured at runtime but have no [Container] Quadlet key and
 	// no unambiguous PodmanArgs= fallback. Warn so the generated unit is never
 	// silently incomplete; add the flag by hand if it is required.
 	let skipped = "has no Quadlet equivalent and is skipped";
-	if service.ipc.is_some() {
-		warn("ipc", skipped);
-	}
-	if service.pid.is_some() {
-		warn("pid", skipped);
-	}
-	if service.uts.is_some() {
-		warn("uts", skipped);
-	}
-	if service.cgroup.is_some() {
-		warn("cgroup", skipped);
-	}
 	if service.cgroup_parent.is_some() {
 		warn("cgroup_parent", skipped);
-	}
-	if service.runtime.is_some() {
-		warn("runtime", skipped);
 	}
 	if service.tty.is_some() {
 		warn("tty", skipped);
@@ -155,29 +160,8 @@ pub(crate) fn collect_warnings(
 	if service.stdin_open.is_some() {
 		warn("stdin_open", skipped);
 	}
-	if service.memswap_limit.is_some() {
-		warn("memswap_limit", skipped);
-	}
-	if service.mem_reservation.is_some() {
-		warn("mem_reservation", skipped);
-	}
-	if service.oom_kill_disable.is_some() {
-		warn("oom_kill_disable", skipped);
-	}
-	if service.oom_score_adj.is_some() {
-		warn("oom_score_adj", skipped);
-	}
 	if service.blkio_config.is_some() {
 		warn("blkio_config", skipped);
-	}
-	if service.gpus.is_some() {
-		warn(
-			"gpus",
-			"has no Quadlet equivalent and is skipped; GPU devices are not assigned",
-		);
-	}
-	if service.platform.is_some() {
-		warn("platform", skipped);
 	}
 	if !service.device_cgroup_rules.is_empty() {
 		warn("device_cgroup_rules", skipped);
@@ -193,9 +177,6 @@ pub(crate) fn collect_warnings(
 	}
 	if service.domainname.is_some() {
 		warn("domainname", skipped);
-	}
-	if service.mem_swappiness.is_some() {
-		warn("mem_swappiness", skipped);
 	}
 	if service.cpu_rt_runtime.is_some() {
 		warn("cpu_rt_runtime", skipped);
@@ -227,9 +208,6 @@ pub(crate) fn collect_warnings(
 	if service.use_api_socket.is_some() {
 		warn("use_api_socket", skipped);
 	}
-	if !service.label_file.to_list().is_empty() {
-		warn("label_file", skipped);
-	}
 	// MAC addresses have no Quadlet key (service-level or per-network), and a
 	// per-network value cannot be expressed via the whole-container PodmanArgs=.
 	let has_network_mac = service
@@ -241,8 +219,9 @@ pub(crate) fn collect_warnings(
 	if service.mac_address.is_some() || has_network_mac {
 		warn("mac_address", skipped);
 	}
-	// Only the first static IP across the service's networks is emitted; a second
-	// one would need per-network IP scoping that Quadlet does not support.
+	// Inside a pod only the first static IP across the service's networks is
+	// emitted (the pod owns the attachments); outside one each `Network=` line
+	// carries its own.
 	let static_ip_count = service
 		.networks
 		.names()
@@ -250,10 +229,10 @@ pub(crate) fn collect_warnings(
 		.filter_map(|n| service.networks.config_for(n))
 		.filter(|c| c.ipv4_address.is_some() || c.ipv6_address.is_some())
 		.count();
-	if static_ip_count > 1 {
+	if in_pod && static_ip_count > 1 {
 		warn(
 			"ipv4_address/ipv6_address",
-			"is set on multiple networks; Quadlet emits only the first (no per-network IP scoping)",
+			"is set on multiple networks; inside a pod Quadlet emits only the first",
 		);
 	}
 }

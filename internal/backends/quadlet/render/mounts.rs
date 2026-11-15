@@ -33,6 +33,7 @@ pub(in super::super) fn render_volume(
 			}
 		}
 		VolumeMount::Long {
+			volume_type,
 			source,
 			target,
 			read_only,
@@ -41,7 +42,14 @@ pub(in super::super) fn render_volume(
 			..
 		} => {
 			let src = source.clone().unwrap_or_default();
-			let src = if declared_volumes.contains(&src.as_str()) {
+			// A long-form bind names a host path even without `./`: `source: data`
+			// is the project's `data` directory, as `up` reads it, not a volume
+			// named `data` that Podman would create empty.
+			let src = if matches!(volume_type, VolumeType::Bind) && !src.is_empty() {
+				without_current_dir(&crate::engine::container::resolve_bind_source(
+					&src, base_dir,
+				))
+			} else if declared_volumes.contains(&src.as_str()) {
 				format!("{}.volume", unit_stem(project, &src))
 			} else if let Some(name) = external_volumes.get(src.as_str()) {
 				name.to_string()
@@ -108,10 +116,48 @@ pub(in super::super) fn render_volume(
 /// An absolute source, and a bare name (a volume reference, not a path), are
 /// returned unchanged.
 fn resolve_source_path(src: &str, base_dir: &std::path::Path) -> String {
+	// An absolute source is kept, but without its `.` components, for the same
+	// `RequiresMountsFor=` reason as a relative one.
+	if std::path::Path::new(src).is_absolute() {
+		return without_current_dir(src);
+	}
 	if !(src.starts_with('.') || src.starts_with('~')) {
 		return src.to_string();
 	}
-	crate::engine::container::resolve_bind_source(src, base_dir)
+	without_current_dir(&crate::engine::container::resolve_bind_source(
+		src, base_dir,
+	))
+}
+
+/// Drop the `.` components of a resolved path (`/srv/app/./data` is
+/// `/srv/app/data`). Quadlet turns a `Volume=` source into
+/// `RequiresMountsFor=`, and systemd ignores a path that is not normalized
+/// there, so the unit lost its ordering after the mount. `..` is kept: through
+/// a symlink it does not name the same directory read lexically, and Podman
+/// resolves it on the host.
+fn without_current_dir(path: &str) -> String {
+	// Done on the text so the separators stay as the engine wrote them (a
+	// rebuilt `PathBuf` would turn `/` into `\` on Windows). A backslash is a
+	// separator only on Windows: on Unix it is a character of a file name, so
+	// `foo\.\bar` is left alone there.
+	let separators: &[&str] = if cfg!(windows) { &["/", "\\"] } else { &["/"] };
+	let mut out = path.to_string();
+	for sep in separators {
+		let dot = format!("{sep}.{sep}");
+		while out.contains(&dot) {
+			out = out.replace(&dot, sep);
+		}
+		if let Some(stripped) = out.strip_suffix(&format!("{sep}.")) {
+			// `/.` is the root and `C:\.` the root of a drive: keep the
+			// separator, or the path would be empty or relative to the drive.
+			out = if stripped.is_empty() || stripped.ends_with(':') {
+				format!("{stripped}{sep}")
+			} else {
+				stripped.to_string()
+			};
+		}
+	}
+	out
 }
 
 /// If `vol` is a long-form `type: tmpfs` mount, render it as a Quadlet `Tmpfs=`
@@ -143,4 +189,64 @@ pub(in super::super) fn render_tmpfs_mount(vol: &VolumeMount) -> Option<String> 
 	} else {
 		Some(format!("{target}:{}", opts.join(",")))
 	}
+}
+
+/// If `vol` is a long-form volume mount with `volume.subpath`, render it as a
+/// Quadlet `Mount=` value. `Volume=` becomes `podman -v`, which has no subpath
+/// option (`invalid option type "subpath=..."`), so the whole volume was
+/// mounted instead of the folder `up` mounts. `--mount` takes it.
+///
+/// `None` for any other mount, and for a subpath that would break the option
+/// list (a `,` or `=`), which then falls back to `Volume=` and is reported.
+pub(in super::super) fn render_subpath_mount(
+	vol: &VolumeMount,
+	project: &str,
+	declared_volumes: &[&str],
+	external_volumes: &ExternalNames<'_>,
+) -> Option<String> {
+	let VolumeMount::Long {
+		volume_type: VolumeType::Volume,
+		source: Some(source),
+		target,
+		read_only,
+		volume: Some(options),
+		..
+	} = vol
+	else {
+		return None;
+	};
+	let subpath = options.subpath.as_deref()?;
+	if subpath.contains([',', '=']) || target.contains([',', '=']) {
+		tracing::warn!(
+			"volume {source:?}: subpath {subpath:?} cannot be written as a Quadlet `Mount=` \
+			 option; the whole volume is mounted at {target:?}"
+		);
+		return None;
+	}
+	let source = if declared_volumes.contains(&source.as_str()) {
+		format!("{}.volume", unit_stem(project, source))
+	} else if let Some(name) = external_volumes.get(source.as_str()) {
+		name.to_string()
+	} else {
+		source.clone()
+	};
+	let mut out = format!("type=volume,source={source},destination={target},subpath={subpath}");
+	for (set, flag) in [
+		(*read_only == Some(true), "ro"),
+		(options.noexec == Some(true), "noexec"),
+		(options.nosuid == Some(true), "nosuid"),
+		(options.nodev == Some(true), "nodev"),
+	] {
+		if set {
+			out.push(',');
+			out.push_str(flag);
+		}
+	}
+	if options.nocopy == Some(true) {
+		tracing::warn!(
+			"volume {source:?}: nocopy has no `--mount` spelling; it is dropped for the \
+			 subpath mount at {target:?}"
+		);
+	}
+	Some(out)
 }

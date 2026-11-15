@@ -162,6 +162,44 @@ fn audit_flags_a_sensitive_bind_in_every_spelling_that_stays_absolute() {
 }
 
 #[test]
+fn audit_flags_host_escapes_outside_volumes_and_out_of_the_project() {
+	let sb = Sandbox::new();
+	// A link inside the project that leads to the home, and a key under it.
+	std::os::unix::fs::symlink(sb.root.path().join("home"), sb.project().join("link")).unwrap();
+	let file = sb.write(
+		"c.yaml",
+		"services:\n  web:\n    image: alpine:3.20\n    devices: [/dev/kvm]\n\
+		 \x20   device_cgroup_rules: [\"a *:* rwm\"]\n    security_opt: [label=disable]\n\
+		 \x20   secrets: [key]\n    build:\n      context: $HOME\n\
+		 \x20   volumes:\n      - ../outside:/o\n      - ./link/notes:/notes\n\
+		 secrets:\n  key:\n    file: ~/.ssh/id_ed25519\n",
+	);
+	let outcome = sb.run(&file, &["audit", "--format", "json"]);
+	assert_eq!(outcome.code, Some(0), "{}", outcome.text);
+	for id in [
+		"host_device",
+		"device_cgroup_rule",
+		"unconfined_security_opt",
+		"sensitive_host_source",
+		"bind_outside_project",
+	] {
+		assert!(outcome.text.contains(id), "{id} missing:\n{}", outcome.text);
+	}
+	// The secret under `~/.ssh` and the home as build context, each named.
+	assert!(outcome.text.contains("SSH keys"), "{}", outcome.text);
+	assert!(
+		outcome.text.contains("the whole home directory"),
+		"{}",
+		outcome.text
+	);
+	assert!(
+		outcome.text.contains("goes through a symbolic link"),
+		"{}",
+		outcome.text
+	);
+}
+
+#[test]
 fn generated_unit_names_stay_inside_the_output_directory() {
 	let sb = Sandbox::new();
 	let victim = sb.project().join("victim");

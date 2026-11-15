@@ -78,12 +78,7 @@ fn warns_for_silently_dropped_runtime_fields() {
 services:
   s:
     image: x
-    ipc: host
-    pid: host
-    uts: host
-    cgroup: private
     cgroup_parent: /sys/fs/cgroup/p
-    runtime: crun
     tty: true
     stdin_open: true
     mac_address: "02:42:ac:11:00:02"
@@ -91,8 +86,6 @@ services:
     mem_reservation: 256m
     oom_kill_disable: true
     oom_score_adj: -500
-    label_file:
-      - ./labels.env
     blkio_config:
       weight: 300
 "#;
@@ -101,20 +94,12 @@ services:
 		.warnings
 		.join("\n");
 	for field in [
-		"ipc",
-		"pid",
-		"uts",
-		"cgroup",
 		"cgroup_parent",
-		"runtime",
 		"tty",
 		"stdin_open",
 		"mac_address",
 		"memswap_limit",
-		"mem_reservation",
 		"oom_kill_disable",
-		"oom_score_adj",
-		"label_file",
 		"blkio_config",
 	] {
 		assert!(
@@ -130,8 +115,6 @@ fn warns_for_additional_silently_dropped_fields() {
 services:
   s:
     image: x
-    gpus: all
-    platform: linux/arm64
     domainname: example.internal
     links:
       - other
@@ -150,8 +133,6 @@ services:
 		.warnings
 		.join("\n");
 	for field in [
-		"gpus",
-		"platform",
 		"domainname",
 		"links",
 		"external_links",
@@ -201,7 +182,7 @@ services:
 }
 
 #[test]
-fn warns_when_static_ip_set_on_multiple_networks() {
+fn static_ips_on_multiple_networks_are_not_reported_outside_a_pod() {
 	let yaml = r#"
 services:
   s:
@@ -219,9 +200,10 @@ networks:
 	let joined = generate_at(&file, "proj", std::path::Path::new("/srv/app"))
 		.warnings
 		.join("\n");
+	// Each `Network=` line carries its own address, so nothing is lost.
 	assert!(
-		joined.contains("ipv4_address/ipv6_address"),
-		"missing multi-network static-IP warning; got:\n{joined}"
+		!joined.contains("ipv4_address/ipv6_address"),
+		"no warning outside a pod; got:\n{joined}"
 	);
 }
 

@@ -57,6 +57,25 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 		return Err(e);
 	}
 	for (name, svc) in &file.services {
+		for (field, mode) in [("ipc", &svc.ipc), ("pid", &svc.pid)] {
+			if let Some(target) = mode.as_deref().and_then(|m| m.strip_prefix("service:")) {
+				if !file.services.contains_key(target) {
+					return Err(ComposeError::Unsupported(format!(
+						"service '{}': {field} references missing service '{}'",
+						crate::error::sanitize_name(name),
+						crate::error::sanitize_name(target)
+					)));
+				}
+			}
+		}
+		// Podman only allows a custom hostname in a private UTS namespace.
+		// Quadlet's generator accepts the pair and would defer failure to boot.
+		if svc.hostname.is_some() && svc.uts.as_deref().is_some_and(|m| m != "private") {
+			return Err(ComposeError::Unsupported(format!(
+				"service '{}': hostname requires a private uts namespace; remove hostname or set uts: private",
+				crate::error::sanitize_name(name)
+			)));
+		}
 		if let Some(text) = svc.umask.as_deref() {
 			crate::compose::types::service::umask::validate_runtime(name, text)?;
 		}
@@ -64,6 +83,18 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 			return Err(ComposeError::NoImageOrBuild(name.clone()));
 		}
 		parse_ports(&svc.ports)?;
+		// Quadlet writes a mount as `Volume=source:target[:options]`, so a colon
+		// inside a long-form path moves the split and Podman mounts something else.
+		for vol in &svc.volumes {
+			if let crate::compose::types::VolumeMount::Long { source, target, .. } = vol {
+				if source.as_deref().is_some_and(|p| p.contains(':')) || target.contains(':') {
+					return Err(ComposeError::Unsupported(format!(
+						"service '{}': a colon in a mount path cannot be written in a Quadlet unit",
+						crate::error::sanitize_name(name)
+					)));
+				}
+			}
+		}
 		// The same refusal as `up`: Podman has no `uid=`/`gid=` for a tmpfs, and a
 		// unit that carried one would fail when it starts.
 		for entry in svc.tmpfs.to_list() {

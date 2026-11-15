@@ -39,7 +39,7 @@ services:
 	assert!(c.contains("WorkingDir=/srv"));
 	assert!(c.contains("ReadOnly=true"));
 	assert!(c.contains("RunInit=true"));
-	assert!(c.contains("Entrypoint=/bin/sh -c"));
+	assert!(c.contains("Entrypoint=[\"/bin/sh\",\"-c\"]"));
 	assert!(c.contains("Exec=server --port 9000"));
 	assert!(c.contains("AddCapability=NET_ADMIN"));
 	assert!(c.contains("DropCapability=MKNOD"));
@@ -195,7 +195,7 @@ networks:
 		"Pull=always",
 		"LogDriver=journald",
 		"PodmanArgs=--log-opt=\"tag=mytag\"",
-		"PodmanArgs=--network-alias=\"web-alias\"",
+		"Network=p-net.network:alias=s,alias=web-alias",
 		"PodmanArgs=--memory=\"256m\"",
 	] {
 		assert!(c.contains(needle), "missing `{needle}` in:\n{c}");

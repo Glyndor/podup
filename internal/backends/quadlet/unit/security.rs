@@ -15,27 +15,34 @@ pub(super) fn secret_field(value: &str) -> String {
 		.collect()
 }
 
-/// Whether a top-level secret definition is an inline `content:`/`environment:`
-/// source, the kind `up` materialises as a project-scoped native Podman secret.
-/// `external:` wins (never created by podup) and a bare `file:`/empty def is a
-/// bind/host source kept under its compose name.
+/// Whether a top-level secret definition is one `up` creates as a project-scoped
+/// native Podman secret: a `content:`, `environment:` or `file:` source.
+/// `external:` wins (never created by podup) and an empty def is left alone.
 pub(super) fn is_inline_secret(def: Option<&SecretConfig>) -> bool {
 	def.is_some_and(|d| {
-		d.external != Some(true) && (d.content.is_some() || d.environment.is_some())
+		d.external != Some(true)
+			&& (d.content.is_some() || d.environment.is_some() || d.file.is_some())
 	})
 }
 
-/// Resolve the `Secret=` source name for a service secret reference. An inline
-/// secret resolves to the project-scoped name `{project}_secret_{name}` that
-/// `up` creates (via `plan::scoped_name`), so generated units reference the same
-/// secret `up` would; any other secret keeps its compose source name.
+/// Resolve the `Secret=` source name for a service secret reference. A secret
+/// `up` creates resolves to the project-scoped name `{project}_secret_{name}`
+/// (via `plan::scoped_name`), so generated units reference the same secret `up`
+/// would; an `external:` one resolves to its `name:` when it has one, as the
+/// engine does; any other keeps its compose source name.
 fn secret_source_name(
 	project: &str,
 	source: &str,
 	secrets: &IndexMap<String, SecretConfig>,
 ) -> String {
-	if is_inline_secret(secrets.get(source)) {
+	let def = secrets.get(source);
+	if is_inline_secret(def) {
 		format!("{project}_secret_{source}")
+	} else if let Some(name) = def
+		.filter(|d| d.external == Some(true))
+		.and_then(|d| d.name.as_deref())
+	{
+		name.to_string()
 	} else {
 		source.to_string()
 	}

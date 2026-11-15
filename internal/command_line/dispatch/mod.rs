@@ -271,10 +271,21 @@ pub(crate) async fn dispatch(
 		Commands::Down {
 			volumes,
 			remove_orphans,
+			force,
 			rmi,
 			timeout: _,
 			services,
 		} => {
+			if volumes || remove_orphans {
+				let action = if volumes {
+					"down -v"
+				} else {
+					"down --remove-orphans"
+				};
+				engine
+					.refuse_if_project_used_elsewhere(action, force)
+					.await?;
+			}
 			if remove_orphans {
 				engine.remove_orphans(file).await?;
 			}

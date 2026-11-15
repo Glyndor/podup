@@ -237,6 +237,7 @@ pub(crate) async fn run_ps(
 pub(crate) async fn run_down_by_label(cli: &Cli, compose_files: &[PathBuf]) -> podup::Result<()> {
 	let Commands::Down {
 		volumes,
+		force,
 		rmi,
 		timeout,
 		services,
@@ -274,6 +275,14 @@ pub(crate) async fn run_down_by_label(cli: &Cli, compose_files: &[PathBuf]) -> p
 	// `down` is mutating, so serialize it against concurrent runs as the
 	// normal teardown path does.
 	let _lock = engine.lock_project()?;
+	// The same guard the compose-file path has: without a file the project is
+	// found by name alone, which is how a name shared with another directory
+	// reaches its volumes.
+	if *volumes {
+		engine
+			.refuse_if_project_used_elsewhere("down -v", *force)
+			.await?;
+	}
 	engine.down_by_label(*volumes).await
 }
 

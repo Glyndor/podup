@@ -36,7 +36,7 @@ fn render_volume_short_declared_uses_dot_volume_with_options() {
 			&external_volumes(),
 			&base()
 		),
-		"/srv/app/./host:/app"
+		"/srv/app/host:/app"
 	);
 }
 

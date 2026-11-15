@@ -50,6 +50,9 @@ impl Engine {
 			&with_jobs
 		};
 		let whole_project = services.is_empty();
+		if whole_project {
+			self.warn_if_project_used_elsewhere().await;
+		}
 		if let Some(missing) = services.iter().find(|s| !file.services.contains_key(*s)) {
 			return Err(crate::error::ComposeError::ServiceNotFound(missing.clone()));
 		}

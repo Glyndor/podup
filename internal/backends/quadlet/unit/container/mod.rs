@@ -14,12 +14,15 @@ use super::security::{is_inline_secret, map_security_opt, render_secret};
 use super::pod::PodFields;
 use super::{
 	abs_against, collect_warnings, owner_marker, quote_podman_arg_value, render_command,
-	render_publish_port, render_restart, render_tmpfs_mount, render_volume, safe_unit_stem,
-	sorted_label_pairs, sorted_pairs, unit_stem, ExternalNames, QuadletUnit, Section,
+	render_publish_port, render_restart, render_subpath_mount, render_tmpfs_mount, render_volume,
+	safe_unit_stem, sorted_label_pairs, sorted_pairs, unit_stem, ExternalNames, QuadletUnit,
+	Section,
 };
 
 mod confinement;
 mod definition;
+mod host_runtime;
+mod namespaces;
 mod networking;
 mod process;
 mod storage;
@@ -28,21 +31,22 @@ pub(crate) use definition::container_name;
 pub(crate) use networking::is_rootless_user_mode;
 
 use confinement::{
-	emit_capabilities, emit_deploy_limits, emit_group_add, emit_limits, emit_security_opts,
-	emit_ulimits, emit_userns,
+	emit_capabilities, emit_deploy_limits, emit_group_add, emit_limits, emit_memory_options,
+	emit_security_opts, emit_ulimits, emit_userns,
 };
 use definition::{
 	emit_annotations, emit_identity, emit_image, emit_labels, emit_pull, emit_sysctls,
 };
+use host_runtime::{emit_cdi_devices, emit_platform_and_runtime};
 use networking::{
 	emit_expose, emit_host_config, emit_network_extras, emit_network_mode, emit_networks,
 	emit_ports,
 };
 use process::{
 	emit_command, emit_env_files, emit_environment, emit_logging, emit_restart, emit_runtime,
-	emit_stop,
+	emit_stop, emit_timeouts,
 };
-use storage::{emit_secrets, emit_tmpfs, emit_volumes};
+use storage::{emit_bind_dirs, emit_secrets, emit_tmpfs, emit_volumes};
 
 /// Project-wide inputs every generated unit needs, as opposed to the per-service
 /// ones (`name`, `service`). Grouped rather than passed loose because the set
@@ -197,7 +201,13 @@ fn render_container_unit(
 		// raw compose key, or the ordering would target a non-existent unit.
 		let dep_service = format!("{}.service", unit_stem(project, &dep));
 		unit.add("After", dep_service.clone());
-		if deps.required_for(&dep) {
+		// A shared namespace needs its donor even when an explicit depends_on
+		// marks it optional; emit it here to keep both directives unique.
+		let namespace_donor = [&service.ipc, &service.pid]
+			.into_iter()
+			.flatten()
+			.any(|m| m.strip_prefix("service:") == Some(dep.as_str()));
+		if deps.required_for(&dep) || namespace_donor {
 			unit.add("Requires", dep_service);
 		} else {
 			unit.add("Wants", dep_service);
@@ -207,7 +217,8 @@ fn render_container_unit(
 	let mut container = Section::new("Container");
 	emit_identity(project, name, service, in_pod, &mut container);
 	emit_image(project, name, service, mode, &mut container);
-	emit_runtime(name, service, in_pod, pod_fields, &mut container);
+	emit_runtime(name, service, &mut container);
+	namespaces::emit_namespaces(service, ctx, &mut container);
 	emit_ports(service, in_pod, &mut container);
 	emit_environment(service, &mut container);
 	emit_volumes(
@@ -219,6 +230,7 @@ fn render_container_unit(
 		&mut container,
 	);
 	emit_networks(
+		name,
 		service,
 		project,
 		declared_networks,
@@ -226,16 +238,19 @@ fn render_container_unit(
 		in_pod,
 		&mut container,
 	);
-	emit_labels(name, project, service, &mut container, warnings);
+	emit_labels(name, project, service, base_dir, &mut container, warnings);
 	emit_capabilities(service, &mut container);
 	emit_command(service, &mut container);
 	emit_annotations(service, &mut container);
-	emit_env_files(service, base_dir, &mut container);
+	emit_env_files(name, service, base_dir, &mut container, warnings);
 	emit_tmpfs(service, &mut container);
 	emit_sysctls(service, &mut container);
 	emit_ulimits(service, &mut container);
 	emit_host_config(service, in_pod, pod_fields, &mut container);
-	emit_limits(service, in_pod, pod_fields, &mut container);
+	emit_cdi_devices(service, &mut container);
+	emit_platform_and_runtime(service, &mut container);
+	emit_limits(service, in_pod, &mut container);
+	emit_memory_options(name, service, &mut container, warnings);
 	emit_userns(service, in_pod, pod_fields, &mut container);
 	emit_stop(service, &mut container);
 	emit_network_mode(
@@ -254,15 +269,19 @@ fn render_container_unit(
 	emit_pull(service, mode, &mut container);
 	emit_deploy_limits(service, &mut container);
 	emit_secrets(name, project, service, secrets, &mut container, warnings);
-	render_healthcheck(name, service, &mut container, warnings);
+	let waits_for_health = render_healthcheck(name, service, &mut container, warnings);
 
 	let mut svc = Section::new("Service");
 	match role {
-		UnitRole::Service => emit_restart(service, &mut svc),
+		UnitRole::Service => {
+			emit_restart(service, &mut svc);
+			emit_timeouts(service, waits_for_health, &mut svc);
+		}
 		// One run per start. A scheduled run is not retried, and `Restart=`
 		// is only valid next to `oneshot` as `no` or `on-failure`.
 		UnitRole::Job => svc.add("Type", "oneshot".to_string()),
 	}
+	emit_bind_dirs(name, service, base_dir, &mut svc, warnings);
 
 	collect_warnings(
 		name,
@@ -270,6 +289,7 @@ fn render_container_unit(
 		services,
 		warnings,
 		mode == ContainerUnitMode::Prebuilt && super::build::emits_build_unit(service),
+		in_pod,
 	);
 
 	// The unforgeable ownership marker comes first, as its own comment line;

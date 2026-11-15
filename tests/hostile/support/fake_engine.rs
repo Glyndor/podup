@@ -59,6 +59,30 @@ impl FakeEngine {
 		Self { dir, seen }
 	}
 
+	/// Like [`FakeEngine::start`], with each connection served on its own thread,
+	/// so a handler that holds one request back does not hold back the others.
+	/// For races between two processes, where one of them has to get through
+	/// while the other one waits.
+	pub fn start_concurrent(handler: Handler) -> Self {
+		let dir = tempfile::tempdir().expect("temp dir");
+		std::fs::set_permissions(
+			dir.path(),
+			std::os::unix::fs::PermissionsExt::from_mode(0o700),
+		)
+		.expect("chmod");
+		let listener = UnixListener::bind(dir.path().join("podman.sock")).expect("bind socket");
+		let seen = Arc::new(Mutex::new(Vec::new()));
+		let log = seen.clone();
+		std::thread::spawn(move || {
+			for stream in listener.incoming() {
+				let Ok(stream) = stream else { break };
+				let log = log.clone();
+				std::thread::spawn(move || serve(stream, handler, &log, ""));
+			}
+		});
+		Self { dir, seen }
+	}
+
 	/// The directory podup runs in; put the compose file and its siblings here.
 	pub fn dir(&self) -> &std::path::Path {
 		self.dir.path()

@@ -311,18 +311,16 @@ fn a_quote_inside_the_other_quote_does_not_disable_the_alias_guard() {
 	);
 }
 
-/// Keys spend the document budget like values do. Each key here is far below
-/// the per-value cap, so only a shared budget notices that together they are
-/// more than the document is allowed to expand to.
+/// Mapping keys are not interpolated, as in Docker Compose: `${KEYNAME}` stays
+/// the key as written, while the value beside it is still interpolated.
 #[test]
-fn interpolated_keys_spend_the_document_budget() {
-	let pad = "x".repeat(1024 * 1024);
-	let keys: String = (0..24)
-		.map(|i| format!("      k{i:02}_${{PAD}}: ok\n"))
-		.collect();
-	let yaml = format!("services:\n  web:\n    image: x\n    labels:\n{keys}");
-	let result = interpolated_value(&yaml, Some(&vars(&[("PAD", &pad)])));
-	assert!(result.is_err(), "24 MiB of expanded keys was accepted");
+fn mapping_keys_are_not_interpolated() {
+	let yaml = "services:\n  web:\n    image: x\n    labels:\n      ${KEYNAME}: ${VALUE}\n";
+	let value =
+		interpolated_value(yaml, Some(&vars(&[("KEYNAME", "mykey"), ("VALUE", "v")]))).unwrap();
+	let labels = &value["services"]["web"]["labels"];
+	assert_eq!(labels["${KEYNAME}"].as_str(), Some("v"), "{labels:?}");
+	assert!(labels.get("mykey").is_none(), "{labels:?}");
 }
 
 /// A resolved value is read back as YAML only to adopt a number or a boolean,

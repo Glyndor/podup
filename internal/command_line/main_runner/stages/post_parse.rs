@@ -130,7 +130,7 @@ pub(crate) fn render_audit(
 	if *wildcard_binds {
 		opt_in.push("--wildcard-binds");
 	}
-	let report = audit::audit_containers(&resolved, &containers, &opt_in);
+	let report = audit::audit_containers(&resolved, &base_dir, &containers, &opt_in);
 	let output = match format {
 		AuditFormat::Table => audit::render_table(&containers, &report),
 		AuditFormat::Json => audit::render_json(&report),

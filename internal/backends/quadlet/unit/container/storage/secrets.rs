@@ -6,7 +6,7 @@ use crate::compose::types::{SecretConfig, Service};
 
 use super::super::{is_inline_secret, render_secret, Section};
 
-/// Emit one `Secret=` line per `secrets:` entry, warning about an inline secret
+/// Emit one `Secret=` line per `secrets:` entry, warning about a secret
 /// Quadlet does not create.
 pub(in super::super) fn emit_secrets(
 	name: &str,
@@ -17,7 +17,7 @@ pub(in super::super) fn emit_secrets(
 	warnings: &mut Vec<String>,
 ) {
 	for secret in &service.secrets {
-		// An inline (`content:`/`environment:`) secret is created by `up` under the
+		// A `content:`/`environment:`/`file:` secret is created by `up` under the
 		// project-scoped name `{project}_secret_{name}`; reference that here so the
 		// generated unit points at the secret `up` would create, not an unscoped
 		// (possibly colliding or non-existent) host secret. Quadlet does not create
@@ -25,7 +25,7 @@ pub(in super::super) fn emit_secrets(
 		let source = secret.source();
 		if is_inline_secret(secrets.get(source)) {
 			warnings.push(format!(
-				"{name}: inline secret {source:?} is referenced but Quadlet does not \
+				"{name}: secret {source:?} is referenced but Quadlet does not \
 				 create it; provision the project-scoped secret \"{project}_secret_{source}\" \
 				 first (e.g. via `podup up`)"
 			));

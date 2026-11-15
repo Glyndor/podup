@@ -22,9 +22,11 @@ secrets:
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
-	assert!(c.contains("Secret=tok"));
-	assert!(c.contains("Secret=cred,target=/run/cred,uid=100"));
-	assert!(!out.warnings.iter().any(|w| w.contains("secrets")));
+	// `up` creates a `file:` secret as `{project}_secret_{name}`, so the unit
+	// names that one and the operator is told to provision it.
+	assert!(c.contains("Secret=p_secret_tok\n"), "in:\n{c}");
+	assert!(c.contains("Secret=p_secret_cred,target=/run/cred,uid=100"));
+	assert!(out.warnings.iter().any(|w| w.contains("\"p_secret_tok\"")));
 }
 
 #[test]
@@ -112,4 +114,23 @@ services:
 			"`{line}` was not resolved against the compose base directory"
 		);
 	}
+}
+
+/// A long-form bind names a host path even without `./`: `up` mounts the
+/// project's `data` directory, so the unit must not turn it into a volume named
+/// `data` that Podman would create empty.
+#[test]
+fn a_relative_long_form_bind_is_anchored_to_the_project() {
+	let yaml = "services:\n  s:\n    image: x\n    volumes:\n      - {type: bind, source: data, target: /data}\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "p-s.container").contents;
+	// Built with `join` so the separator matches the host; `Volume=` is not a
+	// word-split key, so the value is never quoted.
+	let shown = std::path::Path::new("/srv/app")
+		.join("data")
+		.display()
+		.to_string();
+	let value = format!("{shown}:/data");
+	assert!(c.contains(&format!("Volume={value}")), "{c}");
 }

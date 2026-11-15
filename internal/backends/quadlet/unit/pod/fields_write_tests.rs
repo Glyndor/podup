@@ -1,14 +1,15 @@
 //! Pod-unit rendering tests for fields shared by every member container.
 
-use super::fields_test_support::{pod_contents, two_services, two_services_on_front};
+use super::fields_test_support::{pod_contents, render, two_services, two_services_on_front, unit};
 
 #[test]
-fn pod_writes_hostname() {
-	let pod = pod_contents(&two_services("    hostname: shared-host\n"));
-	assert!(
-		pod.contains("PodmanArgs=--hostname=\"shared-host\""),
-		"missing hostname flag in:\n{pod}"
-	);
+fn hostname_stays_on_each_container() {
+	let out = render(&two_services("    hostname: shared-host\n"));
+	assert!(!unit(&out, "demo.pod").contents.contains("--hostname="));
+	for name in ["demo-web.container", "demo-db.container"] {
+		let container = &unit(&out, name).contents;
+		assert!(container.contains("HostName=shared-host\n"), "{container}");
+	}
 }
 
 #[test]
@@ -67,10 +68,10 @@ fn pod_writes_userns() {
 }
 
 #[test]
-fn pod_writes_shm_size() {
+fn pod_writes_shm_size_in_bytes() {
 	let pod = pod_contents(&two_services("    shm_size: 64m\n"));
 	assert!(
-		pod.contains("PodmanArgs=--shm-size=\"64m\""),
+		pod.contains("PodmanArgs=--shm-size=\"67108864\""),
 		"missing shared-memory flag in:\n{pod}"
 	);
 }

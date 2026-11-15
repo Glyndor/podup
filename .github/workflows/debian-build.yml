@@ -6,6 +6,7 @@ on:
       - develop
     paths:
       - "debian/**"
+      - ".cargo/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "internal/**"
@@ -51,6 +52,7 @@ on:
       - develop
     paths:
       - "debian/**"
+      - ".cargo/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "internal/**"

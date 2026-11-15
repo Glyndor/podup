@@ -1,13 +1,14 @@
-//! Hash of the pod's mutable surface: port set, network set, host entries.
+//! Hash of the pod's mutable surface.
 //!
-//! Only these three change the shape of a pod that cannot be edited in
-//! place, so only these three contribute to the hash. Anything else (the
-//! service command, the image, the labels) is a container-level concern
-//! and is covered by the per-container `config_hash`.
+//! The port set, network set, host entries, user namespace, network mode and
+//! shared-memory size are fixed when the pod is created. A change to any of
+//! them requires recreating the pod. Anything else (the service command, the
+//! image, the labels) is a container-level concern and is covered by the
+//! per-container `config_hash`.
 //!
-//! The three inputs are sorted before serialisation, so two projects with
-//! the same networks/ports/hosts declared in different orders hash the
-//! same. The serialisation is the same canonical form
+//! The collection inputs are sorted before serialisation, so two projects
+//! with the same networks, ports or hosts declared in different orders hash
+//! the same. The serialisation is the same canonical form
 //! [`crate::engine::container::config_hash`] uses (round-trip through
 //! `serde_json::Value` so map key order is deterministic), so a project
 //! whose network list is reordered by the parser does not flap the hash.
@@ -17,8 +18,8 @@ use sha2::{Digest, Sha256};
 use crate::compose::types::ComposeFile;
 use crate::ports::ParsedPort;
 
-/// Hash the port set, network set and host entries into a stable 64-hex
-/// string, the way the per-container `config_hash` hashes a service.
+/// Hash the pod's create-time surface into a stable 64-hex string, the way
+/// the per-container `config_hash` hashes a service.
 pub(crate) fn pod_config_hash(parsed_ports: &[Vec<ParsedPort>], file: &ComposeFile) -> String {
 	let mut hasher = Sha256::new();
 
@@ -83,6 +84,13 @@ pub(crate) fn pod_config_hash(parsed_ports: &[Vec<ParsedPort>], file: &ComposeFi
 		serde_json::to_value(super::pod_network_mode(file)).expect("network_mode serialises");
 	hasher.update(b"network_mode");
 	hash_canon(&mut hasher, &network_mode_value);
+	// The pod's shared-memory mount is fixed at create time. A change to the
+	// selected size must recreate the pod so every member receives the new
+	// size instead of the one mounted by the previous pod.
+	let shm_size_value =
+		serde_json::to_value(super::pod_shm_size(file).bytes).expect("shm_size serialises");
+	hasher.update(b"shm_size");
+	hash_canon(&mut hasher, &shm_size_value);
 
 	hasher
 		.finalize()

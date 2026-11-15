@@ -119,8 +119,9 @@ Stop and remove containers. With service names only those services are removed,
 and the networks, the pod and the volumes are left alone; \fB\-v\fR cannot be
 combined with names. \fB\-v\fR/\fB\-\-volumes\fR also removes named
 volumes declared in the compose file; \fB\-\-remove\-orphans\fR also removes
-containers for services no longer in the file; \fB\-\-rmi\fR \fIall\fR|\fIlocal\fR
-also removes the service images; \fB\-t\fR/\fB\-\-timeout\fR \fISECONDS\fR is the
+containers for services no longer in the file; both are refused when the
+project was created from another directory unless \fB\-\-force\fR is given;
+\fB\-\-rmi\fR \fIall\fR|\fIlocal\fR also removes the service images; \fB\-t\fR/\fB\-\-timeout\fR \fISECONDS\fR is the
 grace period before containers are killed.
 .TP
 .B start

@@ -17,7 +17,7 @@ Pull images for the named services, or all services if none are given.
 
 Service `pull_policy` values `daily`, `weekly`, `every_<n>[wdhms]` and the podup extension `refresh` map to `newer`, including Quadlet `Pull=newer`. Podup checks the registry and keeps the local image when current, potentially using more network than the interval implies. It emits one warning per service: `pull_policy "<value>" is treated as "newer": podup does not track when an image was last pulled`.
 
-Warnings name the effective policy after an engine override. Fixed overrides, and `x-podman-autoupdate: registry` on `pull` and `up`, suppress the time-policy warning; `config` and `generate quadlet` still emit it for such a service. Build services use or build their local image. In the Quadlet export only services with a `build:` get `Pull=never` and no time-policy warning; an `image:`-only service keeps its own policy (`Pull=newer` for `daily`) and still warns.
+Warnings name the effective policy after an engine override. Fixed overrides, and `x-podman-autoupdate: registry` on `pull` and `up`, suppress the time-policy warning; `config` and `generate quadlet` still emit it for such a service. Build services use or build their local image. In the `generate quadlet` export every service keeps its own policy (`Pull=newer` for `daily`) and a time-based one warns, a service with a `build:` included; `Pull=never` without that warning is what `autostart install --mode quadlet` writes for a service with a `build:`.
 
 The podup extension `pull_refresh_after` is an optional string, validated and otherwise unused, with no extra warning for `refresh` and no warning under fixed policies. The accepted grammar is `([0-9]+[wdhms])+`, or `every_([0-9]+[wdhms])+` for a policy, using ASCII digits and lowercase units with a checked total of at most 4294967295 seconds. Empty numbers, malformed values, fractions, subsecond units, signs, whitespace and overflow are refused with the service, value and accepted values. `up`, `run`, `create`, `pull`, `build`, standalone `watch`, watch rebuilds and pod recreation validate before mutation; `config` and the Quadlet export gate validate too. `config --no-interpolate` also validates these two fields strictly and refuses unresolved variables. CLI policy options retain the fixed choices in the table above.
 
@@ -42,7 +42,11 @@ The `.build` unit carries the compose `build:` fields. `context` and `dockerfile
 
 A value the flag cannot take is reported instead of being passed through: an `additional_contexts` entry that names a service (`service:other`) instead of pointing at a path or a URL, a `ulimits` name outside the Linux rlimit set, an `isolation` that is not one of the buildah isolation types (`oci`, `rootless`, `chroot`), and a `secrets` entry whose id or path holds a comma (the `Secret=` value is a comma-separated option list).
 
-In pod mode, shared-field warnings use `x-podman-pod: <field>: <reason>; the value stays on each container`. Reasons include service disagreement, empty or blank DNS entries, and static pod addresses without exactly one declared network. See the [pod field mapping](docker-migration.md#pod-mode-x-podman-pod-true).
+The `.container` unit carries `ipc:`, `pid:`, `uts:` and `cgroup:` as `PodmanArgs=--ipc=`, `--pid=`, `--uts=` and `--cgroupns=`; a `service:` donor adds `Requires=`, and a `host:` or `container:` mode warns because it gives up isolation. `runtime`, `platform` and `gpus` are carried too, and `label_file` becomes `Label=` lines. Validation refuses what Quadlet cannot express: a `service:` namespace donor that is not in the project, a `hostname:` with a `uts:` other than `private` (Podman allows a custom hostname only in a private UTS namespace), and a long-form mount whose `source:` or `target:` contains a colon, which `Volume=source:target` would split in the wrong place; `up` is not affected by the last one.
+
+The export reports every compose field it cannot carry and skips it: `tty`, `stdin_open`, `blkio_config`, `device_cgroup_rules`, `storage_opt`, `links`, `external_links`, `domainname`, `cpu_rt_runtime`, `cpu_rt_period`, `cpu_count`, `cpu_percent`, `attach`, `develop`, `credential_spec`, `isolation`, `provider`, `use_api_socket`, `mac_address`, `cgroup_parent`, `configs`, `volumes_from`, `profiles`, `pre_start`, `post_start` and `pre_stop`. A `scale:` above one replica is ignored because Quadlet emits one container per service.
+
+In pod mode, most shared-field warnings use `x-podman-pod: <field>: <reason>; the value stays on each container`. Reasons include service disagreement, empty or blank DNS entries, and static pod addresses without exactly one declared network. `shm_size` is different: its warning uses `x-podman-pod: shm_size: services disagree; the pod uses <bytes> bytes (<services>)`, because the largest declared size still moves to the pod. See the [pod field mapping](docker-migration.md#pod-mode-x-podman-pod-true).
 
 | Flag | Description | Default |
 |---|---|---|
@@ -145,6 +149,11 @@ podup audit --list-checks --format json | jq -r '.checks[].id'
 | `no_health_action` | A non-disabled `healthcheck:` has no `x-podman-on-failure` extension | An unhealthy container stays unhealthy. |
 | `swap_unbounded` | A memory limit is in effect but `memswap_limit` is absent, `-1`, or differs from the memory limit | The service can page to disk. |
 | `no_cpu_limit` | No positive effective CPU quota and no nonblank `cpuset` | Quota comes from `cpus:`, `deploy.resources.limits.cpus:` or `cpu_quota:`. |
+| `host_device` | `devices:` has an entry | One finding per device. |
+| `unconfined_security_opt` | `security_opt` has `seccomp` or `apparmor` set to `unconfined`, or `label` set to `disable` | Both `=` and `:` spellings match. A profile path such as `seccomp=/path/profile.json` does not fire. An option podup does not pass on, such as `systempaths`, does not fire either. |
+| `device_cgroup_rule` | `device_cgroup_rules:` has an entry | One finding per rule. |
+| `sensitive_host_source` | A secret or config `file:` the service uses, `env_file`, `build.context`, `build.dockerfile` or a local `build.additional_contexts` entry resolves to a sensitive host path | Sensitive means the `sensitive_bind_mount` paths, the home itself, `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.docker`, `~/.config/gcloud`, `/etc/shadow` and `/etc/sudoers`. Every path is judged as the engine reads it: `~` is expanded in a secret or config `file:` and left as written in the other fields. A path that lands on a sensitive place through a symbolic link fires too. |
+| `bind_outside_project` | A relative or `~` bind source resolves outside the project directory, or reaches outside through a symbolic link inside it | Absolute sources do not fire. The link test reads the host filesystem: a link that points back inside the project does not fire. |
 
 | Flag | Description | Default |
 |---|---|---|
@@ -306,7 +315,7 @@ The infra container stays running when the last service exits, in both API and Q
 - Services reach each other on `localhost`. `up` adds one `<service>:127.0.0.1` host entry per service. They share one port space, so two services cannot listen on the same container port.
 - `ports:` are published by the pod.
 - Only the network namespace is shared. UTS and IPC stay per container.
-- `up` records a hash of the pod's ports, networks and host entries. When it changes, `up` recreates the pod and every member container, which discards their writable layers.
+- `up` records a hash of the pod's create-time settings: ports, networks, host entries, user namespace, network mode and shared-memory size. When it changes, `up` recreates the pod and every member container, which discards their writable layers.
 
 What is refused, before anything is created:
 

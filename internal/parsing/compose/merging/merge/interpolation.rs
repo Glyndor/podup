@@ -9,7 +9,8 @@ use super::guards::guard_alias_expansion;
 ///
 /// Mapping values and sequence items are coerced through [`interpolate_scalar`]
 /// (so an interpolated numeric/boolean keeps its YAML type, matching
-/// docker-compose's typed fields); mapping keys are interpolated as plain text.
+/// docker-compose's typed fields); mapping keys are left as they are written,
+/// because Docker Compose does not interpolate them.
 pub(super) fn interpolate_value(
 	value: &mut serde_yaml::Value,
 	vars: &HashMap<String, String>,
@@ -18,7 +19,7 @@ pub(super) fn interpolate_value(
 ) -> Result<()> {
 	// String-only fields are selected by their direct schema context.
 	let serde_yaml::Value::Mapping(root) = value else {
-		return interpolate_in(value, vars, spent, warned, false, None);
+		return interpolate_in(value, vars, spent, warned, false, None, "");
 	};
 	if !mapping_needs_interp(root) {
 		return Ok(());
@@ -26,7 +27,8 @@ pub(super) fn interpolate_value(
 	let taken = std::mem::take(root);
 	let mut rebuilt = serde_yaml::Mapping::with_capacity(taken.len());
 	for (key, mut section) in taken {
-		let key = interpolate_key(key, vars, spent, warned)?;
+		let path = key_path("", &key);
+		warn_if_key_looks_interpolated(&key, warned);
 		let string_key: Option<fn(&str) -> bool> = match key.as_str() {
 			Some("services" | "jobs") => Some(textual::is_string_key),
 			Some("configs" | "secrets") => Some(textual::is_resource_string_key),
@@ -42,13 +44,14 @@ pub(super) fn interpolate_value(
 				let taken_entries = std::mem::take(entries);
 				let mut rebuilt_entries = serde_yaml::Mapping::with_capacity(taken_entries.len());
 				for (name, mut entry) in taken_entries {
-					let name = interpolate_key(name, vars, spent, warned)?;
-					interpolate_entry(&mut entry, vars, spent, warned, string_key)?;
+					warn_if_key_looks_interpolated(&name, warned);
+					let entry_path = key_path(&path, &name);
+					interpolate_entry(&mut entry, vars, spent, warned, string_key, &entry_path)?;
 					rebuilt_entries.insert(name, entry);
 				}
 				*entries = rebuilt_entries;
 			}
-			(other, _) => interpolate_in(other, vars, spent, warned, false, None)?,
+			(other, _) => interpolate_in(other, vars, spent, warned, false, None, &path)?,
 		}
 		rebuilt.insert(key, section);
 	}
@@ -63,12 +66,13 @@ fn interpolate_entry(
 	spent: &mut usize,
 	warned: &mut HashSet<String>,
 	string_key: fn(&str) -> bool,
+	path: &str,
 ) -> Result<()> {
 	match entry {
 		serde_yaml::Value::Tagged(tagged) => {
-			interpolate_entry(&mut tagged.value, vars, spent, warned, string_key)
+			interpolate_entry(&mut tagged.value, vars, spent, warned, string_key, path)
 		}
-		other => interpolate_in(other, vars, spent, warned, false, Some(string_key)),
+		other => interpolate_in(other, vars, spent, warned, false, Some(string_key), path),
 	}
 }
 
@@ -83,19 +87,29 @@ fn interpolate_in(
 	warned: &mut HashSet<String>,
 	text: bool,
 	string_key: Option<fn(&str) -> bool>,
+	path: &str,
 ) -> Result<()> {
 	match value {
 		serde_yaml::Value::String(s) if s.contains('$') => {
 			*value = if text {
-				serde_yaml::Value::String(crate::substitute::substitute_budgeted(
-					s, vars, spent, warned,
-				)?)
+				serde_yaml::Value::String(
+					crate::substitute::substitute_budgeted(s, vars, spent, warned)
+						.map_err(|e| with_path(e, path))?,
+				)
 			} else {
-				interpolate_scalar(s, vars, spent, warned)?
+				interpolate_scalar(s, vars, spent, warned, path)?
 			};
 		}
 		serde_yaml::Value::Tagged(tagged) => {
-			interpolate_in(&mut tagged.value, vars, spent, warned, text, string_key)?;
+			interpolate_in(
+				&mut tagged.value,
+				vars,
+				spent,
+				warned,
+				text,
+				string_key,
+				path,
+			)?;
 		}
 		serde_yaml::Value::Sequence(seq) => {
 			// Skip the recursion when no element carries a `$`: a 100-service file
@@ -105,8 +119,11 @@ fn interpolate_in(
 			if !seq.iter().any(value_needs_interp) {
 				return Ok(());
 			}
+			// A list item has no name of its own, so its path ends in `[]`,
+			// the way Docker Compose writes it.
+			let item_path = format!("{path}.[]");
 			for item in seq.iter_mut() {
-				interpolate_in(item, vars, spent, warned, text, None)?;
+				interpolate_in(item, vars, spent, warned, text, None, &item_path)?;
 			}
 		}
 		serde_yaml::Value::Mapping(map) => {
@@ -122,10 +139,19 @@ fn interpolate_in(
 			let taken = std::mem::take(map);
 			let mut rebuilt = serde_yaml::Mapping::with_capacity(taken.len());
 			for (key, mut val) in taken {
-				let key = interpolate_key(key, vars, spent, warned)?;
+				warn_if_key_looks_interpolated(&key, warned);
+				let child_path = key_path(path, &key);
 				let value_is_text =
 					text || string_key.is_some_and(|is_string| key.as_str().is_some_and(is_string));
-				interpolate_in(&mut val, vars, spent, warned, value_is_text, None)?;
+				interpolate_in(
+					&mut val,
+					vars,
+					spent,
+					warned,
+					value_is_text,
+					None,
+					&child_path,
+				)?;
 				rebuilt.insert(key, val);
 			}
 			*map = rebuilt;
@@ -185,8 +211,10 @@ fn interpolate_scalar(
 	vars: &HashMap<String, String>,
 	spent: &mut usize,
 	warned: &mut HashSet<String>,
+	path: &str,
 ) -> Result<serde_yaml::Value> {
-	let resolved = crate::substitute::substitute_budgeted(s, vars, spent, warned)?;
+	let resolved = crate::substitute::substitute_budgeted(s, vars, spent, warned)
+		.map_err(|e| with_path(e, path))?;
 	if resolved.is_empty() {
 		return Ok(serde_yaml::Value::String(String::new()));
 	}
@@ -211,22 +239,72 @@ fn interpolate_scalar(
 	}
 }
 
-/// Interpolate a mapping key. Keys stay strings (a key is never coerced to a
-/// number/boolean) so the document shape is preserved.
-///
-/// A key spends the same document budget as a value. With its own budget per
-/// key, a thousand keys of a megabyte each stayed under every limit and the
-/// rebuilt mapping held a gigabyte.
-fn interpolate_key(
-	key: serde_yaml::Value,
-	vars: &HashMap<String, String>,
-	spent: &mut usize,
-	warned: &mut HashSet<String>,
-) -> Result<serde_yaml::Value> {
-	match key {
-		serde_yaml::Value::String(s) if s.contains('$') => Ok(serde_yaml::Value::String(
-			crate::substitute::substitute_budgeted(&s, vars, spent, warned)?,
-		)),
-		other => Ok(other),
+/// The path of the value under `key`, the way Docker Compose writes it when
+/// it names the place of an interpolation error (`services.a.environment.V`).
+fn key_path(parent: &str, key: &serde_yaml::Value) -> String {
+	let name = match key {
+		serde_yaml::Value::String(s) => s.clone(),
+		other => format!("{other:?}"),
+	};
+	if parent.is_empty() {
+		name
+	} else {
+		format!("{parent}.{name}")
 	}
+}
+
+/// Name the place an interpolation error was found in. An error that already
+/// names a place, as one from a nested expansion does, keeps the place it has.
+fn with_path(error: crate::error::ComposeError, path: &str) -> crate::error::ComposeError {
+	match error {
+		crate::error::ComposeError::InvalidInterpolationFormat { path: at, template }
+			if at.is_empty() =>
+		{
+			crate::error::ComposeError::InvalidInterpolationFormat {
+				path: path.to_string(),
+				template,
+			}
+		}
+		other => other,
+	}
+}
+
+/// Warn once per key that looks like it wants to be interpolated.
+///
+/// Docker Compose does not interpolate mapping keys: `labels: { ${KEY}: v }`
+/// keeps the key as it was written, and so does this. The warning says so,
+/// because a key that was meant to hold a variable is usually a mistake.
+fn warn_if_key_looks_interpolated(key: &serde_yaml::Value, warned: &mut HashSet<String>) {
+	let serde_yaml::Value::String(s) = key else {
+		return;
+	};
+	if !key_looks_interpolated(s) {
+		return;
+	}
+	if !crate::substitute::warnings::enabled() {
+		return;
+	}
+	// The dedup set is shared with the unset-variable warnings, so the key is
+	// marked with a prefix of its own and cannot collide with a variable name.
+	if !warned.insert(format!("key:{s}")) {
+		return;
+	}
+	tracing::warn!(
+		"The key '{s}' is not interpolated. Docker Compose does not interpolate mapping keys, so it is used as written."
+	);
+}
+
+/// Whether a key looks like it wants to be interpolated: it holds a `${…}` or
+/// a `$` followed by a name.
+fn key_looks_interpolated(key: &str) -> bool {
+	if key.contains("${") {
+		return true;
+	}
+	let bytes = key.as_bytes();
+	bytes.iter().enumerate().any(|(i, &b)| {
+		b == b'$'
+			&& bytes
+				.get(i + 1)
+				.is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_')
+	})
 }

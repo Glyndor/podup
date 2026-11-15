@@ -4,24 +4,17 @@
 use crate::compose::types::Service;
 use crate::quadlet::is_no_warn_set;
 
-use super::super::super::pod::{PodField, PodFields};
 use super::super::super::shared_values::hostname;
 use super::super::Section;
 
 /// Emit the process-level settings of the container: `HostName=`, `User=`/
 /// `Group=`, `WorkingDir=`, `ReadOnly=`, `RunInit=`, and the `privileged: true`
 /// escape hatch.
-pub(in super::super) fn emit_runtime(
-	name: &str,
-	service: &Service,
-	in_pod: bool,
-	pod_fields: &PodFields,
-	container: &mut Section,
-) {
-	if !(in_pod && pod_fields.owns(PodField::HostName)) {
-		if let Some(hostname) = hostname(service) {
-			container.add("HostName", hostname.to_string());
-		}
+pub(in super::super) fn emit_runtime(name: &str, service: &Service, container: &mut Section) {
+	// The pod shares only its network namespace, so every member keeps a
+	// private UTS namespace and can carry its own hostname.
+	if let Some(hostname) = hostname(service) {
+		container.add("HostName", hostname.trim().to_string());
 	}
 	if let Some(user) = &service.user {
 		// Quadlet `User=` takes a UID/username only; a `uid:gid` compose value

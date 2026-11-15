@@ -83,6 +83,10 @@ impl Engine {
 		}
 		labels.insert("podup.project".to_string(), self.project.clone());
 		labels.insert("podup.service".to_string(), service_name.to_string());
+		labels.insert(
+			crate::engine::objects::working_dir::WORKING_DIR_LABEL.to_string(),
+			self.working_dir_label(),
+		);
 		// `create_project_secrets` runs before this is reached, so any
 		// `file:` source in the project already has a recorded digest; pass
 		// the snapshot through so the hash describes the bytes that were

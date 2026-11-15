@@ -194,8 +194,9 @@ pub struct LinuxResources {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub pids: Option<LinuxPids>,
 
-	/// Block I/O limits sub-block.
-	#[serde(skip_serializing_if = "Option::is_none")]
+	/// Block I/O limits sub-block. The OCI name is `blockIO`; without the
+	/// rename libpod reads no block-I/O limit at all and applies none.
+	#[serde(rename = "blockIO", skip_serializing_if = "Option::is_none")]
 	pub block_io: Option<LinuxBlockIO>,
 
 	/// GPU device access rules (maps `deploy.resources.reservations.devices`).
@@ -222,8 +223,10 @@ pub struct LinuxMemory {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub swappiness: Option<u64>,
 
-	/// When true, disables the OOM killer for the cgroup.
-	#[serde(skip_serializing_if = "Option::is_none")]
+	/// When true, disables the OOM killer for the cgroup. The OCI name is
+	/// `disableOOMKiller`; without the rename libpod reads no OOM-killer
+	/// switch at all.
+	#[serde(rename = "disableOOMKiller", skip_serializing_if = "Option::is_none")]
 	pub disable_oom_killer: Option<bool>,
 }
 
@@ -243,12 +246,14 @@ pub struct LinuxCPU {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub period: Option<u64>,
 
-	/// Realtime scheduling period in **microseconds**.
-	#[serde(skip_serializing_if = "Option::is_none")]
+	/// Realtime scheduling period in **microseconds**. The OCI name is
+	/// `realtimePeriod`.
+	#[serde(rename = "realtimePeriod", skip_serializing_if = "Option::is_none")]
 	pub realtime_period: Option<u64>,
 
 	/// Realtime runtime allowed per `realtime_period`, in **microseconds**.
-	#[serde(skip_serializing_if = "Option::is_none")]
+	/// The OCI name is `realtimeRuntime`.
+	#[serde(rename = "realtimeRuntime", skip_serializing_if = "Option::is_none")]
 	pub realtime_runtime: Option<i64>,
 
 	/// CPU affinity as a cpuset string (e.g. `"0-3,5"`).
@@ -264,6 +269,10 @@ pub struct LinuxPids {
 }
 
 /// Linux block I/O resource limits.
+///
+/// The OCI names of the per-device lists are camel-cased
+/// (`weightDevice`, `throttleReadBpsDevice`, …); libpod reads no
+/// block-I/O limit at all when they arrive snake-cased.
 #[derive(Serialize, Default)]
 pub struct LinuxBlockIO {
 	/// Default block I/O weight, `10`–`1000` (cgroup `blkio.weight`).
@@ -271,23 +280,43 @@ pub struct LinuxBlockIO {
 	pub weight: Option<u16>,
 
 	/// Per-device block I/O weight overrides.
-	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	#[serde(
+		rename = "weightDevice",
+		skip_serializing_if = "Vec::is_empty",
+		default
+	)]
 	pub weight_device: Vec<LinuxWeightDevice>,
 
 	/// Per-device read-rate caps; each entry's `rate` is in **bytes per second**.
-	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	#[serde(
+		rename = "throttleReadBpsDevice",
+		skip_serializing_if = "Vec::is_empty",
+		default
+	)]
 	pub throttle_read_bps_device: Vec<LinuxThrottleDevice>,
 
 	/// Per-device write-rate caps; each entry's `rate` is in **bytes per second**.
-	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	#[serde(
+		rename = "throttleWriteBpsDevice",
+		skip_serializing_if = "Vec::is_empty",
+		default
+	)]
 	pub throttle_write_bps_device: Vec<LinuxThrottleDevice>,
 
 	/// Per-device read-rate caps; each entry's `rate` is in **IO ops per second**.
-	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	#[serde(
+		rename = "throttleReadIOPSDevice",
+		skip_serializing_if = "Vec::is_empty",
+		default
+	)]
 	pub throttle_read_iops_device: Vec<LinuxThrottleDevice>,
 
 	/// Per-device write-rate caps; each entry's `rate` is in **IO ops per second**.
-	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	#[serde(
+		rename = "throttleWriteIOPSDevice",
+		skip_serializing_if = "Vec::is_empty",
+		default
+	)]
 	pub throttle_write_iops_device: Vec<LinuxThrottleDevice>,
 }
 
@@ -471,8 +500,9 @@ pub struct LinuxDevice {
 	/// Device minor number.
 	pub minor: i64,
 
-	/// File mode (permission bits) of the created device node.
-	#[serde(skip_serializing_if = "Option::is_none")]
+	/// File mode (permission bits) of the created device node. The OCI name is
+	/// `fileMode`.
+	#[serde(rename = "fileMode", skip_serializing_if = "Option::is_none")]
 	pub file_mode: Option<u32>,
 
 	/// Owner UID of the device node.

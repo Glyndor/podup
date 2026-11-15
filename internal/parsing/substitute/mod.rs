@@ -47,6 +47,16 @@ pub(crate) mod project_name;
 pub(crate) mod warnings {
 	use super::WARN_ENABLED;
 
+	/// Whether warnings are emitted right now.
+	///
+	/// The raw nested-key diagnostic re-interpolates a document it has already
+	/// parsed, so it silences the warnings of that second pass. A warning that
+	/// is not about an unset variable (the one about a key that looks like it
+	/// wants to be interpolated) asks the same question before it speaks.
+	pub(crate) fn enabled() -> bool {
+		WARN_ENABLED.with(|c| c.get())
+	}
+
 	/// RAII handle that sets the substitute-warn flag for its scope.
 	///
 	/// Constructed with the desired value (`true` to enable, `false` to
@@ -181,7 +191,14 @@ pub(crate) fn substitute_depth(
 			}
 			Some('{') => {
 				chars.next();
-				let (var, modifier) = parse_braced_var(&mut chars)?;
+				let (var, modifier) = match parse_braced_var(&mut chars) {
+					Ok(parsed) => parsed,
+					// The text of the reference is what Docker Compose names
+					// when it refuses one: the text being substituted, which
+					// at this level is the whole value and, one level down,
+					// the default that carries the reference.
+					Err(e) => return Err(with_template(e, input)),
+				};
 				// The text of the modifier was copied to be parsed, and each level
 				// of nesting copies what is inside it again: 64 levels around a
 				// 4 MiB text held 545 MiB at once. Charging it to the document
@@ -227,6 +244,22 @@ fn warn_unset(var: &str, warned: &mut HashSet<String>) {
 		return;
 	}
 	tracing::warn!("The {var} variable is not set. Defaulting to a blank string.");
+}
+
+/// Attach the text of the offending reference to an error that does not carry
+/// it yet. An error that already names a reference, as one from a nested
+/// expansion does, keeps the text it has.
+fn with_template(error: ComposeError, template: &str) -> ComposeError {
+	match error {
+		ComposeError::InvalidInterpolationFormat {
+			path,
+			template: text,
+		} if text.is_empty() => ComposeError::InvalidInterpolationFormat {
+			path,
+			template: template.to_string(),
+		},
+		other => other,
+	}
 }
 
 /// Refuse a variable expansion that would push the cumulative interpolation

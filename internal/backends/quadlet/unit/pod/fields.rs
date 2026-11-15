@@ -1,20 +1,20 @@
 //! Fields shared by every container in a pod.
 //!
-//! A pod-level field is safe only when every service declares the same value.
-//! Conflicting values stay on the individual containers and produce a warning.
+//! Most pod-level fields are safe only when every service declares the same
+//! value. Conflicting values stay on the individual containers and produce a
+//! warning. Shared memory is different: Podman applies the pod's size to
+//! every member, so the largest declared size wins.
 
 use crate::compose::types::ComposeFile;
 
 use super::super::super::render::sanitize_value;
 
-use super::super::shared_values::{host_values, hostname, network_values, shm_size, userns};
+use super::super::shared_values::{host_values, network_values, userns};
 use super::super::{quote_podman_arg_value, Section};
 
 /// A compose field that can move from a container unit to its pod unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in super::super) enum PodField {
-	/// `hostname`.
-	HostName,
 	/// `dns`.
 	Dns,
 	/// `dns_opt`.
@@ -25,8 +25,6 @@ pub(in super::super) enum PodField {
 	AddHost,
 	/// `userns_mode`.
 	UserNs,
-	/// `shm_size`.
-	ShmSize,
 	/// `networks.*.ipv4_address`.
 	Ip,
 	/// `networks.*.ipv6_address`.
@@ -121,15 +119,14 @@ fn agree_address(
 	}
 }
 
-/// The pod-wide values agreed by every service, plus any conflicts.
+/// The pod-wide values derived from every service, plus any conflicts.
 pub(crate) struct PodFields {
-	hostname: Agreement<String>,
 	dns: Agreement<Vec<String>>,
 	dns_option: Agreement<Vec<String>>,
 	dns_search: Agreement<Vec<String>>,
 	extra_hosts: Agreement<Vec<String>>,
 	userns: Agreement<String>,
-	shm_size: Agreement<String>,
+	shm_size: crate::engine::PodShmSize,
 	ipv4: Agreement<String>,
 	ipv6: Agreement<String>,
 	aliases: Agreement<Vec<String>>,
@@ -140,12 +137,8 @@ impl PodFields {
 	pub(crate) fn new(file: &ComposeFile) -> Self {
 		let hosts: Vec<_> = file.services.values().map(host_values).collect();
 		let networks: Vec<_> = file.services.values().map(network_values).collect();
+		let shm_size = crate::engine::pod_shm_size(file);
 		Self {
-			hostname: agree_scalar(
-				file.services
-					.values()
-					.map(|service| hostname(service).map(str::to_owned)),
-			),
 			dns: agree_dns(hosts.iter().map(|values| optional_list(values.dns.clone()))),
 			dns_option: agree_dns(
 				hosts
@@ -167,11 +160,7 @@ impl PodFields {
 					.values()
 					.map(|service| userns(service).map(str::to_owned)),
 			),
-			shm_size: agree_scalar(
-				file.services
-					.values()
-					.map(|service| shm_size(service).map(str::to_owned)),
-			),
+			shm_size,
 			ipv4: agree_address(file, networks.iter().map(|values| values.ipv4.clone())),
 			ipv6: agree_address(file, networks.iter().map(|values| values.ipv6.clone())),
 			aliases: agree(
@@ -185,13 +174,11 @@ impl PodFields {
 	/// Whether one field can be emitted on the pod instead of its containers.
 	pub(in super::super) fn owns(&self, field: PodField) -> bool {
 		match field {
-			PodField::HostName => matches!(&self.hostname, Agreement::Agreed(_)),
 			PodField::Dns => matches!(&self.dns, Agreement::Agreed(_)),
 			PodField::DnsOption => matches!(&self.dns_option, Agreement::Agreed(_)),
 			PodField::DnsSearch => matches!(&self.dns_search, Agreement::Agreed(_)),
 			PodField::AddHost => matches!(&self.extra_hosts, Agreement::Agreed(_)),
 			PodField::UserNs => matches!(&self.userns, Agreement::Agreed(_)),
-			PodField::ShmSize => matches!(&self.shm_size, Agreement::Agreed(_)),
 			PodField::Ip => matches!(&self.ipv4, Agreement::Agreed(_)),
 			PodField::Ip6 => matches!(&self.ipv6, Agreement::Agreed(_)),
 			PodField::NetworkAlias => matches!(&self.aliases, Agreement::Agreed(_)),
@@ -199,8 +186,14 @@ impl PodFields {
 	}
 
 	/// Return one warning for every field the services disagree on.
+	///
+	/// Shared memory reports the selected size because its value still moves
+	/// to the pod; the other conflicting fields stay on their containers.
 	pub(crate) fn warnings(&self) -> Vec<String> {
 		let mut warnings = Vec::new();
+		if let Some(warning) = &self.shm_size.warning {
+			warnings.push(warning.clone());
+		}
 		let mut push = |field: &str, reason: Option<&str>| {
 			if let Some(reason) = reason {
 				warnings.push(format!(
@@ -208,24 +201,19 @@ impl PodFields {
 				));
 			}
 		};
-		push("hostname", self.hostname.warning_reason());
 		push("dns", self.dns.warning_reason());
 		push("dns_opt", self.dns_option.warning_reason());
 		push("dns_search", self.dns_search.warning_reason());
 		push("extra_hosts", self.extra_hosts.warning_reason());
 		push("userns_mode", self.userns.warning_reason());
-		push("shm_size", self.shm_size.warning_reason());
 		push("networks.*.ipv4_address", self.ipv4.warning_reason());
 		push("networks.*.ipv6_address", self.ipv6.warning_reason());
 		push("networks.*.aliases", self.aliases.warning_reason());
 		warnings
 	}
 
-	/// Emit every agreed field on the pod unit.
+	/// Emit every pod-level field on the pod unit.
 	pub(crate) fn emit(&self, pod: &mut Section) {
-		if let Agreement::Agreed(value) = &self.hostname {
-			add_podman_arg(pod, "--hostname", value);
-		}
 		if let Agreement::Agreed(values) = &self.dns {
 			for value in values {
 				add_podman_arg(pod, "--dns", value);
@@ -249,8 +237,8 @@ impl PodFields {
 		if let Agreement::Agreed(value) = &self.userns {
 			add_podman_arg(pod, "--userns", value);
 		}
-		if let Agreement::Agreed(value) = &self.shm_size {
-			add_podman_arg(pod, "--shm-size", value);
+		if let Some(bytes) = self.shm_size.bytes {
+			add_podman_arg(pod, "--shm-size", &bytes.to_string());
 		}
 		if let Agreement::Agreed(value) = &self.ipv4 {
 			add_podman_arg(pod, "--ip", value);

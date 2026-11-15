@@ -2,9 +2,10 @@
 # Exercise the judge that lets the Rust lanes skip when nothing they read changed.
 #
 # The judge is `.github/scripts/checks/rust-ci-inputs.sh`, read by the
-# workflow from the reviewed base commit. It answers one question: does this
-# range touch anything the Rust lint, test, coverage and extra-platform lanes
-# read? Exit 0 means the lanes may be skipped, exit 1 means they must run.
+# workflow from the reviewed base commit. It answers with two outputs: `run`
+# says whether the Rust lint, test, coverage and extra-platform lanes have
+# anything to do, and `docs_only` says whether the range is documentation
+# alone, in which case only the tests that read a document run.
 #
 # Every rule in the judge has a case below, and every case names the rule it
 # expects, not only the verdict. Removing a path from the judge's list of
@@ -53,7 +54,7 @@ change() { # <path>...
 	git -C "$work" rev-parse HEAD
 }
 
-# judge <event> <base> <head>: the verdict, the reason and the exit code,
+# judge <event> <base> <head>: the two answers, the reason and the exit code,
 # one per line.
 judge() { # <event> <base> <head>
 	local out="$work/output" reason rc=0
@@ -62,7 +63,10 @@ judge() { # <event> <base> <head>
 		cd "$work" || exit 1
 		GITHUB_OUTPUT="$out" EVENT="$1" bash "$script" "$2" "$3"
 	)" || rc=$?
-	printf '%s\n%s\n%s\n' "$(sed -n 's/^run=//p' "$out")" "$reason" "$rc"
+	printf '%s\n%s\n%s\n%s\n' \
+		"$(sed -n 's/^run=//p' "$out")" \
+		"$(sed -n 's/^docs_only=//p' "$out")" \
+		"$reason" "$rc"
 }
 
 # must_run <reason> <path>...: the lanes run, and this is why.
@@ -73,9 +77,10 @@ must_run() { # <reason> <path>...
 		head="$(change "$path")"
 		out="$(judge pull_request "$base" "$head")"
 		check "classify $path runs the lanes" true "$(printf '%s\n' "$out" | sed -n 1p)"
-		check "classify $path exits 1" 1 "$(printf '%s\n' "$out" | sed -n 3p)"
+		check "classify $path is not documentation only" false "$(printf '%s\n' "$out" | sed -n 2p)"
+		check "classify $path exits 1" 1 "$(printf '%s\n' "$out" | sed -n 4p)"
 		check "classify $path names its rule" 1 \
-			"$(printf '%s\n' "$out" | sed -n 2p | grep -cF "$reason")"
+			"$(printf '%s\n' "$out" | sed -n 3p | grep -cF "$reason")"
 	done
 }
 
@@ -86,9 +91,10 @@ may_skip() { # <path>...
 		head="$(change "$path")"
 		out="$(judge pull_request "$base" "$head")"
 		check "classify $path skips the lanes" false "$(printf '%s\n' "$out" | sed -n 1p)"
-		check "classify $path exits 0" 0 "$(printf '%s\n' "$out" | sed -n 3p)"
+		check "classify $path is not documentation only" false "$(printf '%s\n' "$out" | sed -n 2p)"
+		check "classify $path exits 0" 0 "$(printf '%s\n' "$out" | sed -n 4p)"
 		check "classify $path says nothing reaches them" 1 \
-			"$(printf '%s\n' "$out" | sed -n 2p | grep -cF 'nothing in this range can reach the Rust lanes')"
+			"$(printf '%s\n' "$out" | sed -n 3p | grep -cF 'nothing in this range can reach the Rust lanes')"
 	done
 }
 
@@ -100,9 +106,41 @@ mixed() { # <reason> <path>...
 	head="$(change "$@")"
 	out="$(judge pull_request "$base" "$head")"
 	check "classify $* runs the lanes" true "$(printf '%s\n' "$out" | sed -n 1p)"
-	check "classify $* exits 1" 1 "$(printf '%s\n' "$out" | sed -n 3p)"
+	check "classify $* is not documentation only" false "$(printf '%s\n' "$out" | sed -n 2p)"
+	check "classify $* exits 1" 1 "$(printf '%s\n' "$out" | sed -n 4p)"
 	check "classify $* names its rule" 1 \
-		"$(printf '%s\n' "$out" | sed -n 2p | grep -cF "$reason")"
+		"$(printf '%s\n' "$out" | sed -n 3p | grep -cF "$reason")"
+}
+
+# docs_only <path>...: the range is documentation alone, so the focused lane
+# runs and nothing else does.
+docs_only() { # <path>...
+	local path head out
+	for path in "$@"; do
+		head="$(change "$path")"
+		out="$(judge pull_request "$base" "$head")"
+		check "classify $path runs the lanes" true "$(printf '%s\n' "$out" | sed -n 1p)"
+		check "classify $path is documentation only" true "$(printf '%s\n' "$out" | sed -n 2p)"
+		check "classify $path exits 2" 2 "$(printf '%s\n' "$out" | sed -n 4p)"
+		check "classify $path names the focused lane" 1 \
+			"$(printf '%s\n' "$out" | sed -n 3p | grep -cF 'focused documentation lane')"
+	done
+}
+
+# docs_and_more <reason> <path>...: a document next to anything else runs
+# every lane. The reason is the rule of the path that forces it: a path that
+# forces the lanes on its own says so, and a path that only may be skipped
+# makes the range a mixed one.
+docs_and_more() { # <reason> <path>...
+	local reason="$1" head out
+	shift
+	head="$(change "$@")"
+	out="$(judge pull_request "$base" "$head")"
+	check "classify $* runs every lane" true "$(printf '%s\n' "$out" | sed -n 1p)"
+	check "classify $* is not documentation only" false "$(printf '%s\n' "$out" | sed -n 2p)"
+	check "classify $* exits 1" 1 "$(printf '%s\n' "$out" | sed -n 4p)"
+	check "classify $* names its rule" 1 \
+		"$(printf '%s\n' "$out" | sed -n 3p | grep -cF "$reason")"
 }
 
 # Every path the Rust lanes read, and every path whose effect on them
@@ -119,9 +157,7 @@ must_run "changes the packaging" debian/rules debian/control
 must_run "changes the CI" .github/workflows/ci.yml .github/workflows/reusable-rust-ci.yml
 must_run "changes the checks CI runs" .github/scripts/checks/check-planning-words.sh
 must_run "is read by the repository tests" \
-	README.md CONTRIBUTING.md docs/commands.md docs/commands-reference.md \
-	docs/self-update.md fuzz/seeds/parse_compose/multi-document.yml \
-	bench/scenarios/build/Dockerfile
+	fuzz/seeds/parse_compose/multi-document.yml bench/scenarios/build/Dockerfile
 must_run "is read by the release-key test" install.sh install.ps1
 must_run "is read by the supply-chain test" deny.toml .github/dependabot.yml
 must_run "is not a known input of the Rust lanes" unknown.txt
@@ -129,6 +165,34 @@ must_run "is not a known input of the Rust lanes" unknown.txt
 # One path that may be skipped does not excuse one that may not.
 mixed "changes the crate" tests/scripts/shell/workflow_behaviour/rust-ci-inputs.test.sh internal/lib.rs
 mixed "changes the CI" docs/assets/demo.sh .github/workflows/ci.yml
+
+# The third answer: a range of documents alone. The focused lane runs, and
+# only the tests that read a document run in it.
+docs_only README.md CONTRIBUTING.md docs/commands.md docs/commands-reference.md \
+	docs/self-update.md docs/debian-packaging.md
+
+# A name Windows cannot check out must reach the Windows leg, in any directory,
+# with any extension and in any case; a name that only starts like one stays.
+for reserved in docs/CON.md docs/aux.md docs/Nul.md docs/COM1.md docs/lpt9.md docs/PRN.x.md docs/sub/AUX.md docs/CON/page.md; do
+	mkdir -p "$work/$(dirname "$reserved")"
+	must_run "name Windows cannot check out" "$reserved"
+done
+docs_only docs/CONSOLE.md docs/COM10.md docs/auxiliary.md
+
+# A document next to anything else runs every lane: the two answers differ
+# in what they skip, and the safe reading of a mixed range is the whole thing.
+docs_and_more "changes the crate" docs/commands.md internal/lib.rs
+docs_and_more "changes the dependency graph" README.md Cargo.toml
+docs_and_more "documentation and something else" docs/commands.md LICENSE
+docs_and_more "documentation and something else" \
+	docs/commands.md tests/scripts/shell/workflow_behaviour/rust-ci-inputs.test.sh
+
+# The images under docs/assets are skipped as they always were, and a document
+# next to one of them still decides the lane.
+head="$(change docs/assets/bench.svg docs/commands.md)"
+out="$(judge pull_request "$base" "$head")"
+check "a document next to an image is documentation only" true "$(printf '%s\n' "$out" | sed -n 2p)"
+check "a document next to an image exits 2" 2 "$(printf '%s\n' "$out" | sed -n 4p)"
 
 # Skip: what no Rust lane and no Rust test reads.
 may_skip LICENSE .editorconfig about.hbs about.toml \
@@ -148,6 +212,9 @@ check "an unknown head runs the lanes" true "$(judge pull_request "$base" deadbe
 check "a schedule runs the lanes" true "$(judge schedule "$base" "$base" | sed -n 1p)"
 check "a workflow dispatch runs the lanes" true "$(judge workflow_dispatch "$base" "$base" | sed -n 1p)"
 check "an empty range runs the lanes" true "$(judge pull_request "$base" "$base" | sed -n 1p)"
+check "an empty range is not documentation only" false \
+	"$(judge pull_request "$base" "$base" | sed -n 2p)"
+check "an empty range exits 1" 1 "$(judge pull_request "$base" "$base" | sed -n 4p)"
 
 # The workflow reads the judge from the reviewed base, never from the pull
 # request's own tree. Two jobs ask it: `classify`, whose answer the jobs
@@ -167,6 +234,45 @@ check "a missing job decision runs the lanes" 3 \
 check "a classifier that failed runs the lanes" 3 \
 	"$(grep -c "needs.classify.result != 'success'" "$workflow")"
 
+# The third answer has to reach the jobs that read it.
+# shellcheck disable=SC2016
+check "the classifier exposes the documentation answer" 1 \
+	"$(grep -c 'docs_only: ${{ steps.decide.outputs.docs_only }}' "$workflow")"
+check "the lint job's heavy steps skip a documentation-only range" 4 \
+	"$(grep -c "steps.decide.outputs.run != 'false' && !(steps.decide.outputs.run == 'true' && steps.decide.outputs.docs_only == 'true')" "$workflow")"
+check "the matrix and the coverage skip a documentation-only range" 2 \
+	"$(grep -c "needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}" "$workflow")"
+check "the full suite runs unless a healthy classifier said documentation only" 1 \
+	"$(grep -c "if: \${{ !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}" "$workflow")"
+check "the focused lane runs only for a healthy documentation-only answer" 1 \
+	"$(grep -c "if: needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true'" "$workflow")"
+
+# The focused lane has to be every test that reads a document, not the two
+# the classifier's comment names first. A document that breaks a test outside
+# that list is a document that merges broken.
+focused="$(grep 'cargo test --locked --all-features --lib' "$workflow")"
+check "the focused lane runs the unit tests that read a document" 1 \
+	"$(printf '%s' "$focused" | grep -c -- '--all-features --lib')"
+while IFS='|' read -r file target; do
+	[ -n "$file" ] || continue
+	check "$file still reads a document" yes \
+		"$(grep -qE 'docs/|README\.md|CONTRIBUTING\.md' "$HERE/$file" && echo yes || echo no)"
+	check "the focused lane runs $target" 1 \
+		"$(printf '%s' "$focused" | grep -c -- "--test $target")"
+done <<EOF
+tests/repository/docs/docs_links.rs|docs_links
+tests/repository/docs/docs_flags.rs|docs_flags
+tests/repository/packaging/podup_is_not_published.rs|podup_is_not_published
+tests/repository/packaging/no_system_wide_apt_policy.rs|no_system_wide_apt_policy
+tests/repository/packaging/keyring_bootstrap_order.rs|keyring_bootstrap_order
+EOF
+
+# This one reads every tracked file, so it names no document and the loop above
+# cannot find it; the shell scan that replaces it ignores binary-looking files,
+# and a README with a NUL byte would pass that scan and fail this test.
+check "the focused lane runs no_private_document_references" 1 \
+	"$(printf '%s' "$focused" | grep -c -- '--test no_private_document_references')"
+
 # Files that may skip the lanes are still read by the Rust test that scans
 # every tracked file for a private document tree, so `lint` runs the same scan
 # with no classifier in front of it.
@@ -176,5 +282,5 @@ check "the private-document scan carries no condition" 0 \
 	"$(grep -B3 'check-private-document-references.sh' "$workflow" | grep -c ' if:')"
 
 echo "$pass passed, $fail failed"
-printf 'DONE %s %d %d\n' "${BASH_SOURCE[0]##*/}" "$pass" "$fail"
+printf 'DONE %s %s %s\n' "${BASH_SOURCE[0]##*/}" "$pass" "$fail"
 [ "$fail" -eq 0 ]

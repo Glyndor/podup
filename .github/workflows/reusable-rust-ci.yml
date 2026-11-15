@@ -131,6 +131,14 @@ jobs:
   # macOS and Windows legs are the expensive ones, and a step-level skip still
   # paid for a runner of each just to do nothing.
   #
+  # `outputs.docs_only` is the third answer, and it is the one a pull request
+  # that changes only README.md, CONTRIBUTING.md or a document under docs/
+  # gets: the documents are read by a few tests and by nothing else, so the
+  # lane that runs those tests is the whole of the work there is. The
+  # `coverage`, `test-extra` and the heavy steps of `lint` read it and skip
+  # themselves, and `test` reads it to run the focused lane instead of the
+  # whole suite.
+  #
   # Skipping a job is only safe where the required name survives it. A job
   # skipped by its own `if:` reports `skipped`, which a required check accepts,
   # and the matrix jobs are never required themselves: `Extra platforms` is an
@@ -142,6 +150,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       run: ${{ steps.decide.outputs.run }}
+      docs_only: ${{ steps.decide.outputs.docs_only }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -185,8 +194,14 @@ jobs:
         id: decide
         run: git show "$BASE_SHA:.github/scripts/checks/rust-ci-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
 
+      # The heavy steps of this job are behind two conditions, and both fail
+      # open. `run` is false when the range reaches nothing the Rust lanes
+      # read, and `docs_only` is true when the range reaches only documents:
+      # rustfmt and clippy look at Rust sources, and a sentence in a document
+      # cannot fail either. The checks below are not behind either condition,
+      # because a document is exactly what they read.
       - name: Install toolchain
-        if: steps.decide.outputs.run != 'false'
+        if: steps.decide.outputs.run != 'false' && !(steps.decide.outputs.run == 'true' && steps.decide.outputs.docs_only == 'true')
         env:
           TOOLCHAIN: ${{ inputs.toolchain }}
         run: |
@@ -194,7 +209,7 @@ jobs:
           rustup default "$TOOLCHAIN"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: steps.decide.outputs.run != 'false'
+        if: steps.decide.outputs.run != 'false' && !(steps.decide.outputs.run == 'true' && steps.decide.outputs.docs_only == 'true')
         with:
           path: |
             ~/.cargo/registry/index
@@ -205,11 +220,11 @@ jobs:
           restore-keys: rust-lint-${{ runner.os }}-
 
       - name: rustfmt
-        if: steps.decide.outputs.run != 'false'
+        if: steps.decide.outputs.run != 'false' && !(steps.decide.outputs.run == 'true' && steps.decide.outputs.docs_only == 'true')
         run: cargo fmt --all --check
 
       - name: clippy
-        if: steps.decide.outputs.run != 'false'
+        if: steps.decide.outputs.run != 'false' && !(steps.decide.outputs.run == 'true' && steps.decide.outputs.docs_only == 'true')
         env:
           EXTRA_CLIPPY_ARGS: ${{ inputs.extra-clippy-args }}
         run: |
@@ -311,12 +326,33 @@ jobs:
           restore-keys: rust-test-${{ runner.os }}-
 
       - name: Tests
+        if: ${{ !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}
         run: cargo test --locked --all-features --workspace
+
+      # The focused lane: the whole of the tests that read a document, and
+      # nothing else. Every condition that reads `docs_only` also asks for a
+      # successful classifier and `run == 'true'`, so a half answer or a failed
+      # classifier never skips the suite. The list is not the two tests the classifier's comment
+      # names first: `docs_flags` reads the two command references, the two
+      # packaging tests read docs/debian-packaging.md, and the unit test in
+      # `internal/update/verify_key_copies_agree.rs` reads
+      # docs/self-update.md and fails when the document stops carrying the
+      # release key, which is why `--lib` is here. A document that breaks a
+      # test outside this list is a document that merges broken, so the list
+      # is checked against the sources that read one by the shell suite in
+      # `tests/scripts/shell/workflow_behaviour/rust-ci-inputs.test.sh`.
+      - name: Documentation tests
+        if: needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true'
+        run: cargo test --locked --all-features --lib --test docs_links --test docs_flags --test podup_is_not_published --test no_system_wide_apt_policy --test keyring_bootstrap_order --test no_private_document_references
 
   test-extra:
     name: Test (${{ matrix.os }})
     needs: classify
-    if: ${{ inputs.extra-test-os != '[]' && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}
+    # The macOS and Windows legs are the expensive ones and they are about the
+    # crate: a document cannot fail a test that only runs on Windows. A
+    # documentation-only range skips the matrix, and the aggregate gate below
+    # still reports `rust / Extra platforms`.
+    if: ${{ inputs.extra-test-os != '[]' && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}
     runs-on: ${{ matrix.os }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 205s; the slowest leg is windows-latest. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
@@ -395,7 +431,11 @@ jobs:
   coverage:
     name: Coverage
     needs: classify
-    if: ${{ inputs.coverage-threshold > 0 && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}
+    # The coverage gate measures the crate, and a documentation-only range
+    # changes no line of it: the gate would read the same number it read
+    # yesterday. The job is skipped, and a job skipped by its own `if:`
+    # reports `skipped`, which the required check `rust / Coverage` accepts.
+    if: ${{ inputs.coverage-threshold > 0 && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 166s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.

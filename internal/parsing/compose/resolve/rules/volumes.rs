@@ -7,7 +7,7 @@ use crate::error::{ComposeError, Result};
 /// a `driver`, `driver_opts` or `labels` next to it would be dropped without a
 /// word. Docker Compose refuses the file, naming the first of them, and so does
 /// this. `name:` is allowed: it says which existing volume to use.
-pub(super) fn validate_volumes(file: &ComposeFile) -> Result<()> {
+pub(in crate::parsing::compose::resolve) fn validate_volumes(file: &ComposeFile) -> Result<()> {
 	for (name, cfg) in &file.volumes {
 		let Some(cfg) = cfg else { continue };
 		if cfg.external != Some(true) {
@@ -34,5 +34,5 @@ pub(super) fn validate_volumes(file: &ComposeFile) -> Result<()> {
 }
 
 #[cfg(test)]
-#[path = "validate_volumes_tests.rs"]
+#[path = "volumes_tests.rs"]
 mod tests;

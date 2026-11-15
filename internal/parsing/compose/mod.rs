@@ -44,6 +44,8 @@ mod entry_reset_tests;
 #[cfg(test)]
 mod nested_reset_tests;
 #[cfg(test)]
+mod override_tag_tests;
+#[cfg(test)]
 mod pull_refresh_tests;
 #[cfg(test)]
 mod toplevel_merge_tests;

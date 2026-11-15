@@ -87,12 +87,13 @@ podup up -d --build
 ```
 
 ### `down [SERVICE...]`
-Stop and remove containers, networks, and (with `-v`) volumes. With service names, only the containers of those services are stopped and removed: the networks, the pod and the volumes are shared with the services that stay, so they are left alone, `-v` is refused, and `--rmi` removes only the images of the named services. A name the file does not declare is an error raised before anything is removed, and naming services needs a compose file (`down -p NAME` by label alone refuses it). With `-v`, podup removes the project's named volumes and the data in them; volumes declared `external: true` are left alone (measured on 2026-09-19).
+Stop and remove containers, networks, and (with `-v`) volumes. With service names, only the containers of those services are stopped and removed: the networks, the pod and the volumes are shared with the services that stay, so they are left alone, `-v` is refused, and `--rmi` removes only the images of the named services. A name the file does not declare is an error raised before anything is removed, and naming services needs a compose file (`podup -p NAME down SERVICE`, with the project flag before the command, refuses it by label alone). With `-v`, podup removes the project's named volumes and the data in them; volumes declared `external: true` are left alone (measured on 2026-09-19).
 
 | Flag | Description | Default |
 |---|---|---|
 | `-v, --volumes` | Also remove named volumes declared in the compose file. | off |
 | `--remove-orphans` | Remove containers for services no longer in the file. | off |
+| `--force` | Run `-v` or `--remove-orphans` even when the project was created from another directory (a second checkout, or `COMPOSE_PROJECT_NAME` in another `.env`); without it they are refused, because they would remove that directory's volumes or containers. | off |
 | `--rmi <SCOPE>` | Also remove service images: `all`, or `local` (only the images built from a `build:` section that set no `image:` tag of their own). | keep images |
 | `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them; zero or more. | Podman default |
 

@@ -20,8 +20,12 @@ mod budget_entry_points;
 mod caps;
 #[path = "hostile_compose/cross_file_budget.rs"]
 mod cross_file_budget;
+#[path = "hostile_compose/env_diagnostics.rs"]
+mod env_diagnostics;
 #[path = "../../support/file_process.rs"]
 mod file_process;
+#[path = "hostile_compose/mixed_routes.rs"]
+mod mixed_routes;
 use file_process::{isolated, run, Outcome};
 
 /// Resident ceiling for any run. The honest cases stay far below it; a loader

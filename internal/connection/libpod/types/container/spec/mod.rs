@@ -306,8 +306,10 @@ pub struct SpecGenerator {
 	pub oom_score_adj: Option<i64>,
 
 	// Runtime
-	/// OCI runtime to use (e.g. `"crun"`, `"runc"`).
-	#[serde(skip_serializing_if = "Option::is_none")]
+	/// OCI runtime to use (e.g. `"crun"`, `"runc"`). Podman's SpecGenerator
+	/// names this field `oci_runtime`; without the rename libpod reads no
+	/// runtime at all and runs the container with the host's default one.
+	#[serde(rename = "oci_runtime", skip_serializing_if = "Option::is_none")]
 	pub runtime: Option<String>,
 
 	/// Legacy container links (deprecated in rootless, accepted but may be ignored).

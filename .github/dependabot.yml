@@ -34,7 +34,7 @@ updates:
     # is behind) well clear of its line.
     cooldown:
       default-days: 3
-    labels: ["type:deps", "type:ci", "area:ci"]
+    labels: ["type:deps", "type:ci", "area:ci", "prio:P3", "effort:XS"]
     open-pull-requests-limit: 10
     target-branch: "develop"
     # Seven distinct `actions/*` actions across the workflows (attest-build-
@@ -99,7 +99,7 @@ updates:
     cooldown:
       default-days: 3
       semver-major-days: 14
-    labels: ["type:deps", "area:core"]
+    labels: ["type:deps", "area:core", "prio:P3", "effort:XS"]
     open-pull-requests-limit: 10
     target-branch: "develop"
     # Grouped by the ANSWER the pull request needs, which is the split the CI
@@ -152,7 +152,7 @@ updates:
     cooldown:
       default-days: 3
       semver-major-days: 14
-    labels: ["type:deps", "type:ci", "area:ci"]
+    labels: ["type:deps", "type:ci", "area:ci", "prio:P3", "effort:XS"]
     open-pull-requests-limit: 5
     target-branch: "develop"
     groups:
@@ -171,7 +171,7 @@ updates:
     cooldown:
       default-days: 3
       semver-major-days: 14
-    labels: ["type:deps", "type:ci", "area:ci"]
+    labels: ["type:deps", "type:ci", "area:ci", "prio:P3", "effort:XS"]
     open-pull-requests-limit: 5
     target-branch: "develop"
     groups:
@@ -199,7 +199,7 @@ updates:
       timezone: "UTC"
     cooldown:
       default-days: 3
-    labels: ["type:deps", "type:ci", "area:ci"]
+    labels: ["type:deps", "type:ci", "area:ci", "prio:P3", "effort:XS"]
     open-pull-requests-limit: 5
     target-branch: "develop"
     commit-message:
@@ -223,7 +223,7 @@ updates:
     cooldown:
       default-days: 3
       semver-major-days: 14
-    labels: ["type:deps", "type:ci", "area:ci"]
+    labels: ["type:deps", "type:ci", "area:ci", "prio:P3", "effort:XS"]
     open-pull-requests-limit: 10
     target-branch: "develop"
     # The manifest carries a hash for every package, and the `pip install`

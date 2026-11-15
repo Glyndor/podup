@@ -81,3 +81,92 @@ fn load_dotenv_ignores_a_link_that_leads_nowhere() {
 	std::os::unix::fs::symlink("missing.env", dir.path().join(".env")).unwrap();
 	assert!(load_dotenv(dir.path()).is_empty());
 }
+
+/// `\$` in a double-quoted value is a literal dollar, as in Docker Compose: the
+/// `$FOO` after it is not expanded, even with `FOO` set in the same file. The
+/// backslash used to be dropped and the bare `$` expanded, so the value took
+/// the contents of whatever variable followed.
+#[test]
+fn load_dotenv_keeps_an_escaped_dollar_literal() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(
+		dir.path().join(".env"),
+		"FOO=bar\nV=\"a\\$FOO\"\nW=\"a\\${FOO}\"\nX=\"a$FOO\"\n",
+	)
+	.unwrap();
+	let map = load_dotenv(dir.path());
+	assert_eq!(map["V"], "a$FOO");
+	assert_eq!(map["W"], "a${FOO}");
+	assert_eq!(map["X"], "abar", "an unescaped reference still expands");
+}
+
+/// A service `env_file:` goes through the same reader, so the escape holds there.
+#[test]
+fn a_service_env_file_keeps_an_escaped_dollar_literal() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(dir.path().join("svc.env"), "FOO=bar\nV=\"a\\$FOO\"\n").unwrap();
+	let entries = [crate::compose::types::EnvFileEntry::Path("svc.env".into())];
+	let map = crate::env_file::load_env_file_entries(&entries, dir.path()).unwrap();
+	assert_eq!(map["V"], "a$FOO");
+}
+
+/// `\a \b \f \v` keep their backslash, so a file passed with `--env-file` that
+/// uses them still loads: decoded, they would be control characters, which
+/// that path refuses.
+#[test]
+fn an_explicit_env_file_with_control_escapes_still_loads() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(
+		dir.path().join("explicit.env"),
+		"A=\"L\\aR\"\nB=\"L\\bR\"\nF=\"L\\fR\"\nV=\"L\\vR\"\n",
+	)
+	.unwrap();
+	let vars = crate::substitute::build_vars_with_env_files_strict(
+		dir.path(),
+		&["explicit.env".to_string()],
+	)
+	.expect("the file loads");
+	assert_eq!(vars["A"], "L\\aR");
+	assert_eq!(vars["V"], "L\\vR");
+}
+
+/// The project `.env` is read as strictly as `--env-file`, as in Docker
+/// Compose: a required variable with no value is an error naming the file and
+/// the key, where it used to pass through as the literal text.
+#[test]
+fn a_required_variable_missing_in_dotenv_is_an_error() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(
+		dir.path().join(".env"),
+		"V=${PODUP_SURELY_UNSET_9F2:?boom}\n",
+	)
+	.unwrap();
+	let err = crate::substitute::build_vars_with_env_files_strict(dir.path(), &[]).unwrap_err();
+	let text = err.to_string();
+	assert!(
+		text.contains(".env") && text.contains("V") && text.contains("boom"),
+		"{text}"
+	);
+}
+
+/// A project with no `.env` still loads: the file is optional.
+#[test]
+fn a_missing_dotenv_is_still_an_empty_layer() {
+	let dir = tempfile::tempdir().unwrap();
+	crate::substitute::build_vars_with_env_files_strict(dir.path(), &[]).expect("no .env loads");
+}
+
+/// The same holds for a `.env` value: its message is escaped before it is shown.
+#[test]
+fn a_dotenv_error_message_is_escaped() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(
+		dir.path().join(".env"),
+		"V=${PODUP_SURELY_UNSET_9F2:?\u{1b}[2Jgone}\n",
+	)
+	.unwrap();
+	let err = crate::substitute::build_vars_with_env_files_strict(dir.path(), &[])
+		.unwrap_err()
+		.to_string();
+	assert!(!err.contains('\u{1b}'), "raw escape in: {err:?}");
+}

@@ -138,3 +138,30 @@ services:
 	assert!(c.contains("StopTimeout=1"), "{c}");
 	assert!(!c.contains("StopTimeout=0"), "{c}");
 }
+
+/// systemd gives a unit 90s to start and to stop, and Quadlet sets neither from
+/// the container keys. A long `stop_grace_period` was cut short by SIGKILL, and
+/// a `Notify=healthy` unit was marked failed while its healthcheck still had
+/// time to pass.
+#[test]
+fn long_grace_and_health_budgets_reach_the_service_section() {
+	let yaml = "services:\n  s:\n    image: x\n    stop_grace_period: 5m\n    \
+	            healthcheck: {test: [\"CMD\", \"true\"], start_period: 3m}\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "p-s.container").contents;
+	// 180s start period + 3 retries x (30s interval + 30s timeout) + 30s margin.
+	assert!(c.contains("TimeoutStartSec=390\n"), "{c}");
+	assert!(c.contains("TimeoutStopSec=330\n"), "{c}");
+}
+
+/// Within the default nothing is written, so a short grace period stays as it was.
+#[test]
+fn short_budgets_keep_the_systemd_default() {
+	let yaml = "services:\n  s:\n    image: x\n    stop_grace_period: 10s\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "p-s.container").contents;
+	assert!(!c.contains("TimeoutStopSec"), "{c}");
+	assert!(!c.contains("TimeoutStartSec"), "{c}");
+}

@@ -15,7 +15,9 @@ use crate::error::{ComposeError, Result};
 /// character. The message quotes the key with `{:?}`, which prints an
 /// invisible or reordering character as an escape, so the error cannot carry
 /// the character it complains about.
-pub(super) fn validate_resource_names(file: &ComposeFile) -> Result<()> {
+pub(in crate::parsing::compose::resolve) fn validate_resource_names(
+	file: &ComposeFile,
+) -> Result<()> {
 	let groups: [(&str, Vec<&String>); 4] = [
 		("network", file.networks.keys().collect()),
 		("volume", file.volumes.keys().collect()),

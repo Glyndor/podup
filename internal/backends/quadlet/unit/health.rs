@@ -8,20 +8,22 @@ use super::Section;
 /// healthcheck emits `HealthCmd=none`; otherwise the compose test (with any
 /// leading `CMD`/`CMD-SHELL`/`NONE` sentinel stripped) and the timing fields
 /// are rendered. Fields with no Quadlet/Podman equivalent push a warning into
-/// `warnings` instead of being silently dropped.
+/// `warnings` instead of being silently dropped. Returns whether the unit waits
+/// for the healthcheck to pass (`Notify=healthy`).
 pub(super) fn render_healthcheck(
 	name: &str,
 	service: &Service,
 	container: &mut Section,
 	warnings: &mut Vec<String>,
-) {
+) -> bool {
 	let Some(hc) = &service.healthcheck else {
-		return;
+		return false;
 	};
 	if hc.is_disabled() {
 		container.add("HealthCmd", "none".to_string());
-		return;
+		return false;
 	}
+	let mut waits = false;
 	if let Some(test) = &hc.test {
 		let cmd = match test {
 			Command::Shell(s) => s.clone(),
@@ -32,11 +34,22 @@ pub(super) fn render_healthcheck(
 				// a shell command line, so each word is quoted: joined with plain
 				// spaces, `["CMD", "sh", "-c", "wget -q x || exit 1"]` ran `wget`
 				// with no argument and then `exit 1`.
-				Some("CMD") => parts[1..]
-					.iter()
-					.map(|word| shell_word(word))
-					.collect::<Vec<_>>()
-					.join(" "),
+				Some("CMD") => {
+					// Podman 5 reads `HealthCmd=` only as a shell command line, so the
+					// exec form cannot be kept: the probe runs through `/bin/sh -c`,
+					// where `up` runs it directly. In an image without a shell
+					// (distroless, scratch) it then fails every time and a
+					// `Notify=healthy` unit never starts.
+					warnings.push(format!(
+						"{name}: healthcheck test [\"CMD\", ...] runs through /bin/sh in the \
+						 Quadlet unit (HealthCmd= is a shell command line); the image needs a shell"
+					));
+					parts[1..]
+						.iter()
+						.map(|word| shell_word(word))
+						.collect::<Vec<_>>()
+						.join(" ")
+				}
 				_ => parts.join(" "),
 			},
 		};
@@ -60,6 +73,7 @@ pub(super) fn render_healthcheck(
 			// nothing to probe would leave the unit starting until
 			// `TimeoutStartSec` expires.
 			container.add("Notify", "healthy".to_string());
+			waits = true;
 		}
 	}
 	if let Some(v) = &hc.interval {
@@ -95,6 +109,7 @@ pub(super) fn render_healthcheck(
 			"{name}: healthcheck.start_interval has no Quadlet/Podman equivalent and is skipped"
 		));
 	}
+	waits
 }
 
 #[cfg(test)]

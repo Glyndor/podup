@@ -19,17 +19,19 @@ use crate::compose::types::Service;
 /// Each path starts with the service key, as in `["depends_on", "db"]`.
 pub(crate) type NestedResets = HashMap<String, Vec<Vec<String>>>;
 
-fn walk(path: &mut Vec<String>, value: &Value, out: &mut Vec<Vec<String>>) {
+/// Collect the paths below `path` whose value carries `tag`. A path tagged with
+/// it is not walked further; any other tag is looked through.
+fn walk(tag: &str, path: &mut Vec<String>, value: &Value, out: &mut Vec<Vec<String>>) {
 	match value {
-		Value::Tagged(t) if t.tag != "!reset" => walk(path, &t.value, out),
+		Value::Tagged(t) if t.tag != tag => walk(tag, path, &t.value, out),
 		Value::Mapping(map) => {
 			for (key, child) in map {
 				let Some(key) = key.as_str() else { continue };
 				path.push(key.to_string());
-				if matches!(child, Value::Tagged(t) if t.tag == "!reset") {
+				if matches!(child, Value::Tagged(t) if t.tag == tag) {
 					out.push(path.clone());
 				} else {
-					walk(path, child, out);
+					walk(tag, path, child, out);
 				}
 				path.pop();
 			}
@@ -41,6 +43,18 @@ fn walk(path: &mut Vec<String>, value: &Value, out: &mut Vec<Vec<String>>) {
 /// The paths below a service key that `raw` resets. An entry of a list cannot
 /// be named, and a job is refused elsewhere, so only mappings of services count.
 pub(crate) fn nested_resets(raw: &Value) -> NestedResets {
+	nested_tagged(raw, "!reset")
+}
+
+/// The paths below a service key that `raw` tags `!override`, such as
+/// `deploy: { resources: !override {...} }`. The earlier file's value at that
+/// path is dropped before the merge, so the later one is taken whole instead of
+/// being combined with it.
+pub(crate) fn nested_overrides(raw: &Value) -> NestedResets {
+	nested_tagged(raw, "!override")
+}
+
+fn nested_tagged(raw: &Value, tag: &str) -> NestedResets {
 	let mut found = NestedResets::new();
 	let Some(services) = raw.get("services").and_then(Value::as_mapping) else {
 		return found;
@@ -54,7 +68,7 @@ pub(crate) fn nested_resets(raw: &Value) -> NestedResets {
 			let Some(key) = key.as_str() else { continue };
 			// A tag on the key itself is the whole-key case.
 			if !matches!(value, Value::Tagged(t) if t.tag == "!reset" || t.tag == "!override") {
-				walk(&mut vec![key.to_string()], value, &mut paths);
+				walk(tag, &mut vec![key.to_string()], value, &mut paths);
 			}
 		}
 		if !paths.is_empty() {
@@ -64,13 +78,14 @@ pub(crate) fn nested_resets(raw: &Value) -> NestedResets {
 	found
 }
 
-/// [`nested_resets`] of a compose file on disk; empty when it cannot be read.
-pub(crate) fn nested_resets_from_file(path: &std::path::Path) -> NestedResets {
+/// [`nested_resets`] and [`nested_overrides`] of a compose file on disk; both
+/// empty when it cannot be read.
+pub(crate) fn nested_tags_from_file(path: &std::path::Path) -> (NestedResets, NestedResets) {
 	let Ok(text) = std::fs::read_to_string(path) else {
-		return NestedResets::new();
+		return Default::default();
 	};
 	serde_yaml::from_str::<Value>(&text)
-		.map(|raw| nested_resets(&raw))
+		.map(|raw| (nested_resets(&raw), nested_overrides(&raw)))
 		.unwrap_or_default()
 }
 

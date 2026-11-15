@@ -45,7 +45,10 @@ services:
     cap_add: [SYS_ADMIN]
     read_only: false
     cap_drop: []
-    security_opt: []
+    security_opt: [seccomp=unconfined]
+    devices: [/dev/kvm]
+    device_cgroup_rules: [\"c 1:3 mr\"]
+    secrets: [shadow]
     pids_limit: null
     mem_limit: 256m
     memswap_limit: \"-1\"
@@ -62,8 +65,12 @@ services:
       - \"0.0.0.0:6379:6379\"
     volumes:
       - /run/user/1000/podman/podman.sock:/sock
+      - ../outside:/outside
   naked:
     image: alpine
+secrets:
+  shadow:
+    file: /etc/shadow
 ";
 
 #[test]

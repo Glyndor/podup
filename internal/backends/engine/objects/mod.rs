@@ -5,3 +5,4 @@ pub(in crate::backends::engine) mod ownership;
 pub(in crate::backends::engine) mod secrets;
 pub(in crate::backends::engine) mod volume;
 pub(crate) mod volume_mounts;
+pub(in crate::backends::engine) mod working_dir;

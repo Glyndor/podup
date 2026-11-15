@@ -5,11 +5,11 @@ use super::fields_test_support::{
 };
 
 #[test]
-fn pod_container_drops_hostname() {
+fn pod_container_keeps_hostname() {
 	let container = container_contents(&two_services("    hostname: shared-host\n"));
 	assert!(
-		!container.contains("HostName="),
-		"container repeated pod hostname in:\n{container}"
+		container.contains("HostName=shared-host\n"),
+		"container lost its hostname in:\n{container}"
 	);
 }
 

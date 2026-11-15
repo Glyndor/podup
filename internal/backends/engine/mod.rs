@@ -18,6 +18,9 @@ mod observe;
 pub(crate) mod project;
 mod workload;
 
+pub(crate) use container::{
+	read_label_file_labels, resolve_container_labels, LabelFileIssue, LabelFileLabels,
+};
 pub(crate) use host_files::copy;
 #[cfg(feature = "watch")]
 use host_files::watch;
@@ -33,6 +36,7 @@ pub(crate) use observe::query;
 use observe::stats;
 pub(crate) use observe::terminal;
 pub(crate) use workload::container;
+use workload::container::host::info::Info;
 use workload::container_config;
 use workload::declared;
 use workload::pod;
@@ -46,13 +50,13 @@ pub use project::ProjectLock;
 
 pub(crate) use container_config::build_log_config;
 pub(crate) use container_config::resources::{
-	effective_cpu_quota, effective_memory_limit, effective_pids_limit, is_known_ulimit,
+	cdi_devices, effective_cpu_quota, effective_memory_limit, effective_pids_limit, is_known_ulimit,
 };
 pub(crate) use network::apply_default_isolation;
 /// Re-exported so `startup::config_render` (in the binary crate) can call the
 /// same function `up` uses, instead of duplicating the resolution rule.
 pub use network::resolve_network_name;
-pub(crate) use pod::pod_network_mode;
+pub(crate) use pod::{pod_network_mode, pod_shm_size, PodShmSize};
 pub use project::is_safe_project_name;
 pub use project::{list_projects, list_projects_filtered, LsOptions};
 pub use project::{retain_active_profiles, retain_active_profiles_with_targets, retain_up_scope};
@@ -163,6 +167,15 @@ pub struct Engine {
 	/// podman-container-tools/podman#29848. Two podup processes creating
 	/// `keep-id` containers at the same moment can still race.
 	pub(crate) keep_id_create: tokio::sync::Mutex<()>,
+	/// What the daemon says about its host, read on first use and kept for
+	/// the rest of the invocation.
+	///
+	/// Every container of one `up` meets the same host, so the daemon is
+	/// asked once instead of once per container and per question. `None`
+	/// inside means the daemon did not answer, which is remembered too: a
+	/// host that cannot be asked is not a host whose limits are known to be
+	/// unsupported.
+	pub(in crate::backends::engine) host_info: tokio::sync::OnceCell<Option<Info>>,
 	/// SHA-256 of every `file:` secret/config this engine actually uploaded
 	/// during the current invocation, keyed by the project-scoped Podman
 	/// secret name `create_project_secrets` used to create it. Populated

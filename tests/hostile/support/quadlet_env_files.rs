@@ -4,6 +4,9 @@ use std::{fs, io::Write, path::Path, process::Command};
 
 use super::quadlet_cases::ENV_FILE_PATHS;
 
+#[path = "quadlet_argv.rs"]
+mod quadlet_argv;
+
 // Decode the generated ExecStart, independently of podup's input serializer.
 // Unknown escapes fail rather than silently changing the expected path.
 fn exec_start_words(value: &str) -> Vec<String> {

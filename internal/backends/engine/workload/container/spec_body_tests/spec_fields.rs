@@ -79,7 +79,7 @@ async fn create_sends_every_compose_field_in_the_spec_generator() {
 	assert_eq!(body["init"], true);
 	assert_eq!(body["restart_policy"], "on-failure");
 	assert_eq!(body["restart_tries"], 5);
-	assert_eq!(body["runtime"], "crun");
+	assert_eq!(body["oci_runtime"], "crun");
 	assert_eq!(body["image_os"], "linux");
 	assert_eq!(body["image_arch"], "amd64");
 	assert_eq!(body["oom_score_adj"], -500);

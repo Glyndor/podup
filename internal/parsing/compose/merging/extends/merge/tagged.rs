@@ -37,50 +37,115 @@ pub(in crate::parsing::compose) fn merge_service_tagged(
 /// Reset one service key to its default, by name: the primitive both tags are
 /// built from.
 ///
-/// A key podup does not model is ignored: a tag cannot change a merge that never
-/// happens, and refusing it would reject a file that is valid elsewhere.
+/// Every key a file can set is listed, so a tag works on all of them: a key left
+/// out kept the earlier file's value under `!reset` and combined under
+/// `!override`, the opposite of what the file asked for. A key podup does not
+/// model is ignored: a tag cannot change a merge that never happens, and
+/// refusing it would reject a file that is valid elsewhere.
 fn clear_service_key(svc: &mut Service, key: &str) {
-	match key {
-		"umask" => svc.umask = None,
-		"command" => svc.command = None,
-		"entrypoint" => svc.entrypoint = None,
-		// The blocks that merge key by key: replaced or reset as a whole.
-		"build" => svc.build = None,
-		"healthcheck" => svc.healthcheck = None,
-		"logging" => svc.logging = None,
-		"deploy" => svc.deploy = None,
-		"develop" => svc.develop = None,
-		"pull_refresh_after" => {
-			svc.pull_refresh_after = None;
-			svc.pull_refresh_after_reset = true;
-		}
-		"ports" => svc.ports = Vec::new(),
-		"expose" => svc.expose = Vec::new(),
-		"volumes" => svc.volumes = Vec::new(),
-		"volumes_from" => svc.volumes_from = Vec::new(),
-		"networks" => svc.networks = Default::default(),
-		"environment" => svc.environment = Default::default(),
-		"env_file" => svc.env_file = Default::default(),
-		"labels" => svc.labels = Default::default(),
-		"label_file" => svc.label_file = Default::default(),
-		"dns" => svc.dns = Default::default(),
-		"dns_search" => svc.dns_search = Default::default(),
-		"dns_opt" => svc.dns_opt = Default::default(),
-		"tmpfs" => svc.tmpfs = Default::default(),
-		"sysctls" => svc.sysctls = Default::default(),
-		"cap_add" => svc.cap_add = Vec::new(),
-		"cap_drop" => svc.cap_drop = Vec::new(),
-		"devices" => svc.devices = Vec::new(),
-		"extra_hosts" => svc.extra_hosts = Vec::new(),
-		"ulimits" => svc.ulimits = Default::default(),
-		"depends_on" => svc.depends_on = Default::default(),
-		"secrets" => svc.secrets = Vec::new(),
-		"configs" => svc.configs = Vec::new(),
-		"links" => svc.links = Vec::new(),
-		"external_links" => svc.external_links = Vec::new(),
-		"group_add" => svc.group_add = Vec::new(),
-		"security_opt" => svc.security_opt = Vec::new(),
-		"profiles" => svc.profiles = Vec::new(),
-		_ => {}
+	macro_rules! reset_fields {
+		($($field:ident),* $(,)?) => {
+			match key {
+				"pull_refresh_after" => {
+					svc.pull_refresh_after = None;
+					svc.pull_refresh_after_reset = true;
+				}
+				$(stringify!($field) => svc.$field = Default::default(),)*
+				_ => {}
+			}
+		};
 	}
+	reset_fields!(
+		image,
+		build,
+		command,
+		entrypoint,
+		ports,
+		expose,
+		environment,
+		env_file,
+		volumes,
+		tmpfs,
+		volumes_from,
+		configs,
+		secrets,
+		networks,
+		hostname,
+		domainname,
+		mac_address,
+		links,
+		external_links,
+		extra_hosts,
+		dns,
+		dns_search,
+		dns_opt,
+		network_mode,
+		depends_on,
+		healthcheck,
+		restart,
+		stop_signal,
+		stop_grace_period,
+		profiles,
+		post_start,
+		pre_start,
+		pre_stop,
+		labels,
+		annotations,
+		container_name,
+		user,
+		umask,
+		working_dir,
+		group_add,
+		platform,
+		cap_add,
+		cap_drop,
+		security_opt,
+		read_only,
+		privileged,
+		init,
+		tty,
+		stdin_open,
+		runtime,
+		shm_size,
+		userns_mode,
+		pid,
+		ipc,
+		uts,
+		cgroup_parent,
+		cgroup,
+		devices,
+		device_cgroup_rules,
+		storage_opt,
+		scale,
+		cpu_shares,
+		cpu_quota,
+		cpu_period,
+		cpuset,
+		cpus,
+		cpu_count,
+		cpu_percent,
+		cpu_rt_runtime,
+		cpu_rt_period,
+		mem_limit,
+		memswap_limit,
+		mem_reservation,
+		mem_swappiness,
+		pids_limit,
+		oom_kill_disable,
+		oom_score_adj,
+		blkio_config,
+		logging,
+		sysctls,
+		ulimits,
+		label_file,
+		attach,
+		pull_policy,
+		deploy,
+		develop,
+		gpus,
+		credential_spec,
+		isolation,
+		provider,
+		use_api_socket,
+	);
 }

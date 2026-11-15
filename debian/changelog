@@ -1,3 +1,40 @@
+podup (5.20.0) unstable; urgency=medium
+
+  * `up` and a whole-project `down` warn when the project's networks were created from
+    another directory. `down -v` and `down --remove-orphans` refuse in that case, before
+    any removal and naming the other directory; `--force` runs them anyway. `up` also says
+    so when the directory `create_host_path` made for a bind lies outside the project.
+  * `audit` reports five more ways a compose file reaches the host: `host_device`,
+    `unconfined_security_opt`, `device_cgroup_rule`, `sensitive_host_source` and
+    `bind_outside_project`. It also judges the host path podup really reads.
+  * Several `-f` files merge as `docker compose config` merges them: `!reset` and
+    `!override` apply to every service key, the lists Docker appends are appended, and
+    secrets, configs, ports, env files and dependencies merge by identity. `cpus` next to
+    `cpu_period` is refused.
+  * Interpolation follows `docker compose config`. A form Docker refuses (`${A:foo}`,
+    `${A:=foo}`, an unclosed `${A`) is an error naming the key, a `{` inside a default is
+    text, and the message of `${A:?msg}` is interpolated. In a double-quoted dotenv value
+    `\$` is a literal dollar instead of expanding the variable after it, `\a \b \f \v`
+    are the control characters, and `\0` is read as Docker reads it.
+  * `up` sends resource limits and the runtime under the names libpod reads, and the
+    project directory guard no longer has the gaps found in it.
+  * `generate quadlet` carries more of the compose file. The unit now has `ipc`, `pid`,
+    `uts` and `cgroup`, the memory reservation, swap limit and OOM score, `label_file`,
+    `gpus`, `platform` and `runtime`; a container joins a sibling's network in a form
+    Quadlet 5.0 reads; aliases and addresses are scoped per network and the entrypoint
+    keeps its vector; long stops and health waits get a systemd budget; bind sources are
+    created before the container and a CMD healthcheck is flagged; a volume subpath is
+    written as `Mount=`; file and external secrets carry the names `up` attaches; an IPAM
+    gateway and range stay aligned with their subnet; a relative long-form bind is
+    anchored to the project and a `.` in a bind source no longer drops the mount ordering;
+    the empty host port slot is kept and `--cpus` is never paired with a quota. A pod
+    shares the network and carries `shm_size` in bytes, as `up` does.
+  * `generate quadlet` refuses what Quadlet cannot express: a `service:` namespace donor
+    missing from the project, a `hostname` with a `uts` other than `private`, and a colon
+    in a long-form mount path. An env file Podman reads differently from `up` is reported.
+
+ -- Glyndor <packages@glyndor.net>  Sun, 15 Nov 2026 10:20:00 -0500
+
 podup (5.19.0) unstable; urgency=medium
 
   * `logs` takes `--index N`, which shows only replica N of a scaled service, as

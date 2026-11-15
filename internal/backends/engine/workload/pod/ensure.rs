@@ -25,6 +25,12 @@ impl Engine {
 				crate::compose::types::service::umask::validate_runtime(name, text)?;
 			}
 		}
+		// The pod's shared-memory mount is shared by every member, so a
+		// disagreement has to be visible even when the existing pod is
+		// reused without being recreated.
+		if let Some(warning) = super::pod_shm_size(file).warning {
+			tracing::warn!("{warning}");
+		}
 		let desired_hash = super::pod_config_hash(parsed_ports, file);
 		let inspect_path = format!(
 			"{API_PREFIX}/pods/{}/json",

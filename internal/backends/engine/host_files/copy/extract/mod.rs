@@ -28,3 +28,7 @@ mod destination_trusted_tests;
 
 #[cfg(all(test, unix))]
 mod race_tests;
+
+// Windows spellings of the hostile entries, on every platform.
+#[cfg(test)]
+mod hostile_windows_tests;

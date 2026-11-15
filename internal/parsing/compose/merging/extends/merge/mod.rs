@@ -7,6 +7,7 @@
 //! extending service's items, with duplicates removed, not replaced wholesale.
 
 mod collections;
+mod keyed;
 mod service;
 mod tagged;
 
