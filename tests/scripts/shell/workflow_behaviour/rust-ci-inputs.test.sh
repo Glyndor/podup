@@ -171,6 +171,14 @@ mixed "changes the CI" docs/assets/demo.sh .github/workflows/ci.yml
 docs_only README.md CONTRIBUTING.md docs/commands.md docs/commands-reference.md \
 	docs/self-update.md docs/debian-packaging.md
 
+# A name Windows cannot check out must reach the Windows leg, in any directory,
+# with any extension and in any case; a name that only starts like one stays.
+for reserved in docs/CON.md docs/aux.md docs/Nul.md docs/COM1.md docs/lpt9.md docs/PRN.x.md docs/sub/AUX.md docs/CON/page.md; do
+	mkdir -p "$work/$(dirname "$reserved")"
+	must_run "name Windows cannot check out" "$reserved"
+done
+docs_only docs/CONSOLE.md docs/COM10.md docs/auxiliary.md
+
 # A document next to anything else runs every lane: the two answers differ
 # in what they skip, and the safe reading of a mixed range is the whole thing.
 docs_and_more "changes the crate" docs/commands.md internal/lib.rs
@@ -231,13 +239,13 @@ check "a classifier that failed runs the lanes" 3 \
 check "the classifier exposes the documentation answer" 1 \
 	"$(grep -c 'docs_only: ${{ steps.decide.outputs.docs_only }}' "$workflow")"
 check "the lint job's heavy steps skip a documentation-only range" 4 \
-	"$(grep -c "steps.decide.outputs.run != 'false' && steps.decide.outputs.docs_only != 'true'" "$workflow")"
+	"$(grep -c "steps.decide.outputs.run != 'false' && !(steps.decide.outputs.run == 'true' && steps.decide.outputs.docs_only == 'true')" "$workflow")"
 check "the matrix and the coverage skip a documentation-only range" 2 \
-	"$(grep -c "needs.classify.outputs.run != 'false') && needs.classify.outputs.docs_only != 'true' }}" "$workflow")"
-check "the full suite runs only when the range is not documentation" 1 \
-	"$(grep -c "if: needs.classify.outputs.docs_only != 'true'" "$workflow")"
-check "the focused lane runs only for a documentation-only range" 1 \
-	"$(grep -c "if: needs.classify.outputs.docs_only == 'true'" "$workflow")"
+	"$(grep -c "needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}" "$workflow")"
+check "the full suite runs unless a healthy classifier said documentation only" 1 \
+	"$(grep -c "if: \${{ !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}" "$workflow")"
+check "the focused lane runs only for a healthy documentation-only answer" 1 \
+	"$(grep -c "if: needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true'" "$workflow")"
 
 # The focused lane has to be every test that reads a document, not the two
 # the classifier's comment names first. A document that breaks a test outside
@@ -258,6 +266,12 @@ tests/repository/packaging/podup_is_not_published.rs|podup_is_not_published
 tests/repository/packaging/no_system_wide_apt_policy.rs|no_system_wide_apt_policy
 tests/repository/packaging/keyring_bootstrap_order.rs|keyring_bootstrap_order
 EOF
+
+# This one reads every tracked file, so it names no document and the loop above
+# cannot find it; the shell scan that replaces it ignores binary-looking files,
+# and a README with a NUL byte would pass that scan and fail this test.
+check "the focused lane runs no_private_document_references" 1 \
+	"$(printf '%s' "$focused" | grep -c -- '--test no_private_document_references')"
 
 # Files that may skip the lanes are still read by the Rust test that scans
 # every tracked file for a private document tree, so `lint` runs the same scan

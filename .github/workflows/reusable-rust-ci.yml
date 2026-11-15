@@ -201,7 +201,7 @@ jobs:
       # cannot fail either. The checks below are not behind either condition,
       # because a document is exactly what they read.
       - name: Install toolchain
-        if: steps.decide.outputs.run != 'false' && steps.decide.outputs.docs_only != 'true'
+        if: steps.decide.outputs.run != 'false' && !(steps.decide.outputs.run == 'true' && steps.decide.outputs.docs_only == 'true')
         env:
           TOOLCHAIN: ${{ inputs.toolchain }}
         run: |
@@ -209,7 +209,7 @@ jobs:
           rustup default "$TOOLCHAIN"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: steps.decide.outputs.run != 'false' && steps.decide.outputs.docs_only != 'true'
+        if: steps.decide.outputs.run != 'false' && !(steps.decide.outputs.run == 'true' && steps.decide.outputs.docs_only == 'true')
         with:
           path: |
             ~/.cargo/registry/index
@@ -220,11 +220,11 @@ jobs:
           restore-keys: rust-lint-${{ runner.os }}-
 
       - name: rustfmt
-        if: steps.decide.outputs.run != 'false' && steps.decide.outputs.docs_only != 'true'
+        if: steps.decide.outputs.run != 'false' && !(steps.decide.outputs.run == 'true' && steps.decide.outputs.docs_only == 'true')
         run: cargo fmt --all --check
 
       - name: clippy
-        if: steps.decide.outputs.run != 'false' && steps.decide.outputs.docs_only != 'true'
+        if: steps.decide.outputs.run != 'false' && !(steps.decide.outputs.run == 'true' && steps.decide.outputs.docs_only == 'true')
         env:
           EXTRA_CLIPPY_ARGS: ${{ inputs.extra-clippy-args }}
         run: |
@@ -326,11 +326,13 @@ jobs:
           restore-keys: rust-test-${{ runner.os }}-
 
       - name: Tests
-        if: needs.classify.outputs.docs_only != 'true'
+        if: ${{ !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}
         run: cargo test --locked --all-features --workspace
 
       # The focused lane: the whole of the tests that read a document, and
-      # nothing else. The list is not the two tests the classifier's comment
+      # nothing else. Every condition that reads `docs_only` also asks for a
+      # successful classifier and `run == 'true'`, so a half answer or a failed
+      # classifier never skips the suite. The list is not the two tests the classifier's comment
       # names first: `docs_flags` reads the two command references, the two
       # packaging tests read docs/debian-packaging.md, and the unit test in
       # `internal/update/verify_key_copies_agree.rs` reads
@@ -340,8 +342,8 @@ jobs:
       # is checked against the sources that read one by the shell suite in
       # `tests/scripts/shell/workflow_behaviour/rust-ci-inputs.test.sh`.
       - name: Documentation tests
-        if: needs.classify.outputs.docs_only == 'true'
-        run: cargo test --locked --all-features --lib --test docs_links --test docs_flags --test podup_is_not_published --test no_system_wide_apt_policy --test keyring_bootstrap_order
+        if: needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true'
+        run: cargo test --locked --all-features --lib --test docs_links --test docs_flags --test podup_is_not_published --test no_system_wide_apt_policy --test keyring_bootstrap_order --test no_private_document_references
 
   test-extra:
     name: Test (${{ matrix.os }})
@@ -350,7 +352,7 @@ jobs:
     # crate: a document cannot fail a test that only runs on Windows. A
     # documentation-only range skips the matrix, and the aggregate gate below
     # still reports `rust / Extra platforms`.
-    if: ${{ inputs.extra-test-os != '[]' && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && needs.classify.outputs.docs_only != 'true' }}
+    if: ${{ inputs.extra-test-os != '[]' && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}
     runs-on: ${{ matrix.os }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 205s; the slowest leg is windows-latest. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
@@ -433,7 +435,7 @@ jobs:
     # changes no line of it: the gate would read the same number it read
     # yesterday. The job is skipped, and a job skipped by its own `if:`
     # reports `skipped`, which the required check `rust / Coverage` accepts.
-    if: ${{ inputs.coverage-threshold > 0 && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && needs.classify.outputs.docs_only != 'true' }}
+    if: ${{ inputs.coverage-threshold > 0 && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 166s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
