@@ -67,8 +67,15 @@ on:
       - "tests/scripts/shell/workflow_behaviour/pin-watch-tools.test.sh"
       - "tests/scripts/shell/workflow_behaviour/rust-build-inputs.test.sh"
       - ".github/scripts/checks/rust-build-inputs.sh"
+      # The Rust lane's classifier and the test that reads it, and the
+      # reusable the test reads: a change to any of them has to run the suite
+      # that proves the classifier still says what it says and that the
+      # wiring the test reads is still there. Without the reusable in this
+      # list, a pull request that changes only the reusable merges without
+      # the test that reads it ever running.
       - "tests/scripts/shell/workflow_behaviour/rust-ci-inputs.test.sh"
       - ".github/scripts/checks/rust-ci-inputs.sh"
+      - ".github/workflows/reusable-rust-ci.yml"
       # The Debian lane's classifier and the test that reads it, and the
       # reusable the test reads: a change to any of them has to run the suite
       # that proves the classifier still says what it says.
@@ -185,8 +192,15 @@ on:
       - "tests/scripts/shell/workflow_behaviour/pin-watch-tools.test.sh"
       - "tests/scripts/shell/workflow_behaviour/rust-build-inputs.test.sh"
       - ".github/scripts/checks/rust-build-inputs.sh"
+      # The Rust lane's classifier and the test that reads it, and the
+      # reusable the test reads: a change to any of them has to run the suite
+      # that proves the classifier still says what it says and that the
+      # wiring the test reads is still there. Without the reusable in this
+      # list, a pull request that changes only the reusable merges without
+      # the test that reads it ever running.
       - "tests/scripts/shell/workflow_behaviour/rust-ci-inputs.test.sh"
       - ".github/scripts/checks/rust-ci-inputs.sh"
+      - ".github/workflows/reusable-rust-ci.yml"
       # The Debian lane's classifier and the test that reads it, and the
       # reusable the test reads: a change to any of them has to run the suite
       # that proves the classifier still says what it says.
