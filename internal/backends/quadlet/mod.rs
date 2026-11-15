@@ -82,6 +82,24 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 		if svc.image.is_none() && svc.build.is_none() {
 			return Err(ComposeError::NoImageOrBuild(name.clone()));
 		}
+		// Quadlet reads an `Image=` that ends in `.build` or `.image` as a
+		// reference to a unit of that name, and refuses the whole unit when there
+		// is none ("requested Quadlet image ... was not found"). `up` pulls such a
+		// name like any other, so the export refuses it instead of writing a unit
+		// that cannot start.
+		if svc.build.is_none() {
+			if let Some(image) = svc.image.as_deref() {
+				if image.ends_with(".build") || image.ends_with(".image") {
+					return Err(ComposeError::Unsupported(format!(
+						"service '{}': image '{}' ends in .build or .image, which Quadlet reads as a \
+						 reference to a unit instead of a registry name; give the image a registry \
+						 or a tag so it no longer ends that way",
+						crate::error::sanitize_name(name),
+						crate::error::sanitize_name(image)
+					)));
+				}
+			}
+		}
 		parse_ports(&svc.ports)?;
 		// Quadlet writes a mount as `Volume=source:target[:options]`, so a colon
 		// inside a long-form path moves the split and Podman mounts something else.
