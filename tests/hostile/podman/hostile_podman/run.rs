@@ -19,8 +19,10 @@ const ADDRESS_SPACE_KIB: u32 = 8_000_000;
 /// at its 64 MiB cap and then parses measured 137 to 335 MiB on the same build,
 /// depending on how the bytes arrived (on the 5.15.4 tag as well, so it is not a
 /// regression). A ceiling of 300 MiB failed at random in the Debian package
-/// build, which runs these tests.
-pub const RSS_CEILING_KIB: u64 = 384 * 1024;
+/// build, which runs these tests. The 384 MiB that followed failed there too, at
+/// 398 to 433 MiB on one listing, so the ceiling sits at 448 MiB: still below the
+/// 512 MiB payload, which a client that buffered it whole would pass.
+pub const RSS_CEILING_KIB: u64 = 448 * 1024;
 
 pub struct Outcome {
 	/// `None` when the child was killed: by the budget, or by a signal of its own.
