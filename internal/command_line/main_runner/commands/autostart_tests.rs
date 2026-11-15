@@ -15,6 +15,7 @@ fn env(socket: Option<&str>) -> AutostartEnv<'static> {
 		socket: socket.map(str::to_string),
 		connection_pool_size: None,
 		project_directory: None,
+		dry_run: false,
 	}
 }
 
@@ -26,6 +27,7 @@ fn env_with_dir(dir: PathBuf) -> AutostartEnv<'static> {
 		socket: None,
 		connection_pool_size: None,
 		project_directory: Some(dir),
+		dry_run: false,
 	}
 }
 

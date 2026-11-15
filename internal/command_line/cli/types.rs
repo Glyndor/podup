@@ -111,9 +111,6 @@ pub(crate) enum AutostartCommands {
 		/// exists at boot), only the containers are not started.
 		#[arg(long)]
 		no_start: bool,
-		/// Print the unit and the actions that would run, but change nothing.
-		#[arg(long)]
-		dry_run: bool,
 		/// In service mode, install a sibling `<unit>.update.service` /
 		/// `<unit>.update.timer` pair that runs `podup up -d` on a schedule so
 		/// the stack stays fresh without human action. Accepted only with

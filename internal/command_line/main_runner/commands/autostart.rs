@@ -28,6 +28,8 @@ pub(crate) struct AutostartEnv<'a> {
 	/// directory otherwise, and the boot path would resolve them somewhere
 	/// else than the operator's own run did.
 	pub project_directory: Option<PathBuf>,
+	/// `--dry-run`: print the unit and the actions, change nothing.
+	pub dry_run: bool,
 }
 
 /// Handle the `autostart` command group. `install` and `status` never contact
@@ -45,7 +47,6 @@ pub(crate) async fn dispatch(
 		AutostartCommands::Install {
 			mode: AutostartMode::Quadlet,
 			no_start,
-			dry_run,
 			auto_update,
 		} => {
 			if let Some(interval) = auto_update {
@@ -70,26 +71,24 @@ pub(crate) async fn dispatch(
 				&project,
 				&base_dir,
 				*no_start,
-				*dry_run,
+				env.dry_run,
 			)
 		}
 		AutostartCommands::Install {
 			mode: AutostartMode::Service,
 			no_start,
-			dry_run,
 			auto_update,
 		} => {
 			let unit = service_unit_opts(env, compose_files, &project, &base_dir, file)?;
 			let opts = podup::autostart::InstallOptions::new(unit)
 				.with_no_start(*no_start)
-				.with_dry_run(*dry_run)
+				.with_dry_run(env.dry_run)
 				.with_auto_update_interval(auto_update.map(|i| i.as_str().to_string()));
 			podup::autostart::install(&podup::autostart::RealSystemCtl, &opts)
 		}
 		AutostartCommands::Install {
 			mode: AutostartMode::Start,
 			no_start,
-			dry_run,
 			auto_update,
 		} => {
 			if let Some(interval) = auto_update {
@@ -124,7 +123,7 @@ pub(crate) async fn dispatch(
 			//
 			// Skipped under --dry-run, which exists to show the unit without
 			// touching anything, including the socket.
-			if !*dry_run {
+			if !env.dry_run {
 				let client = podup::podman::connect_checked(
 					env.socket.as_deref(),
 					env.connection_pool_size
@@ -139,7 +138,7 @@ pub(crate) async fn dispatch(
 			podup::autostart::install_start(
 				&podup::autostart::RealSystemCtl,
 				&opts,
-				*dry_run,
+				env.dry_run,
 				*no_start,
 			)
 		}
@@ -168,7 +167,8 @@ pub(crate) async fn dispatch(
 					env.connection_pool_size
 						.unwrap_or(podup::Client::DEFAULT_POOL_SIZE),
 				)
-				.await?;
+				.await?
+				.with_dry_run(env.dry_run);
 				let engine = podup::Engine::with_base_dir(client, project, base_dir);
 				let _lock = engine.lock_project()?;
 				engine.down_with_options(file, true).await?;

@@ -54,6 +54,7 @@ impl Client {
 	/// surfaces as an error instead of hanging with the terminal already in raw
 	/// mode, which would leave the user's shell unusable.
 	pub(crate) async fn post_hijack(&self, path: &str, body: &[u8]) -> Result<Hijacked> {
+		self.refuse_in_dry_run(&hyper::Method::POST, path)?;
 		// A stuck or absent peer would otherwise wedge `connect` until the
 		// OS gives up on it. The hyper callers already wrap their pool
 		// acquisition in `tokio::time::timeout(CONNECT_TIMEOUT, ...)`; the
