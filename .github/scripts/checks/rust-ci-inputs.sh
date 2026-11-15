@@ -108,6 +108,22 @@ changed="$(git diff --name-only --no-renames "$base" "$head" 2>/dev/null)" ||
 	answer true false "cannot read $base..$head; the Rust lanes run"
 [ -n "$changed" ] || answer true false "the range is empty; the Rust lanes run"
 
+# A document whose name Windows cannot check out: CON, PRN, AUX, NUL, COM1-9
+# and LPT1-9, with any extension, in any directory. Git for Windows refuses
+# them, and the focused lane skips the Windows leg that would have said so.
+windows_reserved() { # <path>
+	local part stem rest="$1"
+	while [ -n "$rest" ]; do
+		part="${rest%%/*}"
+		case "$rest" in */*) rest="${rest#*/}" ;; *) rest="" ;; esac
+		stem="${part%%.*}"
+		case "${stem^^}" in
+			CON | PRN | AUX | NUL | COM[1-9] | LPT[1-9]) return 0 ;;
+		esac
+	done
+	return 1
+}
+
 # Whether the range touches a document, and whether it touches anything else
 # that no Rust lane reads. Documents alone are the focused lane; a document
 # next to anything else runs every lane, because the two answers differ in
@@ -139,7 +155,10 @@ while IFS= read -r path; do
 		# The documents. They are read by a few tests and by nothing else, so
 		# a range of documents alone is the focused lane.
 		README.md | CONTRIBUTING.md) docs=true ;;
-		docs/*.md) docs=true ;;
+		docs/*.md)
+			windows_reserved "$path" && answer true false "$path has a name Windows cannot check out; every lane runs"
+			docs=true
+			;;
 		install.sh | install.ps1) answer true false "$path is read by the release-key test" ;;
 		deny.toml) answer true false "$path is read by the supply-chain test" ;;
 		fuzz/*) answer true false "$path is read by the repository tests" ;;
