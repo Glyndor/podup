@@ -78,10 +78,6 @@ fn warns_for_silently_dropped_runtime_fields() {
 services:
   s:
     image: x
-    ipc: host
-    pid: host
-    uts: host
-    cgroup: private
     cgroup_parent: /sys/fs/cgroup/p
     runtime: crun
     tty: true
@@ -101,10 +97,6 @@ services:
 		.warnings
 		.join("\n");
 	for field in [
-		"ipc",
-		"pid",
-		"uts",
-		"cgroup",
 		"cgroup_parent",
 		"runtime",
 		"tty",

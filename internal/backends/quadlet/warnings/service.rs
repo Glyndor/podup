@@ -128,22 +128,29 @@ pub(crate) fn collect_warnings(
 		);
 	}
 
+	// These modes are emitted, but sharing a namespace changes the isolation
+	// boundary. Report that consequence rather than claiming the key is lost.
+	for (field, mode, exposed) in [
+		("ipc", &service.ipc, "IPC objects and shared memory"),
+		("pid", &service.pid, "processes"),
+		("uts", &service.uts, "hostname and domain name"),
+		("cgroup", &service.cgroup, "cgroup hierarchy"),
+	] {
+		if let Some(mode) = mode.as_deref() {
+			if mode == "host" {
+				warn(
+					field,
+					&format!("host exposes the host's {exposed} and reduces isolation"),
+				);
+			} else if mode.starts_with("container:") || mode.starts_with("service:") {
+				warn(field, &format!("{mode} shares another container's {exposed} and reduces isolation; an external container must be available when this unit starts"));
+			}
+		}
+	}
 	// Fields that are honoured at runtime but have no [Container] Quadlet key and
 	// no unambiguous PodmanArgs= fallback. Warn so the generated unit is never
 	// silently incomplete; add the flag by hand if it is required.
 	let skipped = "has no Quadlet equivalent and is skipped";
-	if service.ipc.is_some() {
-		warn("ipc", skipped);
-	}
-	if service.pid.is_some() {
-		warn("pid", skipped);
-	}
-	if service.uts.is_some() {
-		warn("uts", skipped);
-	}
-	if service.cgroup.is_some() {
-		warn("cgroup", skipped);
-	}
 	if service.cgroup_parent.is_some() {
 		warn("cgroup_parent", skipped);
 	}
