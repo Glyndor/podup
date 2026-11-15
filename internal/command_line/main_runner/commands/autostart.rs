@@ -167,7 +167,8 @@ pub(crate) async fn dispatch(
 					env.connection_pool_size
 						.unwrap_or(podup::Client::DEFAULT_POOL_SIZE),
 				)
-				.await?;
+				.await?
+				.with_dry_run(env.dry_run);
 				let engine = podup::Engine::with_base_dir(client, project, base_dir);
 				let _lock = engine.lock_project()?;
 				engine.down_with_options(file, true).await?;

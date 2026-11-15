@@ -18,12 +18,19 @@ impl Client {
 	/// Keep removal independent of the client borrowed by a canceled operation.
 	pub(crate) fn init_cleanup(&self, path: String) -> InitCleanup<impl FnOnce()> {
 		let socket = self.socket_path.clone();
+		// The removal runs on a client of its own, so it has to carry the
+		// dry-run gate with it or it would be the one request that is not refused.
+		let dry_run = self.dry_run;
 		let pending = self.init_cleanups.clone();
 		InitCleanup {
 			remove: Some(move || {
 				if let Ok(runtime) = tokio::runtime::Handle::try_current() {
 					let removal = runtime.spawn(async move {
-						if let Err(e) = Client::new(socket).delete_ok(&path).await {
+						if let Err(e) = Client::new(socket)
+							.with_dry_run(dry_run)
+							.delete_ok(&path)
+							.await
+						{
 							if !e.is_status(404) {
 								tracing::warn!("pre_start cleanup: {e}");
 							}
