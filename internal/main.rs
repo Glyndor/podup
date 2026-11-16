@@ -197,17 +197,7 @@ async fn run(error_context: &mut startup::exit_status::ErrorContext) -> podup::R
 		format,
 	} = &cli.command
 	{
-		return main_runner::short_circuits::run_ls(
-			*all,
-			*quiet,
-			filter,
-			*format,
-			&cli.env_file,
-			cli.socket.as_deref(),
-			cli.connection_pool_size,
-			cli.dry_run,
-		)
-		.await;
+		return main_runner::short_circuits::run_ls(*all, *quiet, filter, *format, &cli).await;
 	}
 
 	// `ps` filters running containers purely by the project label and ignores the
