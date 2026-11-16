@@ -72,7 +72,7 @@ concurrency:
 jobs:
   freshness:
     name: schedule freshness
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     # Bound: 2 to 15s measured, and it queries the API. Ten times that,
     # rounded up, never under ten minutes; the six-hour default is what a
     # hang would otherwise cost. Each observation adds at most 40 seconds

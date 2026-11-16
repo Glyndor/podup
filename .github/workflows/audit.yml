@@ -80,6 +80,7 @@ jobs:
   audit-develop:
     name: start the develop audit
     if: github.event_name == 'schedule'
+    # CI_RUNNER does not apply: this job holds a write permission, so it stays on GitHub.
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -130,6 +131,7 @@ jobs:
   # cancels the rest).
   report:
     name: open an issue when the scheduled audit fails
+    # CI_RUNNER does not apply: this job holds a write permission, so it stays on GitHub.
     runs-on: ubuntu-latest
     needs: [audit, audit-develop]
     if: always() && ((github.event_name == 'schedule' && (needs.audit.result != 'success' || needs.audit-develop.result != 'success')) || (github.event_name == 'workflow_dispatch' && !inputs.parent-run && needs.audit.result != 'success'))

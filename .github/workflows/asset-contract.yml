@@ -69,7 +69,7 @@ jobs:
   # slots, then exercises the install.sh's ed25519_verify directly to
   # pin the L7 error class on Linux.
   shell-signing-fixture:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 16s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
     timeout-minutes: 10
@@ -178,7 +178,7 @@ jobs:
   # suffix, garbage, non-zero exit, missing file) so a regression in
   # the strict-equality-with-optional-v comparison fails here.
   shell-version-self-test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 6s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
     timeout-minutes: 10
@@ -200,7 +200,7 @@ jobs:
   # rather than to some later check (so removing --proto-redir
   # cannot make it pass for the wrong reason).
   shell-proto-redir:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     # Bound: the case starts a python http.server on 127.0.0.1 plus
     # an openssl one-shot cert. Both are local; no I/O bound on the
     # network. Worst case observed locally on this hardware was under
@@ -237,7 +237,7 @@ jobs:
   # org's allowed-actions list) at the project's MSRV, the same way
   # release.yml sets up the release build.
   rust-self-test-reference:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 88s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
     timeout-minutes: 15

@@ -146,7 +146,7 @@ jobs:
   # because it also runs the checks that must see documentation-only changes.
   classify:
     name: Classify the range
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 10
     outputs:
       run: ${{ steps.decide.outputs.run }}
@@ -170,7 +170,7 @@ jobs:
 
   lint:
     name: Format & lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 49s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
     timeout-minutes: 10
@@ -296,7 +296,7 @@ jobs:
     # into a green suite. A classifier that did not answer runs the job.
     needs: classify
     if: ${{ !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 106s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
     timeout-minutes: 20
@@ -411,7 +411,7 @@ jobs:
     # exists to prevent. `if: always()` plus an explicit result check is what makes
     # it a gate rather than a decoration.
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 4s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
     timeout-minutes: 10
@@ -436,7 +436,7 @@ jobs:
     # yesterday. The job is skipped, and a job skipped by its own `if:`
     # reports `skipped`, which the required check `rust / Coverage` accepts.
     if: ${{ inputs.coverage-threshold > 0 && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 166s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
     timeout-minutes: 30
@@ -501,7 +501,7 @@ jobs:
   msrv:
     name: MSRV (${{ inputs.msrv }})
     if: inputs.msrv != ''
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 62s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
     timeout-minutes: 15
@@ -563,7 +563,7 @@ jobs:
     # number stays visible in the job log and in the `MSRV (x.y)` job itself.
     needs: msrv
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 4s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
     timeout-minutes: 10
@@ -582,7 +582,7 @@ jobs:
   package:
     name: Package check
     if: inputs.package-check
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     # Bound: skipped here since publish = false; bounded for the caller that does publish. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
     timeout-minutes: 20
@@ -607,7 +607,7 @@ jobs:
   semver:
     name: Semver checks
     if: inputs.semver-check
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     # Bound: skipped here since publish = false; bounded for the caller that does publish. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
     timeout-minutes: 20
@@ -637,7 +637,7 @@ jobs:
   doc:
     name: Doc warnings
     if: inputs.doc-warnings
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 56s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
     timeout-minutes: 10

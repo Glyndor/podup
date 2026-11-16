@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   watch:
+    # CI_RUNNER does not apply: this job holds a write permission, so it stays on GitHub.
     runs-on: ubuntu-24.04
     # Bound: worst of the last three successful runs on 2026-09-02 was 7s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost. Three repology attempts of at most 30 s plus

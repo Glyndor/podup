@@ -76,6 +76,25 @@ Package and semver checks are disabled in `ci.yml`. Reusable workflows are local
 
 Renaming a job changes its required-check name. Update the ruleset when renaming jobs.
 
+### Running the Linux jobs on a self-hosted runner
+
+Every Linux job takes its runner from one repository variable, `CI_RUNNER`, written as `runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}`. The inner quotes are needed for the default, which is a JSON string.
+
+- **Turn it on:** Settings, Secrets and variables, Actions, Variables, new repository variable `CI_RUNNER`. A single label is written with its quotes, `"my-runner"`; several labels are a JSON array, `["self-hosted","linux","x64"]`.
+- **Turn it off:** delete the variable. Nothing else changes, and every job is back on `ubuntu-latest`.
+- **One label, no others:** to split the load, filter by workflow on the runner itself.
+- **macOS and Windows jobs** stay on GitHub's runners, as does anything that takes its runner from `matrix.os`, `matrix.runner` or `inputs.runner` with a value other than `ubuntu-latest`.
+
+Some jobs ignore the variable on purpose, because a job that holds a secret or a write permission must not share a runner with the code of a pull request from a fork: `release.yml` (it builds, signs and publishes), `audit.yml` (`audit-develop` dispatches a workflow with `actions: write`, `report` opens issues), `pin-watch.yml` and `podman-watch.yml` (`watch` opens issues), and the `podman-vm` legs of `podman-lane.yml` and `podman-lane-develop-nightly.yml` (they boot QEMU with `/dev/kvm` and `sudo`, and `Supported Podman majors` is a required check). `tests/repository/workflows/workflow_linux_runner_variable.rs` lists each with its reason. It fails when another Linux `runs-on` is written as the fixed literal again, and when a job that reads the variable has a `write` permission on `contents`, `packages`, `id-token`, `attestations`, `pull-requests` or `issues`, reads a secret other than `GITHUB_TOKEN`, or passes secrets to a reusable workflow.
+
+**Security.** This is a public repository, and a self-hosted runner executes the code of a pull request from a fork. Require approval for outside collaborators (Settings, Actions, General, Fork pull request workflows), never run a self-hosted runner on a `pull_request_target` workflow, and make the runner ephemeral: a fresh container or VM for every job, so one job cannot leave anything for the next. Put it in a runner group restricted to this repository and to workflows that hold no secrets.
+
+**What the runner needs.** These are the jobs that use something a bare runner may lack:
+
+- `sudo` and `apt-get`: `linux-hardening.yml` (installs `musl-tools`), `reusable-shell-ci.yml`, and `reusable-rust-debian.yml` (inside its Debian container).
+- A container runtime for `container:` jobs: `reusable-rust-debian.yml` and `pin-watch.yml`.
+- Network access to the registries, crates.io and GitHub, and the toolchains the workflows install themselves (Rust, `cargo-audit`, `cargo-deny`, `cargo-llvm-cov`).
+
 ## Security
 
 Report vulnerabilities privately through the repository's Security tab; the organization's security policy applies.

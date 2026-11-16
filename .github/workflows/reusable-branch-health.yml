@@ -73,7 +73,7 @@ concurrency:
 jobs:
   health:
     name: branch health
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     # Bound: the request itself is small; ten seconds covers the fetch
     # and the poll. The 32 attempts of 15 seconds the script makes add
     # up to eight minutes, which this ten-minute bound covers with two

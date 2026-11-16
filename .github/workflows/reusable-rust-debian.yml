@@ -100,7 +100,7 @@ env:
 jobs:
   build:
     name: dpkg-buildpackage
-    runs-on: ${{ inputs.runner }}
+    runs-on: ${{ inputs.runner == 'ubuntu-latest' && fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') || inputs.runner }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 432s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
     timeout-minutes: 60
@@ -264,7 +264,7 @@ jobs:
   vendored:
     name: build (vendored / offline)
     if: ${{ inputs.check-vendored }}
-    runs-on: ${{ inputs.runner }}
+    runs-on: ${{ inputs.runner == 'ubuntu-latest' && fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') || inputs.runner }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 171s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
     timeout-minutes: 30

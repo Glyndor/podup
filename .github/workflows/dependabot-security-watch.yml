@@ -60,7 +60,7 @@ concurrency:
 jobs:
   dependabot-security-watch:
     name: dependabot security watch
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     # Measurement pending: one checkout and one `gh pr list` call, and the
     # closest sibling (`dependabot freshness` in the channel repositories)
     # runs in under a minute. Tighten this after the first runs have been
