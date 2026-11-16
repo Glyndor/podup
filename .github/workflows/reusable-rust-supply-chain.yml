@@ -24,7 +24,7 @@ on:
       toolchain:
         description: Rust toolchain to pin the SBOM and license job to
         type: string
-        default: "1.99"
+        default: "1.100"
       about-template:
         description: cargo-about handlebars template
         type: string
@@ -32,7 +32,7 @@ on:
       cyclonedx-version:
         description: Exact version of cargo-cyclonedx to install; bumped by editing this file
         type: string
-        default: "0.5.9"
+        default: "0.5.10"
       cargo-about-version:
         description: Exact version of cargo-about to install; bumped by editing this file
         type: string

@@ -306,7 +306,7 @@ jobs:
         if: steps.inputs.outputs.build == 'true'
         env:
           # Keep in step with the release workflow and reusable-rust-ci.
-          RUST_TOOLCHAIN: "1.99"
+          RUST_TOOLCHAIN: "1.100"
         run: |
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
           rustup default "$RUST_TOOLCHAIN"
