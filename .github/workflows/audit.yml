@@ -80,7 +80,7 @@ jobs:
   audit-develop:
     name: start the develop audit
     if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     permissions:
       actions: write
     # Bound: both checks take under a minute, but the dispatched run
@@ -130,7 +130,7 @@ jobs:
   # cancels the rest).
   report:
     name: open an issue when the scheduled audit fails
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     needs: [audit, audit-develop]
     if: always() && ((github.event_name == 'schedule' && (needs.audit.result != 'success' || needs.audit-develop.result != 'success')) || (github.event_name == 'workflow_dispatch' && !inputs.parent-run && needs.audit.result != 'success'))
     permissions:

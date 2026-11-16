@@ -45,7 +45,7 @@ concurrency:
 
 jobs:
   watch:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 9s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost. The tool pins add eleven release lookups, one
     # per watched repository plus the release list cargo-audit needs, each a single call that answers in about a second;
