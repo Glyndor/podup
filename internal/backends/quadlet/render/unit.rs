@@ -19,13 +19,15 @@ fn key_is_word_split(key: &str) -> bool {
 		key,
 		"Environment"
 			| "EnvironmentFile"
-			| "Label" | "Annotation"
+			| "Label"
+			| "Annotation"
 			| "Sysctl"
 			| "Secret"
 			| "AddCapability"
 			| "DropCapability"
 			| "AddDevice"
-			| "Mask" | "Unmask"
+			| "Mask"
+			| "Unmask"
 	)
 }
 

@@ -75,8 +75,10 @@ fn umask_quadlet_never_emits_invalid_arguments() {
 	let mut file = parse_str("services:\n  worker:\n    image: alpine\n").unwrap();
 	file.services["worker"].umask = Some("0022 --privileged".into());
 	let out = generate_at(&file, "demo", std::path::Path::new("/srv"));
-	assert!(out
-		.units
-		.iter()
-		.all(|unit| !unit.contents.contains("--umask=") && !unit.contents.contains("--privileged")));
+	assert!(
+		out.units
+			.iter()
+			.all(|unit| !unit.contents.contains("--umask=")
+				&& !unit.contents.contains("--privileged"))
+	);
 }

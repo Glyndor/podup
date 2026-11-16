@@ -166,7 +166,8 @@ fn an_execute_only_binary_can_still_be_updated() {
 		std::fs::metadata(&target)
 			.expect("metadata target")
 			.permissions()
-			.mode() & 0o7777,
+			.mode()
+			& 0o7777,
 		0o111,
 		"the operator's mode must survive the update"
 	);

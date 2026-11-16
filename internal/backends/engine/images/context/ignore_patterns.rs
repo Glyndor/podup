@@ -101,7 +101,8 @@ pub(in crate::backends::engine) fn negation_could_reach(dir: &str, patterns: &[S
 			!p.is_empty()
 				&& (dir.is_empty()
 					|| p.contains(['*', '?', '[', '\\'])
-					|| p == dir || p.strip_prefix(dir).is_some_and(|s| s.starts_with('/'))
+					|| p == dir
+					|| p.strip_prefix(dir).is_some_and(|s| s.starts_with('/'))
 					|| dir
 						.strip_prefix(p.as_str())
 						.is_some_and(|s| s.starts_with('/')))

@@ -129,7 +129,7 @@ jobs:
         if: steps.inputs.outputs.build == 'true'
         env:
           # Keep in step with release.yml's build job.
-          RUST_TOOLCHAIN: "1.99"
+          RUST_TOOLCHAIN: "1.100"
         shell: bash
         run: |
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal

@@ -16,11 +16,11 @@ on:
       toolchain:
         description: Rust toolchain to pin the audit and deny jobs to
         type: string
-        default: "1.99"
+        default: "1.100"
       cargo-audit-version:
         description: Exact version of cargo-audit to install; bumped by editing this file
         type: string
-        default: "0.22.2"
+        default: "0.23.0"
       cargo-deny-version:
         description: Exact version of cargo-deny to install; bumped by editing this file
         type: string
