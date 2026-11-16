@@ -1,15 +1,11 @@
 name: Windows arm64 release binary builds and runs
 
 # The release runs every binary once between "Build binary" and "Sign binary",
-# so a binary the loader refuses is caught before it is signed and published
-# (the smoke step added in #1645; the windows-arm64 leg was skipped there in
-# #1648). That gate fires at tag time, when a failure costs a release run.
+# so a binary the loader refuses is caught before it is signed and published.
+# That gate fires at tag time, when a failure costs a release run.
 # This job builds the aarch64-pc-windows-msvc release target the way
 # release.yml does, on the windows-11-arm runner it ships for, and runs the
 # binary once, so the change that would fail the release fails here first.
-# The leg is the reason this job exists: today it cross-compiles on
-# windows-latest (x86_64) and cannot run what it built, and the runner it can
-# run on is the one this pull request proves is reachable.
 
 on:
   push:

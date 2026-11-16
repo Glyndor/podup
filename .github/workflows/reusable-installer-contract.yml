@@ -11,13 +11,6 @@ name: Installer contract (reusable)
 # That is a cross-reference between two statements of intent, and parsing YAML
 # is the right way to answer it.
 #
-# It deliberately does NOT answer "does the release produce these files". Until
-# 2026-08-17 it tried to, with a third check that required `SHA256SUMS` to
-# appear among the parsed `asset:` keys. Those keys are the build matrix, and
-# the manifest is computed FROM the matrix outputs in a later step, so it can
-# never be one of them: the check was unpassable by construction, and the only
-# way to satisfy it was to declare a matrix entry that produced nothing, the
-# exact defect it existed to catch. It had never run green in any repository.
 # Existence is answered where it can be answered honestly, against the staged
 # files at release time, by `.github/scripts/release/verify-release-assets.py`.
 

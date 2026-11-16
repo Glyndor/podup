@@ -13,19 +13,12 @@ name: pin-watch
 # reading lives in .github/scripts/checks/pin-watch-tools.sh: the crates the
 # workflows install with `cargo install --version`, and the binaries they
 # download by tag. Dependabot watches neither, because a `cargo install`
-# line and a downloaded tarball are not a manifest it can bump, and the
-# drift that followed from that was already there when the watcher was
-# written: three of those tools were behind their upstream release, and one
-# of them carried two different pins.
+# line and a downloaded tarball are not a manifest it can bump.
 #
 # Podman is watched by this repository's podman-watch.yml, so it is not
 # repeated here.
 #
-# Rust used to be excluded on the same grounds, and the reason it gave named
-# Glyndor/.github's rust-toolchain-watch.yml. #1568 stopped this repository
-# calling that repository at all, and that reusable was not among the copies
-# taken across, so from then until #1582 the toolchain pin was watched by
-# nobody. Copying it unchanged would not have worked either: it takes one
+# The toolchain pin is watched here rather than by a reusable: it takes one
 # `toolchain` input, and there is no single value here to hand it.
 #
 # Weekly, not daily: these move on the scale of months, and a daily run would

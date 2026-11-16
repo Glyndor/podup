@@ -34,8 +34,7 @@ jobs:
       # Each entry here becomes its own check name: `rust / Test (macos-latest)`
       # and `rust / Test (windows-latest)`. Editing this list changes the names
       # emitted while the ruleset still requires the old ones, so the PR
-      # carrying the edit blocks itself. A ruleset should require the stable
-      # gate `rust / Extra platforms` instead, which names no platform. #1552.
+      # carrying the edit blocks itself.
       extra-test-os: "[\"macos-latest\", \"windows-latest\"]"
       # Measured against the WHOLE crate, deliberately: an exclusion list would leave
       # part of the code with no gate at all. This job runs `--lib --bins` with no
@@ -48,9 +47,7 @@ jobs:
       coverage-threshold: 76
       # This number is inside the check name `rust / MSRV (1.88)`. Bumping it
       # emits `rust / MSRV (<new>)` while the ruleset still requires the old
-      # string, so the PR carrying the bump blocks itself. A ruleset should
-      # require the stable gate `rust / MSRV` instead, which carries no
-      # version. See #1552.
+      # string, so the PR carrying the bump blocks itself.
       msrv: "1.88"
       # `cargo publish --dry-run`, and podup is no longer published (#1606).
       package-check: false

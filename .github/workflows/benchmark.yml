@@ -12,8 +12,7 @@
 #                or exercise an unsupported configuration. It produces NO
 #                published numbers and proves nothing about podup on real Podman.
 #   benchmark  runs on a self-hosted runner (manual dispatch) over the full suite
-#                and uploads the report artifact. It is skipped until a runner with
-#                the `bench` label exists.
+#                and uploads the report artifact.
 name: benchmark
 
 # Three triggers, three questions:
@@ -25,9 +24,7 @@ name: benchmark
 #                   no engine run and produces no measurement.
 on:
   # The harness checks only guard anything if they run when the harness changes.
-  # Until #1227 they fired on dispatch and the monthly cron alone, so a PR could
-  # break run.sh or the timer and nothing would say so until the next 1st of the
-  # month. The engine job below stays dispatch-only: it needs the bench runner.
+  # The engine job below stays dispatch-only: it needs the bench runner.
   pull_request:
     paths:
       - "bench/**"

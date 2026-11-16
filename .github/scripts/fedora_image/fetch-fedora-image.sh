@@ -4,15 +4,6 @@
 # CHECKSUM in the same directory, download the image, and verify its
 # SHA-256 against the checksum. Used by the Podman lane in podman-lane.yml.
 #
-# dl.fedoraproject.org answers 404 about half the time, in streaks longer than
-# the 25 s that the step's old `--retry 5 --retry-delay 5 --retry-all-errors`
-# covered. Five lane runs failed that way between 2026-10-01 and 2026-10-02;
-# the rerun always passed, which is what made the failure look environmental
-# until someone counted. download.fedoraproject.org is Fedora's mirror
-# redirector and answered 200 through a mirror every time, so each fetch
-# attempt tries the primary then the fallback before sleeping and going
-# around again.
-#
 # dl is Fedora's authoritative server; download.fedoraproject.org hands the
 # request to a public mirror, and that mirror is not Fedora. The CHECKSUM
 # file is fetched from dl only -- a mirror that serves a tampered image

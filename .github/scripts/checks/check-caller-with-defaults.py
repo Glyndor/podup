@@ -19,11 +19,6 @@ pull request changing what a required job does; the step refuses it with
 a message that names the file, the job, the input key, the supplied value,
 and the declared default.
 
-The reusable is the place where the value the ruleset assumes is canonicalised.
-A pull request that changes a default is reviewed on the reusable's diff,
-where the ruleset's check name is fixed by definition (the reusable emits
-the same `name:` either way), so the change has to be deliberate and visible.
-
 Same shape as caller-if in reusable-workflow-lint.yml: same static map of
 required reusables, same direct-emitter list (which has no `with:` to
 compare, so it never trips), same `reusable-*` filename filter that exempts

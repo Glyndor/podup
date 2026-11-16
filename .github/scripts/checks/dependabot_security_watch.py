@@ -4,11 +4,8 @@
 Dependabot security updates do not honour `target-branch`; they open against
 the default branch, which here is `main`. `main-guard` refuses any pull
 request into `main` whose source is not `develop`, so a security bump lands
-with a red check and then sits open. The policy is to keep
-`target-branch: develop` and `main-guard` exactly as they are,
-re-land every security bump by hand off
-`develop`, and make the stuck state loud instead of silent. This script is
-the loud part.
+with a red check and then sits open. This script makes the stuck state loud
+instead of silent.
 
 Usage:
 	gh pr list --repo R --base main --state open \\

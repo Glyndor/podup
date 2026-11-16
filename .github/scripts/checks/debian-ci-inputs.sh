@@ -9,8 +9,7 @@
 # debian/rules' feature set (`--no-default-features --features
 # watch,completions`), and the only one that runs the Rust test suite inside a
 # package build: debian/rules overrides dh_auto_test with `cargo test`, and
-# dpkg-buildpackage runs that sequence. Seven minutes of runner time for a
-# change that cannot reach the package is time nobody gets back.
+# dpkg-buildpackage runs that sequence.
 #
 # Reads $EVENT (the GitHub event name) and writes `run=true` or `run=false`
 # to $GITHUB_OUTPUT. Exit 0 means the package may be skipped, exit 1 means it
@@ -48,8 +47,7 @@
 # The policy is deliberately narrower than what cannot reach the package. A
 # licence, a README or an image under docs/assets cannot reach it either, and
 # none of them may skip the build: the package is the artifact a Debian user
-# installs, and the cost of building it for nothing is a few minutes of runner
-# time next to the cost of shipping a package that was never built.
+# installs.
 set -uo pipefail
 export LC_ALL=C
 

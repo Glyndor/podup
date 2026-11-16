@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
 """Refuse a path-filtered workflow that does not watch the reusables it calls.
 
-A workflow with a `paths:` filter decides for itself when it runs, and
-#1568 changed what that decision is made against. While the reusables were
-`uses: Glyndor/.github/...@<sha>` references, a change to one arrived as a
-Dependabot commit editing the caller file, and every filter already matched
-its own file. A local copy is edited directly: nothing touches the caller,
-so the filter does not fire and the reusable merges without having run.
+A workflow with a `paths:` filter decides for itself when it runs. A local
+copy of a reusable is edited directly: nothing touches the caller, so the
+filter does not fire and the reusable merges without having run.
 
-Five workflows here were in that state on 2026-08-28 and the tree gave no
-sign of it. This is the same defect as #1295 one level up, and the reason it
-is a check rather than a note in CONTRIBUTING.md is that it is a property of
-the tree, so it can be asserted instead of remembered.
+This is the same defect as #1295 one level up, and the reason it is a check
+rather than a note in CONTRIBUTING.md is that it is a property of the tree,
+so it can be asserted instead of remembered.
 
 No input guards it. `tooling-isolation` takes one because it was written to
 be adopted repository by repository; this rule has one consumer, and a switch
@@ -25,11 +21,6 @@ reusable-workflow-lint.yml handle it.
 
 Reads: .github/workflows/*.yml, .github/workflows/*.yaml under the working
 directory.
-
-Lives here rather than inline in .github/workflows/reusable-workflow-lint.yml
-because the inline body would push that file over the line-limit gate's
-500-line hard limit, the same reason check-caller-with-defaults.py and
-check-merge-group-triggers.py live beside it.
 """
 import glob
 import os
