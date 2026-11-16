@@ -10,7 +10,7 @@
 #
 # The real `gh` is never permitted to run here: this test does not set
 # GH_TOKEN to a usable value (the stub ignores it anyway), and the real
-# binary lives at /home/jaroc/.local/bin/gh, which a stray run would
+# binary is the developer's own `gh` on PATH, which a stray run would
 # reach. The harness prepends its own bin to PATH and a safety check at
 # the top of the run asserts that `command -v gh` resolves to the fake
 # one; the run aborts if it does not.
@@ -147,7 +147,7 @@ write_stubs
 
 # --- safety: the fake gh must be the gh on PATH inside the step ----------
 #
-# The harness's real `gh` is /home/jaroc/.local/bin/gh and has a logged-in
+# The harness's real `gh` is the developer's own and has a logged-in
 # session. Running the step with that one on PATH would either talk to
 # github.com (silent, irreversible) or, worse, take a branch we did not
 # consent to. Run the step once with the baseline equal to the fake tag

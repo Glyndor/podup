@@ -121,7 +121,7 @@ jobs:
           export PATH="$RUNNER_TEMP/fixturevenv/bin:$PATH"
           bash tests/fixtures/releases/scripts/test.sh
 
-      # sign.py is what puts the organisation's Ed25519 signature on every
+      # sign.py is what puts the Ed25519 signature on every
       # released artifact, and until now nothing tested it. Its sibling
       # verify-signing-key.py had tests; the script that produces what that one
       # verifies did not.

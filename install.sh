@@ -151,7 +151,7 @@ download() {
 }
 
 # Baked-in base64 (unpadded) raw Ed25519 public keys (32 bytes each) matching the
-# release signing keys (GLYNDOR_RELEASE_ED25519_KEY / _2). Both are populated so a
+# two release signing keys. Both are populated so a
 # release signed by either key verifies during a make-before-break rotation; the
 # signature passes if any key validates. Retire a key by clearing its slot here.
 # Override for a fork via the PODUP_RELEASE_PUBKEY_B64 / _PUBKEY2_B64 env vars.

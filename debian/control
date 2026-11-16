@@ -66,7 +66,7 @@ Architecture: any
 #
 # The cost, stated rather than discovered: `apt remove unattended-upgrades`
 # now takes podup with it. An operator who schedules upgrades by hand, which
-# the releases standard permits, has to keep the package installed and switch
+# is permitted, has to keep the package installed and switch
 # it off through its own configuration instead.
 #
 # glyndor-archive-keyring is the third, and it is what makes the second mean

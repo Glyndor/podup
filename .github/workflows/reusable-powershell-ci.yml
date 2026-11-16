@@ -1,13 +1,10 @@
 name: PowerShell CI (reusable)
 
 # PSScriptAnalyzer lint for repositories shipping .ps1 scripts (podup's
-# install.ps1 today; unitpm and klyradb are expected to gain their own
-# PowerShell installers later). Replaces podup's inline
-# .github/workflows/lint-powershell.yml with one reviewed implementation;
-# the swap itself is Phase 4.2, not part of this change.
+# install.ps1 today), as one reviewed implementation.
 #
 # Runner is windows-latest and `defaults: run: shell: pwsh` is deliberate, not
-# an oversight: the CI standard's rule that a reusable job must default to
+# an oversight: the rule that a reusable job must default to
 # bash on a non-Linux runner exists because `$VAR` under PowerShell reads a
 # PowerShell variable, not the environment, so env-passed values silently
 # become empty strings. That trap only bites a job whose *content* is meant to

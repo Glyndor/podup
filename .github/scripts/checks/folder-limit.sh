@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Fail when a tracked folder holds more than twenty files directly (owner,
-# 2026-10-28). Same gate as authcore's scripts/folder-limit.
+# Fail when a tracked folder holds more than twenty files directly.
 # Run from anywhere inside the repository. Use . for the root exception.
 # Exceptions: path<TAB>ceiling<TAB>reason; blank lines and # comments are allowed.
 # Set BASE to the PR base commit to reject increases to existing ceilings.
