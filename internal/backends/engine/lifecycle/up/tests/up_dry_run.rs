@@ -39,6 +39,21 @@ fn host() -> FakePodman {
 	})
 }
 
+/// `up()` reads `PODUP_MAX_REPLICAS`, which another test sets to `2` for a while,
+/// so a three-replica fixture takes the same lock they do. The guard is held in a
+/// struct, as `up_scale_down.rs` does, because the test keeps it across `await`.
+struct ReplicaLock {
+	_lock: std::sync::MutexGuard<'static, ()>,
+}
+
+fn replica_lock() -> ReplicaLock {
+	ReplicaLock {
+		_lock: crate::engine::lifecycle::scale::scale_tests::MAX_REPLICAS_TEST_LOCK
+			.lock()
+			.unwrap_or_else(|poisoned| poisoned.into_inner()),
+	}
+}
+
 fn mutations(fake: &FakePodman) -> Vec<String> {
 	fake.requests
 		.lock()
@@ -51,9 +66,7 @@ fn mutations(fake: &FakePodman) -> Vec<String> {
 
 #[tokio::test]
 async fn an_up_through_a_dry_run_client_sends_no_mutating_request() {
-	let _lock = crate::engine::lifecycle::scale::scale_tests::MAX_REPLICAS_TEST_LOCK
-		.lock()
-		.unwrap_or_else(|poisoned| poisoned.into_inner());
+	let _lock = replica_lock();
 	let fake = host();
 	let file = crate::parse_str("services:\n  web:\n    image: x\n    scale: 1\n")
 		.expect("the fixture parses");
@@ -79,9 +92,7 @@ async fn an_up_through_a_dry_run_client_sends_no_mutating_request() {
 async fn the_same_up_through_a_normal_client_does_mutate() {
 	// The control: without the gate the fixture really produces DELETEs, so the
 	// test above is not passing because there was nothing to send.
-	let _lock = crate::engine::lifecycle::scale::scale_tests::MAX_REPLICAS_TEST_LOCK
-		.lock()
-		.unwrap_or_else(|poisoned| poisoned.into_inner());
+	let _lock = replica_lock();
 	let fake = host();
 	let file = crate::parse_str("services:\n  web:\n    image: x\n    scale: 1\n")
 		.expect("the fixture parses");
