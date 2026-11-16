@@ -49,11 +49,15 @@ impl Peer {
 					stream
 						.set_write_timeout(Some(Duration::from_secs(2)))
 						.unwrap();
-					let request = read_head(&mut stream);
-					// Log even an incomplete/malformed request as forbidden.
-					let mut entries = log.lock().unwrap();
-					entries.push(request);
-					super::responses::answer(&mut stream, entries.last().unwrap());
+					// A connection that sends nothing before it closes is not a
+					// request: a client may open one ahead of use and drop it. Any
+					// byte that did arrive is logged, even a partial or malformed
+					// head, and counts as forbidden.
+					if let Some(request) = read_head(&mut stream) {
+						let mut entries = log.lock().unwrap();
+						entries.push(request);
+						super::responses::answer(&mut stream, entries.last().unwrap());
+					}
 				}
 				Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
 					// Drain queued connections after child exit before ending the log.
@@ -95,7 +99,7 @@ impl Drop for Peer {
 	}
 }
 
-fn read_head(stream: &mut UnixStream) -> Request {
+fn read_head(stream: &mut UnixStream) -> Option<Request> {
 	let mut head = Vec::new();
 	let mut byte = [0u8; 1];
 	while !head.ends_with(b"\r\n\r\n") && head.len() < 64 * 1024 {
@@ -103,6 +107,9 @@ fn read_head(stream: &mut UnixStream) -> Request {
 			break;
 		}
 		head.push(byte[0]);
+	}
+	if head.is_empty() {
+		return None;
 	}
 	let text = String::from_utf8_lossy(&head);
 	let mut words = text.lines().next().unwrap_or("").split_whitespace();
@@ -120,9 +127,9 @@ fn read_head(stream: &mut UnixStream) -> Request {
 						.any(|v| v.trim().eq_ignore_ascii_case("upgrade")))
 		}) || target.contains("/attach")
 		|| (target.contains("/exec/") && target.split('?').next().unwrap().ends_with("/start"));
-	Request {
+	Some(Request {
 		method,
 		target,
 		upgrade,
-	}
+	})
 }
