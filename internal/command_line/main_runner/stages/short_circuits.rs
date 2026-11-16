@@ -111,21 +111,20 @@ pub(crate) async fn run_ls(
 	quiet: bool,
 	filter: &[String],
 	format: crate::cli::OutputFormat,
-	env_file: &[String],
-	socket: Option<&str>,
-	connection_pool_size: Option<usize>,
+	cli: &Cli,
 ) -> podup::Result<()> {
 	// `ls` is project-agnostic and short-circuits before compose parsing, so
 	// validate the global `--env-file` paths it would otherwise silently
 	// ignore (the other paths validate them while parsing).
-	for ef in env_file {
+	for ef in &cli.env_file {
 		if !std::path::Path::new(ef).is_file() {
 			return Err(podup::ComposeError::Unsupported(format!(
 				"--env-file {ef} does not exist or is not a file"
 			)));
 		}
 	}
-	let client = connect_podman(socket, connection_pool_size, false).await?;
+	let client =
+		connect_podman(cli.socket.as_deref(), cli.connection_pool_size, cli.dry_run).await?;
 	podup::list_projects_filtered(
 		&client,
 		podup::LsOptions::new(all, quiet, format == crate::cli::OutputFormat::Json),
