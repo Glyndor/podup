@@ -54,12 +54,16 @@ fn swallowed(command: &Commands) -> bool {
 	words.iter().any(|word| word == "--dry-run")
 }
 
+// Two commands that look like reads are not on this list, because the request they
+// send is a GET that still does something on the Podman side. `top` asks Podman for
+// `ps -ef`, which Podman runs as the container's own `ps` when the container can be
+// traced, so a program in the image runs. `export` makes Podman mount the container's
+// storage and emit an event. A method gate cannot tell either from a read.
 fn allowed(command: &Commands) -> bool {
 	match command {
 		Commands::Ls { .. }
 		| Commands::Stats { .. }
 		| Commands::Ps(_)
-		| Commands::Top { .. }
 		| Commands::Events(_)
 		| Commands::Port { .. }
 		| Commands::Volumes { .. }
@@ -71,8 +75,6 @@ fn allowed(command: &Commands) -> bool {
 		| Commands::Version { .. } => true,
 		#[cfg(feature = "completions")]
 		Commands::Completions { .. } => true,
-		// Prints the tar stream on stdout; `-o` writes a file on the host.
-		Commands::Export { output, .. } => output.is_none(),
 		// Prints the units on stdout; `-o` writes them into a directory.
 		Commands::Generate {
 			kind: GenerateCommands::Quadlet { output },

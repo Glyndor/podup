@@ -40,9 +40,7 @@ fn the_commands_that_only_read_run() {
 		"--dry-run audit",
 		"--dry-run version",
 		"--dry-run logs web",
-		"--dry-run top web",
 		"--dry-run port web 80",
-		"--dry-run export web",
 		"--dry-run generate quadlet",
 		"--dry-run autostart status",
 		"--dry-run autostart install",
@@ -76,6 +74,8 @@ fn every_command_that_changes_something_is_refused() {
 		"--dry-run exec web ls",
 		"--dry-run attach web",
 		"--dry-run wait",
+		"--dry-run top web",
+		"--dry-run export web",
 		"--dry-run watch",
 		"--dry-run autostart uninstall",
 	] {
@@ -86,7 +86,6 @@ fn every_command_that_changes_something_is_refused() {
 
 #[test]
 fn a_command_that_would_write_a_file_is_refused_with_an_output_path() {
-	assert!(verdict("--dry-run export web -o out.tar").is_some());
 	assert!(verdict("--dry-run generate quadlet -o units").is_some());
 }
 

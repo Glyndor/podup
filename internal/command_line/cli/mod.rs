@@ -200,7 +200,7 @@ pub(crate) struct Cli {
 	/// Show what a command would do and change nothing: no request that is not
 	/// a read reaches Podman, and nothing is written on the host. Commands that
 	/// only read (`ps`, `config`, `ls`, `images`, `volumes`, `audit`, `version`,
-	/// `top`, `port`, `logs`, `events`, `stats`) run as usual; a command
+	/// `port`, `logs`, `events`, `stats`) run as usual; a command
 	/// that would change something refuses with an error instead of ignoring the
 	/// flag. `autostart install` prints the unit and the actions it would run.
 	#[arg(long, global = true)]
