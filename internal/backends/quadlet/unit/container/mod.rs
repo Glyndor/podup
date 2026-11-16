@@ -274,7 +274,7 @@ fn render_container_unit(
 	let mut svc = Section::new("Service");
 	match role {
 		UnitRole::Service => {
-			emit_restart(service, &mut svc);
+			emit_restart(service, &mut unit, &mut svc);
 			emit_timeouts(service, waits_for_health, &mut svc);
 		}
 		// One run per start. A scheduled run is not retried, and `Restart=`
