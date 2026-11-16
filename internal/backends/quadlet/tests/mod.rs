@@ -8,6 +8,7 @@ mod image_unit_suffix;
 mod mount_colon;
 mod network;
 mod pull_policy;
+mod secret_separators;
 mod units;
 
 pub(super) use exec::podman_argv::assert_argv_has_no_token;

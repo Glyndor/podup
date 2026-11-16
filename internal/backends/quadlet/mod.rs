@@ -82,6 +82,39 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 		if svc.image.is_none() && svc.build.is_none() {
 			return Err(ComposeError::NoImageOrBuild(name.clone()));
 		}
+		// `Secret=` is a comma-separated list of `key=value` options, so a comma, an
+		// equals sign or a control character in a name, a target or an owner would
+		// move the split. The unit writer drops them, which silently turns a target
+		// `a,b` into `ab` and mounts the secret somewhere `up` does not, so the
+		// export refuses it and says which field.
+		for secret in &svc.secrets {
+			use crate::compose::types::ServiceSecretRef;
+			let fields: Vec<(&str, Option<&str>)> = match secret {
+				ServiceSecretRef::Short(name) => vec![("source", Some(name.as_str()))],
+				ServiceSecretRef::Long {
+					source,
+					target,
+					uid,
+					gid,
+					..
+				} => vec![
+					("source", Some(source.as_str())),
+					("target", target.as_deref()),
+					("uid", uid.as_deref()),
+					("gid", gid.as_deref()),
+				],
+			};
+			for (field, value) in fields {
+				if value.is_some_and(|v| v.chars().any(|c| c == ',' || c == '=' || c.is_control()))
+				{
+					return Err(ComposeError::Unsupported(format!(
+						"service '{}': a secret {field} with a comma, an equals sign or a control \
+						 character cannot be written in a Quadlet unit; rename it",
+						crate::error::sanitize_name(name)
+					)));
+				}
+			}
+		}
 		// Quadlet reads an `Image=` that ends in `.build` or `.image` as a
 		// reference to a unit of that name, and refuses the whole unit when there
 		// is none ("requested Quadlet image ... was not found"). `up` pulls such a
