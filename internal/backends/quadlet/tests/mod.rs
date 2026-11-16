@@ -4,6 +4,7 @@ mod exec;
 mod fields;
 mod floor_compat;
 mod health;
+mod image_unit_suffix;
 mod mount_colon;
 mod network;
 mod pull_policy;
