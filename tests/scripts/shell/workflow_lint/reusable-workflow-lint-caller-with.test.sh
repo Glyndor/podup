@@ -244,7 +244,7 @@ caller_with "$d" "      coverage-threshold: 76
       extra-test-os: '[\"macos-latest\", \"windows-latest\"]'
       doc-warnings: true
       working-directory: '.'
-      toolchain: '1.99'
+      toolchain: '1.100'
       podman: false
       package-check: false
       semver-check: false
