@@ -236,7 +236,8 @@ impl Engine {
 	/// at all.
 	async fn volume_disk_usage(
 		&self,
-	) -> Result<std::collections::HashMap<String, crate::libpod::types::volume::VolumeDiskUsage>> {
+	) -> Result<std::collections::HashMap<String, crate::libpod::types::volume::VolumeDiskUsage>>
+	{
 		let df: SystemDf = self
 			.client
 			.get_json(&format!("{API_PREFIX}/system/df"))

@@ -125,7 +125,8 @@ fn read_head(stream: &mut UnixStream) -> Option<Request> {
 					&& value
 						.split(',')
 						.any(|v| v.trim().eq_ignore_ascii_case("upgrade")))
-		}) || target.contains("/attach")
+		})
+		|| target.contains("/attach")
 		|| (target.contains("/exec/") && target.split('?').next().unwrap().ends_with("/start"));
 	Some(Request {
 		method,
