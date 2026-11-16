@@ -114,6 +114,7 @@ pub(crate) async fn run_ls(
 	env_file: &[String],
 	socket: Option<&str>,
 	connection_pool_size: Option<usize>,
+	dry_run: bool,
 ) -> podup::Result<()> {
 	// `ls` is project-agnostic and short-circuits before compose parsing, so
 	// validate the global `--env-file` paths it would otherwise silently
@@ -125,7 +126,7 @@ pub(crate) async fn run_ls(
 			)));
 		}
 	}
-	let client = connect_podman(socket, connection_pool_size, false).await?;
+	let client = connect_podman(socket, connection_pool_size, dry_run).await?;
 	podup::list_projects_filtered(
 		&client,
 		podup::LsOptions::new(all, quiet, format == crate::cli::OutputFormat::Json),

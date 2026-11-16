@@ -75,6 +75,7 @@ fn every_command_that_changes_something_is_refused() {
 		"--dry-run cp web:/a b",
 		"--dry-run exec web ls",
 		"--dry-run attach web",
+		"--dry-run wait",
 		"--dry-run watch",
 		"--dry-run autostart uninstall",
 	] {
@@ -95,4 +96,32 @@ fn the_message_names_the_command_the_operator_typed() {
 	assert!(message.contains("`down`"), "{message}");
 	let message = verdict("--dry-run autostart uninstall").expect("refused");
 	assert!(message.contains("`autostart uninstall`"), "{message}");
+}
+
+#[test]
+fn a_dry_run_swallowed_by_the_command_of_run_or_exec_is_refused() {
+	for line in [
+		"run web sh -c x --dry-run",
+		"exec web sh -c x --dry-run",
+		"run web ls --dry-run",
+		"run web -- ls --dry-run",
+		"--dry-run run web ls --dry-run",
+	] {
+		let message = verdict(line).unwrap_or_else(|| panic!("{line} was not refused"));
+		assert!(
+			message.contains("belongs to the command"),
+			"{line}: {message}"
+		);
+	}
+}
+
+#[test]
+fn a_command_without_that_word_is_not_touched_by_the_swallow_check() {
+	for line in [
+		"run web ls -la",
+		"exec web sh -c x",
+		"run web rsync --dryrun",
+	] {
+		assert!(verdict(line).is_none(), "{line} was refused");
+	}
 }

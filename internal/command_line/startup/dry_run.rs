@@ -20,6 +20,19 @@ pub(crate) fn refusal_for(
 	cli: &Cli,
 	args: impl IntoIterator<Item = std::ffi::OsString>,
 ) -> Option<String> {
+	// `run` and `exec` hand every token after the first word of the command to
+	// the container, so a `--dry-run` written there never reaches this parser and
+	// the command would run for real. It is refused, with the way to say what was
+	// meant, rather than guessed at.
+	if swallowed(&cli.command) {
+		return Some(
+			"a `--dry-run` after the command of `run` or `exec` belongs to the command, not to \
+			 podup, so it would not stop anything. Put the flag before the command name \
+			 (`podup --dry-run run ...`), or write it inside `sh -c '...'` if the program in \
+			 the container is meant to receive it. Nothing was run."
+				.to_string(),
+		);
+	}
 	if !cli.dry_run || allowed(&cli.command) {
 		return None;
 	}
@@ -31,6 +44,16 @@ pub(crate) fn refusal_for(
 	))
 }
 
+/// Whether the container command of `run` or `exec` carries a `--dry-run`.
+fn swallowed(command: &Commands) -> bool {
+	let words = match command {
+		Commands::Run(args) => &args.cmd,
+		Commands::Exec(args) => &args.cmd,
+		_ => return false,
+	};
+	words.iter().any(|word| word == "--dry-run")
+}
+
 fn allowed(command: &Commands) -> bool {
 	match command {
 		Commands::Ls { .. }
@@ -38,7 +61,6 @@ fn allowed(command: &Commands) -> bool {
 		| Commands::Ps(_)
 		| Commands::Top { .. }
 		| Commands::Events(_)
-		| Commands::Wait { .. }
 		| Commands::Port { .. }
 		| Commands::Volumes { .. }
 		| Commands::Images { .. }

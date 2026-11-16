@@ -205,6 +205,7 @@ async fn run(error_context: &mut startup::exit_status::ErrorContext) -> podup::R
 			&cli.env_file,
 			cli.socket.as_deref(),
 			cli.connection_pool_size,
+			cli.dry_run,
 		)
 		.await;
 	}
