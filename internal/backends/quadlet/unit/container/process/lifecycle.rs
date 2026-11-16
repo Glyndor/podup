@@ -40,16 +40,19 @@ pub(in super::super) fn emit_stop(service: &Service, container: &mut Section) {
 	}
 }
 
-/// Emit the `[Service]` section: `Restart=` plus the start limits that go with
-/// it, from either `restart:` or `deploy.restart_policy`.
-pub(in super::super) fn emit_restart(service: &Service, svc: &mut Section) {
+/// Emit `Restart=` into `[Service]` and the start limits that go with it into
+/// `[Unit]`, from either `restart:` or `deploy.restart_policy`. systemd reads
+/// `StartLimitBurst=` and `StartLimitIntervalSec=` in `[Unit]`; in `[Service]` it
+/// ignores the interval (`Unknown key 'StartLimitIntervalSec' in section
+/// [Service]`), so the window of a `max_attempts` was lost.
+pub(in super::super) fn emit_restart(service: &Service, unit: &mut Section, svc: &mut Section) {
 	if let Some(restart) = &service.restart {
 		svc.add("Restart", render_restart(restart));
 		if let RestartPolicy::OnFailure {
 			max_attempts: Some(n),
 		} = restart
 		{
-			svc.add("StartLimitBurst", n.to_string());
+			unit.add("StartLimitBurst", n.to_string());
 		}
 	} else if let Some(rp) = service
 		.deploy
@@ -67,13 +70,13 @@ pub(in super::super) fn emit_restart(service: &Service, svc: &mut Section) {
 		};
 		svc.add("Restart", restart.to_string());
 		if let Some(n) = rp.max_attempts {
-			svc.add("StartLimitBurst", n.to_string());
+			unit.add("StartLimitBurst", n.to_string());
 			if let Some(secs) = rp
 				.window
 				.as_deref()
 				.and_then(parse_duration_secs_rounded_up)
 			{
-				svc.add("StartLimitIntervalSec", secs.to_string());
+				unit.add("StartLimitIntervalSec", secs.to_string());
 			}
 		}
 	}

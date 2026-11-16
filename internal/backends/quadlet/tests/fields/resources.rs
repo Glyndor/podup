@@ -399,3 +399,24 @@ fn cpus_with_a_period_become_a_quota() {
 	assert!(c.contains("PodmanArgs=--cpu-quota=150000\n"), "{c}");
 	assert!(c.contains("PodmanArgs=--cpu-period=50000\n"), "{c}");
 }
+
+#[test]
+fn the_start_limits_sit_in_the_unit_section_where_systemd_reads_them() {
+	// In `[Service]` systemd ignores `StartLimitIntervalSec=`, so the window of a
+	// `max_attempts` was lost; both limits belong between `[Unit]` and `[Container]`.
+	let yaml = "services:\n  web:\n    image: x\n    deploy:\n      restart_policy:\n        condition: on-failure\n        max_attempts: 3\n        window: 60s\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "p-web.container").contents;
+	let unit = c.find("[Unit]").expect("a [Unit] section");
+	let container = c.find("[Container]").expect("a [Container] section");
+	for key in ["StartLimitBurst=3", "StartLimitIntervalSec=60"] {
+		let at = c
+			.find(key)
+			.unwrap_or_else(|| panic!("{key} missing in:\n{c}"));
+		assert!(
+			unit < at && at < container,
+			"{key} is outside [Unit] in:\n{c}"
+		);
+	}
+}
