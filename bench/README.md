@@ -179,10 +179,6 @@ Two report tables, by intent:
   each stack sees, and the engines differ, so it is not a pure tool
   comparison. Only rendered when `docker-compose-docker` has rows.
 
-The harness and the published claims are reviewed separately: one review checks
-that the harness is equitable, the other that the published claims are
-supported and honest.
-
 ## Budgets
 
 Two ceilings live here, both read by a gate rather than by a reader:
@@ -192,9 +188,8 @@ Two ceilings live here, both read by a gate rather than by a reader:
 | `budgets/memory-budget-mib` | peak RSS of a benchmarked command | `report/aggregate.py`, which fails the run above it |
 | `budgets/binary-budget-mib` | the release binary on disk | `.github/workflows/binary-budget.yml`, on every pull request |
 
-Both exist because the releases standard asks for a size budget per artifact and
-treats unexplained growth as a regression to investigate rather than ship. Before
-them, drift was something someone noticed in a published table months later.
+Both exist so that unexplained growth is a regression to investigate rather
+than ship. Before them, drift was something someone noticed in a published table months later.
 
 **Moving a budget is allowed and is meant to be deliberate.** Raise the number in
 the same commit as the growth that needs it, and say in the message what the

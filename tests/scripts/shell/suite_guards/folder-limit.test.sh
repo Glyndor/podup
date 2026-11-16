@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Behaviour tests for .github/scripts/checks/folder-limit.sh on real git indexes.
 #
-# Ported from authcore's scripts/folder-limit test without the part that runs its
-# workflow's base loader: here the script runs as a step of the lint job.
+# The script runs as a step of the lint job, so this test does not load it from
+# a base commit.
 set -euo pipefail
 export LC_ALL=C
 

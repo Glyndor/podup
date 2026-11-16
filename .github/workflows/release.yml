@@ -1,8 +1,8 @@
 name: release
 
 # Trigger is push on a v* tag, plus workflow_dispatch with a tag input. A tag
-# push is the only natural release event (a release is a tag), and I added
-# dispatch so a release that started from a tag push but failed partway can be
+# push is the only natural release event (a release is a tag), and the
+# dispatch lets a release that started from a tag push but failed partway be
 # retried against the same tag, without bumping the version.
 on:
   push:
@@ -487,7 +487,7 @@ jobs:
   # could persist in the workspace and rewrite `.github/scripts/release/sign.py` or
   # `.github/scripts/release/sign-requirements.txt` before the signing step ran them
   # with the key in its environment. This job holds `contents: read` and no
-  # secrets, so persistence here has nothing to land on. See Glyndor/apt#121.
+  # secrets, so persistence here has nothing to land on.
   sbom:
     name: Generate SBOM and license attribution
     needs: [build, build-deb]
@@ -523,8 +523,8 @@ jobs:
         # and each OS pulls different cfg-gated deps, yet all shipped the same
         # union SBOM. Generate one CycloneDX per released artifact with that
         # artifact's exact target triple and feature set, so each lists only what
-        # its binary actually contains (releases standard: "the per-artifact SBOM
-        # lists only that platform's dependencies").
+        # its binary actually contains: the per-artifact SBOM
+        # lists only that platform's dependencies.
         #
         # cargo-cyclonedx's --target uses cargo's --filter-platform resolution,
         # which needs only the triple, not an installed std, so the six

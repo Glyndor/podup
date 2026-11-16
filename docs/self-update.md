@@ -43,15 +43,15 @@ Installers require staged `--version` to match the resolved tag. Installer scrip
 The embedded Python classifies verification failures into two exit codes:
 
 - **rc=1 (signature mismatch)**: every embedded key rejected the signature. Treat as a release-tampering problem; do not retry.
-- **rc=3 (key malformed)**: at least one embedded key was set but could not be decoded into a 32-byte Ed25519 point. Installer decoding tolerates some invalid characters; CI decoding is stricter. Correct key overrides for rc=3; do not bypass signature failures.
+- **rc=3 (key malformed)**: at least one embedded key was set but could not be decoded into a 32-byte Ed25519 point. Correct key overrides for rc=3; do not bypass signature failures.
 
 ## The embedded public keys
 
-Consumers have two key slots: one active and one empty for rotation. Trust succeeds under any accepted nonempty key; no usable keys fails closed. Keys live in `RELEASE_PUBKEYS`, `install.sh`'s `PODUP_RELEASE_PUBKEY_B64`/`PODUP_RELEASE_PUBKEY2_B64` and `install.ps1`'s `PubKeyB64`/`PubKey2B64`. A third slot requires changes to every consumer, not just the CI regex.
+Consumers have two key slots: one active and one empty for rotation. Trust succeeds under any accepted nonempty key; no usable keys fails closed. Keys live in `RELEASE_PUBKEYS`, `install.sh`'s `PODUP_RELEASE_PUBKEY_B64`/`PODUP_RELEASE_PUBKEY2_B64` and `install.ps1`'s `PubKeyB64`/`PubKey2B64`. A third slot requires changes to every consumer.
 
 ### Key rotation
 
-Because each binary accepts up to two keys, the signing key can be rotated **without stranding installed binaries**, provided the outgoing private key is still available to sign the migration release. A two-release transition first ships the new key alongside the old (signed by the old key), so binaries already in the field accept the next release and gain the new key; a later release then retires the old key once every install has converged on the new one. The GitHub build-provenance attestation, which does not depend on the signing key, still proves origin during the window.
+Because each binary accepts up to two keys, the signing key can be rotated **without stranding installed binaries**. The GitHub build-provenance attestation, which does not depend on the signing key, still proves origin during the window.
 
 Binaries that predate the current key set cannot verify newer releases in-band; they are reinstalled once via the current `install.sh` / apt and update normally from then on.
 

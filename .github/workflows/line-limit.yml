@@ -8,11 +8,9 @@ name: Line limit
 # tree that runs only on pull requests cannot see content that arrives by
 # direct merge, which on `main` is every release.
 #
-# This workflow was pull-request-only and nothing here said why. The org's CI
-# standard names that omission by name: "podup restricts it to pull_request,
-# and that is the scoping nobody has justified". It is justified now, in the
-# other direction, and the file says so where the trigger is rather than in a
-# commit message nobody reads twice.
+# This workflow was pull-request-only and nothing here said why. The scoping
+# is justified now, in the other direction, and the file says so where the
+# trigger is rather than in a commit message nobody reads twice.
 on:
   push:
     branches:

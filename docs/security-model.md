@@ -16,7 +16,7 @@ Runtime privileges, trust boundaries and validation. The [threat model](threat-m
 | Compose file and its referenced files | **Trusted input** | Treated like a Makefile (see below). |
 | Release artifacts (`podup update`, installer) | Untrusted transport | Binary installs verify a signed manifest and the selected digest against an embedded Ed25519 key; release CI also checks per-asset `.sig` files. The apt bootstrap verifies the keyring package's signature; apt then verifies the signed archive metadata and package hashes. Provenance attestation in the shell installers is defence-in-depth and only runs when a `gh` capable of verifying is present. |
 | Container filesystem (e.g. `cp` archives) | Untrusted | Tar extraction refuses path-traversal (zip-slip) entries; the host-side `cp` destination is also walked component by component and any symlink at any component of the path is refused. |
-| Network/TLS to GitHub/crates.io | Untrusted | Integrity comes from signatures, not transport. |
+| Network/TLS to GitHub | Untrusted | Integrity comes from signatures, not transport. |
 
 ## Compose files are trusted input
 

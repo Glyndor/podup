@@ -104,7 +104,7 @@ concurrency:
 jobs:
   debian:
     # v1.17.0 added rust-toolchain and rust-target. It was pinned here at the
-    # untagged commit first, because the CI standard asks for a reusable to be
+    # untagged commit first, because a reusable should be
     # proven on a real consumer before its tag is cut - .github's own CI never
     # exercises a caller. This repository's dpkg-buildpackage job was that
     # proof, going from red to green in 6m36s on #1525.

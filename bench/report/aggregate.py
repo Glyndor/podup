@@ -517,7 +517,7 @@ def main():
 def check_memory_budget(summary):
 	"""Fail when podup's peak median RSS exceeds the budget in bench/budgets/memory-budget-mib.
 
-	The releases standard asks for a size budget per artifact and treats an
+	A size budget per artifact treats an
 	unexplained growth as a regression to investigate rather than ship. There was
 	none for memory, so the drift from 7.5 MiB at 2.1.0 to 8.1 at 3.4.1 was
 	noticed by a human reading a published table months later instead of by a red

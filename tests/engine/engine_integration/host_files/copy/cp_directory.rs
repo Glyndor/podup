@@ -3,10 +3,10 @@
 use std::fs;
 
 use super::*;
-/// I added this test because before #1777 was fixed a directory copy against
+/// This test exists because before #1777 was fixed a directory copy against
 /// Podman 6 was reported as failed even when it landed on disk, which is why
-/// the neighbour below could not assert on `cp`'s return value. I hold `cp`
-/// to both halves here: the bytes arrive, and `cp` says so, on Podman 6 as on
+/// the neighbour below could not assert on `cp`'s return value. It holds `cp`
+/// to both halves: the bytes arrive, and `cp` says so, on Podman 6 as on
 /// Podman 5.
 ///
 /// The payload holds a relative symlink (`link -> a.txt`) and a dangling one

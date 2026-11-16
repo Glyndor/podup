@@ -12,7 +12,7 @@ name: Workflow lint (reusable)
 # It runs over the calling job's checkout, which is this repository's own.
 #
 # actionlint's embedded shellcheck pass otherwise falls back to whatever
-# shellcheck the runner image ships, which floats independently of the org's
+# shellcheck the runner image ships, which floats independently of the
 # pinned version (shell-ci.yml). Installing the same pinned shellcheck here
 # and pointing actionlint at it with -shellcheck keeps that pass reproducible
 # too.
@@ -30,12 +30,9 @@ name: Workflow lint (reusable)
 # is not on that list. That is the deliberate state at the time of this
 # writing, and the rationale is what follows.
 #
-# The rule that says "do not promote a check that has never failed for the
-# right reason" is the organisation's CI standard:
-#
-#   A gate that never has failed is not tested. Before marking a check as
-#   required, provoke the failure on purpose and confirm it goes red for
-#   the right reason.
+# The rule is: do not promote a check that has never failed for the right
+# reason. Before marking a check as required, provoke the failure on purpose
+# and confirm it goes red for the right reason.
 #
 # The release-path workflows are not required today because none of them
 # has been demonstrated to fail at the gate they would defend. Promoting

@@ -37,8 +37,8 @@ name: Repository health
 # status checks. Each one fails because a cron or a branch somewhere else
 # stopped being green, which has nothing to do with the change under review,
 # so requiring one would block every pull request for the length of an
-# unrelated outage. The rule lives in the organisation standard, and it is
-# repeated here because this file is what somebody wiring a ruleset has open.
+# unrelated outage. The rule is stated here because this file is what somebody
+# wiring a ruleset has open.
 
 on:
   # The fallback for a dead schedule: every push to a protected branch
@@ -78,9 +78,8 @@ jobs:
   # status checks. Each one fails because a cron somewhere else stopped
   # firing, which has nothing to do with the change under review, so
   # requiring one would block every pull request for the length of an
-  # unrelated outage. The rule lives in the organisation standard, and it is
-  # repeated here because this file is what somebody wiring a ruleset has
-  # open.
+  # unrelated outage. The rule is stated here because this file is what somebody
+  # wiring a ruleset has open.
   #
   # A newly added scheduled workflow cannot be registered here in the same
   # pull request that adds it. The guard passes only on a run with
