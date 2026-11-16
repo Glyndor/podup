@@ -131,3 +131,17 @@ fn meets_minimum_handles_malformed_and_empty() {
 	// Leading/trailing whitespace around a valid version is tolerated.
 	assert!(meets_minimum(" 5.0.0 "));
 }
+
+/// Only one `v` prefix and a plain run of digits count as a major version, so
+/// a repeated prefix or a sign never reads as a compatible server.
+#[test]
+fn meets_minimum_refuses_repeated_prefixes_and_signed_majors() {
+	for hostile in [
+		"vv5.0.0", "vvv6.1.0", "+5.0.0", "-5.0.0", "v+5.0.0", "5x.0.0", "v",
+	] {
+		assert!(
+			!meets_minimum(hostile),
+			"accepted malformed version {hostile:?}"
+		);
+	}
+}

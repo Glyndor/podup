@@ -30,9 +30,13 @@ pub fn tokenise_podman_argv(value: &str) -> Vec<String> {
 		if in_quotes {
 			match c {
 				'"' => in_quotes = false,
-				'\\' if chars.peek() == Some(&'"') => {
-					current.push('"');
+				'\\' if matches!(chars.peek(), Some('"' | '\\')) => {
+					current.push(chars.next().expect("escaped quote or backslash"));
+				}
+				'\\' if chars.peek() == Some(&'x') => {
 					chars.next();
+					let hex: String = chars.by_ref().take(2).collect();
+					current.push(u8::from_str_radix(&hex, 16).expect("hex escape") as char);
 				}
 				_ => current.push(c),
 			}

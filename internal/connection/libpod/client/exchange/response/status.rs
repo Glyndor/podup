@@ -13,11 +13,12 @@ use super::{Client, PodmanError, Result};
 /// [`MIN_LIBPOD_API_MAJOR`](crate::libpod::client::MIN_LIBPOD_API_MAJOR).0
 /// floor.
 pub(crate) fn meets_minimum(version: &str) -> bool {
+	let version = version.trim();
+	let version = version.strip_prefix('v').unwrap_or(version);
 	version
-		.trim()
-		.trim_start_matches('v')
 		.split('.')
 		.next()
+		.filter(|major| !major.is_empty() && major.bytes().all(|b| b.is_ascii_digit()))
 		.and_then(|major| major.parse::<u64>().ok())
 		.is_some_and(|major| major >= crate::libpod::client::MIN_LIBPOD_API_MAJOR)
 }
