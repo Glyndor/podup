@@ -2,10 +2,8 @@
 # Fail when a tracked file uses a word the style rules ask to leave out.
 #
 # Those rules list the vocabulary that reads as machine written and the
-# promotional keywords that read as advertising. History cannot be cleaned
-# (main and develop take no force push), so the discipline has to be at
-# writing time, and a rule that lives in prose is mostly followed. This reads what ships: comments, docs, templates,
-# workflows and the messages the code prints.
+# promotional keywords that read as advertising. This reads what ships:
+# comments, docs, templates, workflows and the messages the code prints.
 #
 # What it matches:
 #   - the whole word, ignoring case: the words in WORDS below;

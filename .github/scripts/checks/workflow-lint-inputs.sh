@@ -5,9 +5,7 @@
 # Decide whether the workflow lint has to run for a pull request's range.
 #
 # The lint installs Go, installs actionlint, downloads a pinned shellcheck
-# and then reads every workflow in the tree. That is a minute of runner
-# time and a download of a third-party binary on every pull request, and a
-# pull request that touches no workflow pays all of it for nothing.
+# and then reads every workflow in the tree.
 #
 # Reads $EVENT (the GitHub event name) and writes `run=true` or `run=false`
 # to $GITHUB_OUTPUT. Exit 0 means the lint may be skipped, exit 1 means it
@@ -36,12 +34,9 @@
 #                        the lint neither reads nor drives
 #   .editorconfig
 #
-# The default is "run". An earlier version skipped every path it did not
-# know, and an independent review showed the cost: a path git quotes (unicode,
-# a tab, a newline) matched nothing and fell to the skip, so a workflow named
-# with an accent skipped the lint while actionlint still read it. Paths are
-# now read NUL-separated, so nothing is quoted, and a path nobody listed
-# runs the lint, the way the Rust lanes treat theirs.
+# The default is "run". Paths are read NUL-separated, so nothing is
+# quoted, and a path nobody listed runs the lint, the way the Rust lanes
+# treat theirs.
 set -uo pipefail
 export LC_ALL=C
 

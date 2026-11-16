@@ -37,11 +37,8 @@ on:
 permissions:
   contents: read
 
-# One run per ref. A force-push used to leave the superseded run booting its
-# two VMs to completion beside the new one: measured 2026-09-02, two runs of
-# this workflow for one pull request, four VM legs, one pair answering a
-# question about a commit that no longer existed. Cancelling applies to pull
-# requests only; the nightly and a manual dispatch are never superseded.
+# One run per ref. Cancelling applies to pull requests only; the nightly and
+# a manual dispatch are never superseded.
 #
 # The `github.ref` below is unique per merge group (the temporary branch is
 # `gh-readonly-queue/develop/pr-<N>-<sha>`), so two queue groups never share

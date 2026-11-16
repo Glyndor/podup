@@ -7,9 +7,6 @@
 # The Rust lanes are `rust / Format & lint`, `rust / Test`,
 # `rust / Extra platforms` and `rust / Coverage`: the format and lint pass,
 # the Linux test suite, the macOS and Windows matrix, and the coverage gate.
-# Together they are about ten minutes of runner time on every pull request,
-# and a pull request that touches none of their inputs pays all of it for
-# nothing.
 #
 # It answers with two outputs, and the pair is the answer:
 #

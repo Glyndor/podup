@@ -2,21 +2,6 @@ name: Schedule freshness (reusable)
 
 # Fails when a scheduled workflow has not succeeded recently enough.
 #
-# Every other guard in this organisation is an assertion that fails loudly. A
-# cron that stops firing is the exception: it emits nothing at all, and "no
-# alert" is indistinguishable from "all clear". On 2026-06-29 every scheduled
-# workflow in the org stopped. podup and apt recovered on 07-15 because they
-# happened to get activity and a disable/enable cycle; authcore, epistle, unitpm
-# and glyndor.net stayed dark for four more weeks, all of them reporting
-# `active` the whole time. It cost a real finding: authcore's GO-2026-5856 was
-# caught by a hand-run of govulncheck, not by the weekly audit that exists for
-# exactly that.
-#
-# Call this from a workflow that already runs often (normal CI) so the absence
-# of a scheduled run becomes a red check on ordinary work. It is the same idea
-# as apt's `ValidFor: 14d`, which expires the archive rather than letting it
-# serve a frozen snapshot when the pipeline stalls.
-#
 # The caller must grant `actions: read` alongside `contents: read`: a called
 # workflow cannot elevate beyond the permissions of the workflow that calls it,
 # and reading run history needs that scope. Without it the run does not start.
