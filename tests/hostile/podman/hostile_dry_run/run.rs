@@ -52,6 +52,10 @@ pub fn podup(fixture: &Fixture, socket: &Path, args: &[&str]) -> Outcome {
 		.env("XDG_STATE_HOME", fixture.home.join("state"))
 		.env("XDG_RUNTIME_DIR", fixture.home.join("run"))
 		.env("TMPDIR", fixture.home.join("tmp"))
+		// A build instrumented for coverage writes its profile where this names; with
+		// the environment cleared it would fall back to the working directory, which
+		// is the project tree the test compares before and after.
+		.envs(std::env::var_os("LLVM_PROFILE_FILE").map(|path| ("LLVM_PROFILE_FILE", path)))
 		.stdin(Stdio::null())
 		.stdout(Stdio::piped())
 		.stderr(Stdio::piped())
