@@ -8,9 +8,8 @@ sign.py checks only that GLYNDOR_RELEASE_ED25519_KEY is base64 that decodes to
 32 bytes. A well-formed but WRONG seed therefore signs happily, and the release
 publishes with a signature no installer, updater or apt client can verify - a
 dead release, and releases are immutable, so the version is burnt and the fix is
-a whole new one. The 2026-07 rotation made that concrete: the signing secret and
-the embedded keys are edited in different places at different times, and nothing
-compared them.
+a whole new one. The signing secret and the embedded keys are edited in different
+places at different times, and nothing compared them.
 
 This closes the loop by verifying the produced signature against the public keys
 that ship to users, read straight out of install.sh rather than restated here -
