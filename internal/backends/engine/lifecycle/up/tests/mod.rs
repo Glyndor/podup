@@ -61,4 +61,5 @@ mod up_replica;
 mod up_validation;
 
 #[cfg(all(test, unix))]
+mod up_dry_run;
 mod up_scale_down;
