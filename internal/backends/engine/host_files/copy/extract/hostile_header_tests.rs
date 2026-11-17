@@ -229,3 +229,73 @@ fn an_entry_naming_the_destination_itself_cannot_re_mode_it() {
 		}
 	}
 }
+
+#[test]
+fn a_gnu_long_name_cannot_escape_the_destination() {
+	let arena = Arena::new();
+	let tar = archive(&[
+		raw(
+			b"././@LongLink",
+			EntryType::GNULongName,
+			b"",
+			0o644,
+			b"../outside/marker\0",
+		),
+		file("safe", b"pwn", 0o644),
+	]);
+	let result = run(&arena, &tar);
+	arena.assert_outside_untouched("GNU long name");
+	let error = result.expect_err("the effective GNU path must be refused");
+	assert!(error.to_string().contains("escapes destination"), "{error}");
+	assert!(!arena.dest.join("safe").exists());
+}
+
+#[test]
+fn a_gnu_long_link_is_stored_but_never_traversed() {
+	let arena = Arena::new();
+	let tar = archive(&[
+		raw(
+			b"././@LongLink",
+			EntryType::GNULongLink,
+			b"",
+			0o644,
+			b"../outside\0",
+		),
+		super::hostile_support::symlink("lnk", "safe"),
+		file("lnk/secret", b"pwn", 0o644),
+	]);
+	let result = run(&arena, &tar);
+	arena.assert_outside_untouched("GNU long link");
+	assert_eq!(
+		std::fs::read_link(arena.dest.join("lnk")).unwrap(),
+		std::path::Path::new("../outside")
+	);
+	assert!(
+		result.is_err(),
+		"a write through the effective GNU link must be refused"
+	);
+}
+
+#[test]
+fn a_benign_gnu_long_name_applies_to_only_one_entry() {
+	let arena = Arena::new();
+	let tar = archive(&[
+		raw(
+			b"././@LongLink",
+			EntryType::GNULongName,
+			b"",
+			0o644,
+			b"renamed\0",
+		),
+		file("safe", b"payload", 0o644),
+		file("after", b"next", 0o644),
+	]);
+	run(&arena, &tar).expect("a benign GNU override extracts");
+	assert_eq!(
+		std::fs::read(arena.dest.join("renamed")).unwrap(),
+		b"payload"
+	);
+	assert_eq!(std::fs::read(arena.dest.join("after")).unwrap(), b"next");
+	assert!(!arena.dest.join("safe").exists());
+	arena.assert_outside_untouched("benign GNU override");
+}
