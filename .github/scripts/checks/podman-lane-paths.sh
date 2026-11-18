@@ -34,6 +34,7 @@ while IFS= read -r f; do
 		.github/workflows/benchmark.yml) ;;
 		.github/workflows/binary-budget.yml) ;;
 		.github/workflows/ci.yml) ;;
+		.github/workflows/commit-hygiene.yml) ;;
 		.github/workflows/dco.yml) ;;
 		.github/workflows/dependabot-security-watch.yml) ;;
 		.github/workflows/debian-build.yml) ;;
