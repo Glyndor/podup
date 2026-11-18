@@ -4,7 +4,9 @@
 #
 # Every commit in <base>..<head> is checked for three things: the author address,
 # every Signed-off-by, and every Co-authored-by. Each has to be a GitHub noreply
-# address (or GitHub's own noreply@github.com). Addresses are never printed: they
+# address (or GitHub's own noreply@github.com and support@github.com, the latter
+# used by older Dependabot commits). A trailer is checked for every address it
+# carries, and one with none is refused. Addresses are never printed: they
 # are the thing being protected, and a CI log is public too.
 #
 # Why it exists: in November 2026 thirty-four commits went to a public repository
@@ -19,7 +21,7 @@ set -euo pipefail
 
 base="${1:?base}"; head="${2:?head}"
 
-allowed='^([0-9]+\+)?[A-Za-z0-9][A-Za-z0-9-]*(\[bot\])?@users\.noreply\.github\.com$|^noreply@github\.com$'
+allowed='^([0-9]+\+)?[A-Za-z0-9][A-Za-z0-9-]*(\[bot\])?@users\.noreply\.github\.com$|^(noreply|support)@github\.com$'
 
 bad=0
 flag() { # <sha> <what>
@@ -35,8 +37,14 @@ while IFS= read -r sha; do
 	for key in Signed-off-by Co-authored-by; do
 		while IFS= read -r value; do
 			[ -n "$value" ] || continue
-			addr="$(printf '%s\n' "$value" | sed -n 's/.*<\([^<>]*\)>.*/\1/p')"
-			printf '%s\n' "$addr" | grep -qE "$allowed" || flag "$sha" "a $key address"
+			# Every address-shaped token in the value, not just the one inside the
+			# last <...>: a trailer can carry two, and a personal one in front of a
+			# noreply one must not pass. A value with no address is refused too.
+			addrs="$(printf '%s\n' "$value" | grep -oE '[^<>[:space:]]+@[^<>[:space:]]+' || true)"
+			if [ -z "$addrs" ]; then flag "$sha" "a $key with no address"; continue; fi
+			while IFS= read -r addr; do
+				printf '%s\n' "$addr" | grep -qE "$allowed" || flag "$sha" "a $key address"
+			done <<< "$addrs"
 		done < <(git show -s --format="%(trailers:key=$key,valueonly)" "$sha")
 	done
 done < <(git rev-list --no-merges "$base..$head")

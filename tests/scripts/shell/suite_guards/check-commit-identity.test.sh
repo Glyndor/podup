@@ -57,6 +57,22 @@ commit "$noreply" "$(printf 'x\n\nCo-authored-by: t <%s>' "$personal")"
 run >/dev/null; check "a personal Co-authored-by fails" 1 "$?"
 
 git -C "$repo" reset -q --hard "$base"
+commit "$noreply" "$(printf 'x\n\nSigned-off-by: t <%s> <%s>' "$personal" "$noreply")"
+out="$(run)"; rc=$?
+check "a personal address in front of a noreply one fails" 1 "$rc"
+check "and the address is not printed" 0 "$(printf '%s' "$out" | grep -c "$personal")"
+
+git -C "$repo" reset -q --hard "$base"
+commit "$noreply" "$(printf 'x\n\nSigned-off-by: just a name')"
+out="$(run)"; rc=$?
+check "a trailer with no address fails" 1 "$rc"
+check "and says so" 1 "$(printf '%s' "$out" | grep -c 'with no address')"
+
+git -C "$repo" reset -q --hard "$base"
+commit "support@github.com" "older dependabot"
+run >/dev/null; check "support@github.com passes" 0 "$?"
+
+git -C "$repo" reset -q --hard "$base"
 commit "$noreply" "$(printf 'x\n\nSigned-off-by: t <%s>' "$noreply")"
 commit "$personal" "second, personal"
 run >/dev/null; check "one bad commit among good ones fails" 1 "$?"
