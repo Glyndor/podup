@@ -42,7 +42,7 @@ use crate::ComposeError;
 /// embedded key, and slot 1 starts zeroed (the normal steady state) rather than
 /// carrying a second live key.
 pub const RELEASE_PUBKEYS: [[u8; 32]; 2] = [
-	// GLYNDOR_RELEASE_ED25519_KEY = HFv7vg5FCY7YyKUDbJhaQSfB9SboJGSblJtFbLmLHzM
+	// GLYNDOR_RELEASE_ED25519_KEY = HFv7vg5FCY7YyKUDbJhaQSfB9SboJGSblJtFbLmLHzM secret-scan:allow the public release key
 	[
 		28, 91, 251, 190, 14, 69, 9, 142, 216, 200, 165, 3, 108, 152, 90, 65, 39, 193, 245, 38,
 		232, 36, 100, 155, 148, 155, 69, 108, 185, 139, 31, 51,
