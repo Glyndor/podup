@@ -26,7 +26,7 @@ Mention the issue in the PR and mark its status done. It closes when the release
 ## Before you open a pull request
 
 - Open an issue and apply its `type:`, `prio:`, `effort:`, `status:` and `area:` labels.
-- Sign commits and add DCO sign-off with `git commit -s`.
+- Sign commits and add DCO sign-off with `git commit -s`, using your GitHub noreply address (`git config user.email`). `commit hygiene` rejects any other address in the author, `Signed-off-by` or `Co-authored-by`, and a line that looks like a credential.
 - Use a Conventional Commit PR title.
 
 ## Tests

@@ -1,0 +1,53 @@
+name: commit hygiene
+
+# Two things history cannot take back, checked before a pull request merges: a
+# personal email address in a commit, and something shaped like a credential in
+# the lines it adds. Shell only, no third-party tooling, so neither job needs a
+# secret or a network.
+#
+# The dco check only asks for "a name and an address" and passed thirty-four
+# commits signed off with a personal one; GitHub's push protection knows the
+# formats of other people's tokens, not a signing key of our own.
+
+on:
+  pull_request:
+    branches: ["main", "develop"]
+
+permissions: {}
+
+jobs:
+  commit-identity:
+    name: commit identity
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Every commit uses a GitHub noreply address
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: .github/scripts/hygiene/check-commit-identity.sh "$BASE" "$HEAD"
+
+  secret-scan:
+    name: secret scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The change adds no credential-shaped line
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: .github/scripts/hygiene/check-secrets.sh "$BASE" "$HEAD"
