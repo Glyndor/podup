@@ -244,14 +244,10 @@ fn every_emitted_key_is_a_floor_key() {
 /// The allowlist is a claim about the Quadlet of the floor; this checks it
 /// against the Quadlet of this machine. The generator reports each key it
 /// does not know as `unsupported key`. The test returns early where the
-/// generator is not installed.
+/// generator is not installed or is older than the floor.
 #[test]
 fn the_generator_accepts_every_emitted_key() {
-	let Some(generator) = ["/usr/libexec/podman/quadlet", "/usr/lib/podman/quadlet"]
-		.iter()
-		.map(std::path::PathBuf::from)
-		.find(|p| p.is_file())
-	else {
+	let Some(generator) = crate::backends::quadlet::tests::generator::generator() else {
 		return;
 	};
 	for (shape, units) in [

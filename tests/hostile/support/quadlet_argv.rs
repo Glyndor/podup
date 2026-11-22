@@ -1,7 +1,8 @@
 //! Bind paths and command arguments must survive the real generator unchanged.
 
-use std::{fs, io::Write, path::Path, process::Command};
+use std::{fs, process::Command};
 
+use super::quadlet_generator::generator;
 use super::{exec_start_words, literal_path};
 
 /// The value of `flag`, read from either spelling the generator writes: as
@@ -26,18 +27,9 @@ fn option(argv: &[String], flag: &str) -> String {
 
 #[test]
 fn bind_and_command_bytes_survive_the_real_quadlet_generator_or_are_refused() {
-	let quadlet = Path::new("/usr/libexec/podman/quadlet");
-	match fs::metadata(quadlet) {
-		Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-			writeln!(
-				std::io::stderr(),
-				"SKIP: /usr/libexec/podman/quadlet is absent; bind/argv round-trip was not executed"
-			)
-			.unwrap();
-			return;
-		}
-		result => assert!(result.expect("inspect Quadlet binary").is_file()),
-	}
+	let Some(quadlet) = generator() else {
+		return;
+	};
 	// Exercise quoting even if podup refuses the colon-bearing bind afterwards.
 	for payload in [
 		r#"%h $HOME "quote" 'single' \ space"#,
@@ -82,7 +74,7 @@ fn bind_and_command_bytes_survive_the_real_quadlet_generator_or_are_refused() {
 			eprintln!("podup refused bind/argv fixture {payload:?}");
 			continue;
 		}
-		let output = Command::new(quadlet)
+		let output = Command::new(&quadlet)
 			.args(["-user", "-dryrun", "-no-kmsg-log"])
 			.env("QUADLET_UNIT_DIRS", &units)
 			.output()

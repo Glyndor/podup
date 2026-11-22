@@ -5,7 +5,8 @@
 
 #![cfg(unix)]
 
-use super::native_key_values::{argv_of, generator, values_of};
+use super::native_key_values::{argv_of, values_of};
+use crate::backends::quadlet::tests::generator::generator;
 use crate::parse_str;
 use crate::quadlet::generate_at;
 use crate::quadlet::tests::unit_named;

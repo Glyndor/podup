@@ -3,6 +3,7 @@ use crate::quadlet::{QuadletOutput, QuadletUnit};
 mod exec;
 mod fields;
 mod floor_compat;
+pub(in crate::backends::quadlet) mod generator;
 mod health;
 mod image_unit_suffix;
 mod mount_colon;

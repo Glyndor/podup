@@ -4,23 +4,16 @@
 //! `BuildArg=` split on whitespace and honour quote groups, without backslash
 //! escapes), so these tests run the real generator over hostile values and
 //! tokenise the `ExecStart=` line it builds. They return early where the
-//! generator is not installed.
+//! generator is not installed or is older than the floor (see `generator.rs`).
 
 #![cfg(unix)]
 
-use std::path::PathBuf;
 use std::process::Command;
 
 use super::podman_argv::tokenise_podman_argv;
+use crate::backends::quadlet::tests::generator::generator;
 use crate::parse_str;
 use crate::quadlet::{generate_at, write_units};
-
-pub(super) fn generator() -> Option<PathBuf> {
-	["/usr/libexec/podman/quadlet", "/usr/lib/podman/quadlet"]
-		.iter()
-		.map(PathBuf::from)
-		.find(|p| p.is_file())
-}
 
 /// The argv of the `podman run` / `podman build` line Quadlet builds for the
 /// unit with this suffix, with systemd's `%%` read back as `%`.

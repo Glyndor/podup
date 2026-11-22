@@ -8,7 +8,8 @@
 
 #![cfg(unix)]
 
-use super::native_key_values::{argv_of, generator, values_of};
+use super::native_key_values::{argv_of, values_of};
+use crate::backends::quadlet::tests::generator::generator;
 
 /// Values with whitespace at an end: a space, and a no-break space, which
 /// Quadlet trims as well.

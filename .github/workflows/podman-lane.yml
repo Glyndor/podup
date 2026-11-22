@@ -293,6 +293,12 @@ jobs:
                 # VM whose socket never came up would otherwise look like a
                 # flawless 155-pass run and clear the floor comfortably.
                 export PODUP_REQUIRE_PODMAN=1
+                # Same for the Quadlet generator that ships with this Podman: the
+                # tests that run it skip on a runner whose Podman is older than the
+                # floor (the ubuntu-latest 4.9 does not read the keys the exporter
+                # writes), and here a skip would report `ok` for a round-trip that
+                # never ran. With this set, a missing or older generator fails them.
+                export PODUP_REQUIRE_QUADLET_GENERATOR=1
                 cd "$HOME/podup" || exit 90
                 # Coverage runs on the scheduled and manual paths only, never on a
                 # pull request. The number is worth having where the integration
@@ -391,6 +397,19 @@ jobs:
                   SCAN_RC=nopid
                 fi
                 echo "PODUP_LEAK_SCAN_BEGIN rc=$SCAN_RC PODUP_LEAK_SCAN_END"
+                # The tests that run the real Quadlet generator, which no other leg
+                # can run: the library's `quadlet::` tests and the hostile binary that
+                # round-trips bind, command and env_file values. Both build with the
+                # same `--features` as above so cargo reuses the dependencies. Their
+                # result is its own marker: the summary above counts the engine suite.
+                GEN_RC=0
+                cargo test --features test-helpers --lib quadlet:: > /tmp/quadlet-generator.log 2>&1 || GEN_RC=$?
+                cargo test --features test-helpers --test hostile_quadlet_units >> /tmp/quadlet-generator.log 2>&1 || GEN_RC=$?
+                if [ "$GEN_RC" -ne 0 ]; then
+                  echo "=== quadlet generator test failures ==="
+                  tail -60 /tmp/quadlet-generator.log
+                fi
+                echo "PODUP_QUADLET_GENERATOR_BEGIN rc=$GEN_RC PODUP_QUADLET_GENERATOR_END"
                 tail -60 /tmp/cargo.log
                 echo "=== failures section (full) ==="
                 sed -n '/^failures:$/,/^test result:/p' /tmp/cargo.log | head -120
@@ -665,6 +684,15 @@ jobs:
           fi
           if [ "$SCAN_RC" != "0" ]; then
             echo "::error::Podman $VER: the leak scan reported rc=$SCAN_RC; resources carrying the per-run prefix remain on the host. See the leak-scan log section in the run page."
+            exit 1
+          fi
+          # The Quadlet generator tests ran in the VM after the leak scan, with
+          # PODUP_REQUIRE_QUADLET_GENERATOR=1, so a generator that was missing or
+          # older than the floor is a failure here, not a skip.
+          GEN_RC=$(perl -0777 -ne 'while (/PODUP_QUADLET_GENERATOR_BEGIN\s+rc=(\w+)\s+PODUP_QUADLET_GENERATOR_END/g) { print "$1\n" }' "$L" | tail -1)
+          [ -n "$GEN_RC" ] || { echo "::error::no PODUP_QUADLET_GENERATOR marker from VM on Podman $VER; the Quadlet generator tests did not report"; exit 1; }
+          if [ "$GEN_RC" != "0" ]; then
+            echo "::error::Podman $VER: the Quadlet generator tests reported rc=$GEN_RC. See the quadlet generator section in the run page."
             exit 1
           fi
           if [ "$FAIL" -gt "$FLAKY" ]; then

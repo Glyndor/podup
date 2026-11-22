@@ -1,21 +1,15 @@
 //! Run Podman's real Quadlet generator (`-dryrun`, no service is created or
 //! started) over the exported unit and check the `ExecStart=` it builds. The
-//! tests return early where the generator is not installed.
+//! tests return early, with a `SKIP:` line, where the generator is not installed
+//! or is older than the floor (see `generator.rs`).
 
 #![cfg(unix)]
 
-use std::path::PathBuf;
 use std::process::Command;
 
+use crate::backends::quadlet::tests::generator::generator;
 use crate::parse_str;
 use crate::quadlet::{generate_at, validate_for_quadlet};
-
-fn generator() -> Option<PathBuf> {
-	["/usr/libexec/podman/quadlet", "/usr/lib/podman/quadlet"]
-		.iter()
-		.map(PathBuf::from)
-		.find(|p| p.is_file())
-}
 
 /// The `ExecStart=` line Quadlet builds for the `proj-web` container, if it
 /// builds one (it drops a command it cannot read).
