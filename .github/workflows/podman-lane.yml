@@ -714,6 +714,140 @@ jobs:
           fi
           echo "GREEN: podup core PASSED on Podman $VER ($PASS tests >= baseline $BASELINE; $FAIL in the nested-virt-noisy subset)."
 
+  # The same engine suite as `podman-vm`, run directly on the runner against the
+  # Podman 6.2 that the Glyndor apt repository serves for Ubuntu 24.04, instead of
+  # inside a Fedora rawhide VM (a ~500 MB image, dnf, a build inside the VM and a
+  # one-thread suite). It is NOT part of `Supported Podman majors` and nothing
+  # requires it: the first runs say how long it takes and whether it is stable,
+  # and a failure here is red on purpose (no continue-on-error), to be read.
+  #
+  # What it does not replace: rawhide validates the newest Podman before any
+  # distribution packages it; this job validates the Podman podup tells people to
+  # install. Same path filter as the VM: the `decide` job says whether the change
+  # can reach the engine.
+  podman-native:
+    needs: decide
+    if: needs.decide.outputs.engine == 'true'
+    runs-on: ubuntu-24.04
+    # Install a few minutes, build ~10, suite one thread (the VM's one-thread
+    # suite is the long pole); 60 leaves room for a first run and stays far below
+    # the six-hour default a hang would cost.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      # Fingerprint of the Glyndor archive key, published in the apt repository's
+      # README and not on apt.glyndor.net itself: a tampered archive cannot vouch
+      # for its own key. A rotation lists both until the old key is retired.
+      GLYNDOR_APT_FPR: 9ADF04EA8C3139CDB67303CFA6705C2EA153F3D6
+      PODMAN_FLOOR: 6.2.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Podman from the Glyndor apt repository
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          start=$SECONDS
+          PHASES="$RUNNER_TEMP/phases.txt"
+          echo "PHASES=$PHASES" >> "$GITHUB_ENV"
+          dl() { # <max-filesize> <url> <output>
+            curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 10 \
+              --max-time 120 --retry 3 --retry-delay 5 --max-filesize "$1" -o "$3" "$2"
+          }
+          work="$RUNNER_TEMP/glyndor-keyring"
+          mkdir -p "$work"
+          dl 8388608 https://apt.glyndor.net/glyndor-archive-keyring.deb "$work/keyring.deb"
+          dl 65536 https://apt.glyndor.net/glyndor-archive-keyring.deb.asc "$work/keyring.deb.asc"
+          # Nothing from the package runs: its files are unpacked into a scratch
+          # directory (refusing a package that declares more than 8 MiB), the key
+          # inside is compared with the pinned fingerprint, and the detached
+          # signature over the whole package is checked with that key. Only then
+          # is the key copied into place; the repository file is written here, so
+          # whatever the package ships as sources is never used.
+          dpkg-deb --fsys-tarfile "$work/keyring.deb" | tar -t -v --numeric-owner |
+            awk '$3 !~ /^[0-9]+$/ { bad = 1 } { total += $3 } END { exit (bad || total > 8 * 1024 * 1024) }'
+          dpkg-deb -x "$work/keyring.deb" "$work/extracted"
+          key="$work/extracted/usr/share/keyrings/glyndor.gpg"
+          if [ ! -f "$key" ] || [ -L "$key" ]; then
+            echo "::error::the keyring package has no regular glyndor.gpg"; exit 1
+          fi
+          fprs="$(gpg --show-keys --with-colons "$key" | awk -F: '/^pub:/{want=1;next} /^fpr:/{if(want){print $10;want=0}}')"
+          [ -n "$fprs" ] || { echo "::error::the keyring carries no key"; exit 1; }
+          for f in $fprs; do
+            [ "$f" = "$GLYNDOR_APT_FPR" ] || { echo "::error::the keyring carries a key that is not the pinned one ($f)"; exit 1; }
+          done
+          GNUPGHOME="$(mktemp -d)" gpg --no-default-keyring --keyring "$key" \
+            --verify "$work/keyring.deb.asc" "$work/keyring.deb"
+          sudo install -D -m 0644 "$key" /etc/apt/keyrings/glyndor.gpg
+          printf 'Types: deb\nURIs: https://apt.glyndor.net\nSuites: stable\nComponents: main\nSigned-By: /etc/apt/keyrings/glyndor.gpg\n' |
+            sudo tee /etc/apt/sources.list.d/glyndor.sources >/dev/null
+          export DEBIAN_FRONTEND=noninteractive
+          apt_opts=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::ForceIPv4=true)
+          sudo timeout 120 apt-get -q "${apt_opts[@]}" update
+          sudo timeout 600 apt-get -q "${apt_opts[@]}" install -y podman
+          ver="$(podman --version | awk '{print $3}')"
+          echo "podman: $ver"
+          if [ "$(printf '%s\n%s\n' "$ver" "$PODMAN_FLOOR" | LC_ALL=C sort -V | head -1)" != "$PODMAN_FLOOR" ]; then
+            echo "::error::the runner has Podman $ver, below the $PODMAN_FLOOR floor podup requires"
+            exit 1
+          fi
+          echo "podman=$ver" >> "$PHASES"
+          echo "install=$((SECONDS - start))" >> "$PHASES"
+      - name: Install the Rust toolchain
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup default 1.100.0
+      - name: Build the engine test binaries
+        run: |
+          start=$SECONDS
+          cargo test --locked --features test-helpers --test engine_integration --test integration_leak_scan --no-run
+          echo "build=$((SECONDS - start))" >> "$PHASES"
+      - name: Start the user Podman socket
+        run: |
+          set -euo pipefail
+          # The runner has no user systemd session to socket-activate, so the
+          # service is started directly, which serves the same libpod socket.
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/run"
+          mkdir -p "$XDG_RUNTIME_DIR/podman"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          nohup podman system service --time=0 "unix://$XDG_RUNTIME_DIR/podman/podman.sock" >"$RUNNER_TEMP/podman-service.log" 2>&1 &
+          for _ in $(seq 1 30); do
+            [ -S "$XDG_RUNTIME_DIR/podman/podman.sock" ] && break
+            sleep 1
+          done
+          [ -S "$XDG_RUNTIME_DIR/podman/podman.sock" ] || { echo "::error::the Podman socket did not appear"; cat "$RUNNER_TEMP/podman-service.log"; exit 1; }
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          echo "PODMAN_SOCKET=$XDG_RUNTIME_DIR/podman/podman.sock" >> "$GITHUB_ENV"
+          podman info --format '{{.Host.Security.Rootless}} {{.Version.Version}}'
+      - name: Run the engine suite and the leak scan
+        env:
+          PODUP_REQUIRE_PODMAN: "1"
+          RUST_LOG: podup=warn
+        run: |
+          start=$SECONDS
+          rc=0
+          cargo test --locked --features test-helpers --test engine_integration -- --test-threads=1 || rc=$?
+          scan=0
+          if [ -s target/podup-leak-scan-pid ]; then
+            PODUP_LEAK_SCAN_PID="$(cat target/podup-leak-scan-pid)" \
+              cargo test --locked --features test-helpers --test integration_leak_scan || scan=$?
+          else
+            echo "::error::engine_integration never wrote target/podup-leak-scan-pid; the leak scan had nothing to look for"
+            scan=1
+          fi
+          echo "tests=$((SECONDS - start))" >> "$PHASES"
+          [ "$rc" -eq 0 ] && [ "$scan" -eq 0 ]
+      - name: Report the phases
+        if: always()
+        run: |
+          {
+            echo "### Podman native lane"
+            echo ""
+            [ -f "$PHASES" ] && sed -E 's/^([a-z]+)=([0-9]+)$/- \1: \2 s/; s/^podman=(.*)$/- podman: \1/' "$PHASES"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   podman-majors:
     # The name says which kind of run produced it: nothing for a pull request into
     # `develop` and for the merge queue, `(promotion)` for a pull request into `main`,
