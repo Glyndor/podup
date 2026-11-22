@@ -16,12 +16,11 @@ pub(crate) mod validate;
 /// Podman's libpod routes are version-namespaced: an unversioned path such as
 /// `/libpod/containers/json` is not guaranteed to resolve, so every request
 /// must carry the API version. `v5.0.0` is the libpod API version this client
-/// targets; podup requires Podman >= 5.0 and supports Podman 5 and 6. Podman
-/// keeps the route surface backward-compatible across majors, so a Podman 6
-/// server still resolves the `v5.0.0` prefix (validated by the `podman-lane`
-/// integration, which runs the suite on both Podman 5 and 6). The
-/// version-independent `/libpod/_ping` endpoint is the sole
-/// exception and deliberately omits this prefix.
+/// targets; podup requires Podman >= 6.2.0. Podman keeps the route surface
+/// backward-compatible across majors, so a Podman 6 server still resolves the
+/// `v5.0.0` prefix (validated by the `podman-lane` integration, which runs the
+/// suite on Podman 6). The version-independent `/libpod/_ping` endpoint is the
+/// sole exception and deliberately omits this prefix.
 pub(crate) const API_PREFIX: &str = "/v5.0.0/libpod";
 
 pub use client::Client;

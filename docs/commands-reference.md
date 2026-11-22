@@ -36,7 +36,7 @@ Push each service's `image:` to its registry. Credentials come from Podman's aut
 ### `generate quadlet`
 Translate the compose file into Podman Quadlet unit files: one `.container` per service plus `.network` and `.volume` units. `gen` is an alias.
 
-Exported build services use sibling `.build` units and require Podman 5.2+. Other units support Podman 5.0; later Quadlet settings use equivalent `PodmanArgs=` flags. Generation warns when the project needs a newer version.
+Exported build services use sibling `.build` units. Quadlet settings added after Podman 5.0 are written as equivalent `PodmanArgs=` flags.
 
 The `.build` unit carries the compose `build:` fields. `context` and `dockerfile` become `SetWorkingDirectory=` and `File=`, `target` becomes `Target=`, `network` becomes `Network=`, `labels` become `Label=`, `args` become `PodmanArgs=--build-arg`, `pull` becomes `Pull=`, `platforms` become `Arch=` and `Variant=` (the section carries one pair, so only the first platform is exported), and `secrets` become `Secret=` (a top-level secret with a `file:` source, which is what `podman build --secret` reads). The fields with no `[Build]` key of their own travel as `PodmanArgs=` flags: `cache_from` and `cache_to` (with `--layers`, which buildah requires before it honours them), `no_cache`, `shm_size`, `extra_hosts`, `tags`, `additional_contexts`, `ssh`, `ulimits` and `isolation`. The remaining ones (`privileged`, `entitlements`, `provenance`, `sbom`) have no `podman build` equivalent and are reported, like every other field the export cannot carry.
 

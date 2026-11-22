@@ -3,10 +3,10 @@
 //! with, and the boot path needs no compose file to put it back.
 //!
 //! That claim was believed rather than measured. It is asserted here instead of
-//! written down because the podman lane runs this file against Podman 5 and 6
-//! (`podman-lane.yml`, `podman: ["5", "6"]`), so it is re-answered on both
-//! majors on every pull request. A reading taken once on one machine is a note
-//! that rots; this is a control.
+//! written down because the podman lane runs this file against the newest
+//! Podman (`podman-lane.yml`, `podman: ["6"]`), so it is re-answered on every
+//! pull request. A reading taken once on one machine is a note that rots; this
+//! is a control.
 //!
 //! The field list is not invented. It comes from diffing a real deployment's
 //! `HostConfig` against a bare `podman run` container, so every key below is

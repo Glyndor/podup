@@ -173,9 +173,9 @@ async fn named_volume_with_driver_opts() {
 	// The `:z` relabel is not optional. This volume binds a host directory, and
 	// on an SELinux-enforcing host the container is denied the write without it,
 	// which is what reddened the Podman 5 leg of pull request #1278 while passing
-	// on my machine, where SELinux is not enabled. The same trap is recorded in
-	// .github/podman_lane/known-failures-5 for run_flags::engine_run_applies_volume_
-	// publish_and_interactive.
+	// on my machine, where SELinux is not enabled. The same trap was recorded in
+	// the Podman 5 list of known failures, since removed with that leg, for
+	// run_flags::engine_run_applies_volume_publish_and_interactive.
 	//
 	// The driver_opts bind the volume to this temp directory, so a file written
 	// at /cache in the container has to appear on the host here. Without the opts
