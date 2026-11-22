@@ -135,7 +135,9 @@ async fn service_with_expose_deploy_labels_annotations_tmpfs() {
 	engine.down(&file).await.unwrap();
 
 	assert!(
-		mounts.contains("tmpfs /tmp/cache tmpfs"),
+		// The first field is the source, which the kernel leaves empty on some
+		// hosts; the type after the path is what says it is a tmpfs.
+		mounts.contains(" /tmp/cache tmpfs "),
 		"the long-form tmpfs volume did not mount a tmpfs at /tmp/cache: {mounts:?}"
 	);
 	assert_eq!(
