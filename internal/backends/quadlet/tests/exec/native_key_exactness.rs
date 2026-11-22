@@ -129,3 +129,53 @@ fn pod_hosts_and_aliases_keep_their_boundary_spaces() {
 		}
 	}
 }
+/// An entry that is empty once its control characters are stripped must not
+/// become a bare `Key=` line: Quadlet reads that as "empty the list" and the
+/// entries before it are lost. Before the native keys, `--group-add=""` added
+/// nothing and left the earlier groups alone.
+#[test]
+fn an_entry_that_strips_to_nothing_keeps_the_ones_before_it() {
+	if generator().is_none() {
+		return;
+	}
+	let argv = container(&format!(
+		"{}{}",
+		one_service_per_value("group_add", &["keep-groups", "\u{1}"]),
+		one_service_per_value("extra_hosts", &["a:10.0.0.2", "\u{1}"]),
+	));
+	assert!(
+		values_of(&argv, "--group-add").contains(&"keep-groups".to_string()),
+		"{argv:?}"
+	);
+	assert!(
+		values_of(&argv, "--add-host").contains(&"a:10.0.0.2".to_string()),
+		"{argv:?}"
+	);
+}
+
+#[test]
+fn an_alias_that_strips_to_nothing_keeps_the_ones_before_it() {
+	if generator().is_none() {
+		return;
+	}
+	let yaml = "x-podman-pod: true\nservices:\n  web:\n    image: nginx\n    networks:\n      front:\n        aliases: [\"n1\", \"\\u0001\"]\n  db:\n    image: postgres\n    networks:\n      front:\n        aliases: [\"n1\", \"\\u0001\", \"z\"]\nnetworks:\n  front:\n    enable_ipv6: true\n    ipam:\n      config:\n        - subnet: 10.5.0.0/24\n        - subnet: 2001:db8::/64\n";
+	let argv = argv_of(yaml, "container");
+	assert!(
+		values_of(&argv, "--network-alias").contains(&"n1".to_string()),
+		"{argv:?}"
+	);
+}
+
+#[test]
+fn a_tag_that_strips_to_nothing_keeps_the_ones_before_it() {
+	if generator().is_none() {
+		return;
+	}
+	let yaml = format!(
+		"services:\n  app:\n    image: app:1.0\n    build:\n      context: .\n      tags: [\"extra:1\", {}]\n",
+		json("\u{1}")
+	);
+	let tags = values_of(&argv_of(&yaml, "build"), "--tag");
+	assert!(tags.contains(&"app:1.0".to_string()), "{tags:?}");
+	assert!(tags.contains(&"extra:1".to_string()), "{tags:?}");
+}
