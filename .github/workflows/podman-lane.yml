@@ -807,19 +807,34 @@ jobs:
       - name: Start the user Podman socket
         run: |
           set -euo pipefail
-          # The runner has no user systemd session to socket-activate, so the
-          # service is started directly, which serves the same libpod socket.
-          export XDG_RUNTIME_DIR="$RUNNER_TEMP/run"
+          # pasta and netavark work under the runtime directory logind creates
+          # for the user (/run/user/<uid>) and nowhere else: pasta's AppArmor
+          # profile refuses a network namespace under any other path. Lingering
+          # makes logind create that directory and start the user manager for
+          # an account that never logged in.
+          uid=$(id -u)
+          sudo loginctl enable-linger "$(id -un)"
+          for _ in $(seq 1 30); do
+            [ -S "/run/user/$uid/bus" ] && break
+            sleep 1
+          done
+          [ -S "/run/user/$uid/bus" ] || { echo "::error::logind did not start a user manager for uid $uid"; exit 1; }
+          export XDG_RUNTIME_DIR="/run/user/$uid"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
           mkdir -p "$XDG_RUNTIME_DIR/podman"
-          chmod 700 "$XDG_RUNTIME_DIR"
+          # Started directly and with no idle timeout: the socket-activated
+          # unit stops after five idle seconds, in the middle of a suite.
           nohup podman system service --time=0 "unix://$XDG_RUNTIME_DIR/podman/podman.sock" >"$RUNNER_TEMP/podman-service.log" 2>&1 &
           for _ in $(seq 1 30); do
             [ -S "$XDG_RUNTIME_DIR/podman/podman.sock" ] && break
             sleep 1
           done
           [ -S "$XDG_RUNTIME_DIR/podman/podman.sock" ] || { echo "::error::the Podman socket did not appear"; cat "$RUNNER_TEMP/podman-service.log"; exit 1; }
-          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
-          echo "PODMAN_SOCKET=$XDG_RUNTIME_DIR/podman/podman.sock" >> "$GITHUB_ENV"
+          {
+            echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
+            echo "PODMAN_SOCKET=$XDG_RUNTIME_DIR/podman/podman.sock"
+            echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"
+          } >> "$GITHUB_ENV"
           podman info --format '{{.Host.Security.Rootless}} {{.Version.Version}}'
       - name: Run the engine suite and the leak scan
         env:
