@@ -37,12 +37,33 @@ run_case "another major is not gated" 0 7.0.0 schedule 10%
 run_case "a major that merely starts with 6 is not Podman 6" 0 60.1.0 schedule 10%
 run_case "an unreadable figure fails the nightly" 1 6.2.0 schedule n/a
 run_case "an unreadable figure on a manual run is left alone" 0 6.2.0 workflow_dispatch n/a
-run_case "a missing argument is refused" 1 6.2.0 schedule ""
+run_case "a missing figure fails the nightly" 1 6.2.0 schedule ""
+run_case "a missing figure on a manual run is left alone" 0 6.2.0 workflow_dispatch ""
+run_case "a figure that arrives with a carriage return passes" 0 6.2.0 schedule $'91.5%\r'
+run_case "a figure below the floor with a carriage return is refused" 1 6.2.0 schedule $'70%\r'
+run_case "a figure that is only a carriage return counts as missing" 1 6.2.0 schedule $'\r'
 rc=0
 bash "$script" 6.2.0 >/dev/null 2>&1 || rc=$?
 check "too few arguments is refused" 1 "$rc"
 out="$(bash "$script" 6.2.0 schedule 70% 2>&1)"
 check "the refusal names the floor" 1 "$(printf '%s\n' "$out" | grep -cF 'below the 88% nightly floor')"
+out="$(bash "$script" 6.2.0 schedule "" 2>&1)"
+check "a missing figure is named as missing" 1 "$(printf '%s\n' "$out" | grep -cF 'no Podman 6 coverage figure')"
+
+# The figure goes through the extraction the workflow does, on a log whose
+# lines end in CRLF (the VM's serial console), and then through the script.
+extract="$(grep -F "COV=\$(grep -oE 'PODUP_COVERAGE=" "$workflow" | head -1 | sed 's/^[[:space:]]*//')"
+check "the workflow extracts the figure from the log" 1 "$(printf '%s' "$extract" | grep -c .)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+printf 'noise\r\nPODUP_COVERAGE=91.5%%\r\nPODUP_SUMMARY_END\r\n' >"$tmp/crlf.log"
+printf 'noise\r\nPODUP_SUMMARY_END\r\n' >"$tmp/none.log"
+rc=0
+L="$tmp/crlf.log" bash -c "$extract"'; bash "$0" 6.2.0 schedule "$COV"' "$script" >/dev/null 2>&1 || rc=$?
+check "a CRLF log passes the extraction and the floor" 0 "$rc"
+rc=0
+L="$tmp/none.log" bash -c "$extract"'; bash "$0" 6.2.0 schedule "$COV"' "$script" >/dev/null 2>&1 || rc=$?
+check "a log with no figure fails the floor on the nightly" 1 "$rc"
 
 # The workflow must hand the script the full version, not a pre-cut major, and
 # must not carry its own copy of the old comparison.
@@ -52,6 +73,16 @@ check "the lane calls the floor script" 1 \
 # shellcheck disable=SC2016 # the pattern is literal workflow text
 check "the lane no longer compares the full version with a bare major" 0 \
 	"$(grep -cE '\[ "\$VER" = "[0-9]+" \]' "$workflow")"
+
+# The call must not sit inside the `if [ -n "$COV" ]` block: a missing figure
+# has to reach the script, which refuses it on the nightly.
+# shellcheck disable=SC2016 # the pattern is literal workflow text
+check "the lane calls the floor script even with no figure" 1 \
+	"$(awk '
+		/COV=\$\(grep -oE/ { match($0, /^ */); base = RLENGTH }
+		/coverage-floor.sh" "\$VER"/ { match($0, /^ */); if (RLENGTH == base && base > 0) n++ }
+		END { print n + 0 }
+	' "$workflow")"
 
 # Single Podman major: nothing in the lane selects by it any more.
 # shellcheck disable=SC2016 # the pattern is literal workflow text

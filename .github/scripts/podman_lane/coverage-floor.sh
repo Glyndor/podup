@@ -10,7 +10,7 @@
 # and the floor was never applied.
 #
 # Exit 0 when the floor does not apply or the figure clears it; exit 1 when
-# the figure is below it or cannot be read.
+# the figure is below it, is missing or cannot be read.
 set -uo pipefail
 export LC_ALL=C
 
@@ -28,6 +28,15 @@ cov="$3"
 major="${ver%%.*}"
 if [ "$major" != "$GATED_MAJOR" ] || [ "$event" != "schedule" ]; then
 	exit 0
+fi
+
+# The VM talks over a serial console, so the figure can arrive CRLF-terminated.
+cov="${cov//$'\r'/}"
+# A scheduled Podman 6 run measures coverage: no figure means the measurement
+# did not finish (the VM timed out, say), which is a failure, not a pass.
+if [ -z "$cov" ]; then
+	echo "::error::no Podman $GATED_MAJOR coverage figure was reported; the nightly floor cannot be checked."
+	exit 1
 fi
 
 # Strip the trailing `%` and round (the lane prints `91.5` for `91.5%`).

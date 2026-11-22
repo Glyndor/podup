@@ -549,14 +549,17 @@ jobs:
           # value with room for natural drift and above the level where a real
           # regression would hide (#1326). PR runs do not produce a coverage
           # number, so the gate is skipped there. The judgement lives in
-          # .github/scripts/podman_lane/coverage-floor.sh, with behaviour tests: it takes the
-          # full version (`6.2.0`) and compares its major.
+          # .github/scripts/podman_lane/coverage-floor.sh, with behaviour
+          # tests: it takes the full version (`6.2.0`) and compares its major.
           COV=$(grep -oE 'PODUP_COVERAGE=[^ ]+' "$L" | tail -1 | cut -d= -f2)
           if [ -n "$COV" ]; then
             echo "coverage on Podman $VER (full suite, integration tests included): $COV"
             echo "- **Podman $VER coverage:** $COV" >> "$GITHUB_STEP_SUMMARY"
-            bash "$GITHUB_WORKSPACE/.github/scripts/podman_lane/coverage-floor.sh" "$VER" "${{ github.event_name }}" "$COV" || exit 1
           fi
+          # Called with an empty figure too: on the scheduled run a missing
+          # measurement (the VM timing out during the coverage pass) fails the
+          # floor instead of skipping it.
+          bash "$GITHUB_WORKSPACE/.github/scripts/podman_lane/coverage-floor.sh" "$VER" "${{ github.event_name }}" "$COV" || exit 1
           PASS=$(echo "$SUM" | grep -oE 'pass=[0-9]+' | cut -d= -f2)
           FAIL=$(echo "$SUM" | grep -oE 'fail=[0-9]+' | cut -d= -f2)
           FLAKY=$(echo "$SUM" | grep -oE 'flaky=[0-9]+' | cut -d= -f2)
