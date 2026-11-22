@@ -541,26 +541,19 @@ jobs:
           SUM=$(perl -0777 -ne 'while (/PODUP_SUMMARY_BEGIN\s+pass=(\d+)(?s:(?:(?!PODUP_SUMMARY_BEGIN).)*?)fail=(\d+)(?s:(?:(?!PODUP_SUMMARY_BEGIN).)*?)flaky=(\d+)\s+PODUP_SUMMARY_END/g) { print "PODUP_SUMMARY pass=$1 fail=$2 flaky=$3\n" }' "$L" | tail -1)
           [ -n "$SUM" ] || { echo "::error::no PODUP_SUMMARY from VM on Podman $VER; the suite did not report"; exit 1; }
           # Coverage, when this run asked for it. Reported into the job summary.
-          # Gated on the scheduled + manual paths only, on Podman 6 (the leg that
-          # represents the latest stable major). The CI coverage job without
-          # Podman sees 79% because every integration test skips itself; the
-          # lane's full suite sees ~91.5%. A 88% floor is below the observed
+          # Gated on the scheduled path only, on Podman 6. The CI coverage job
+          # without Podman sees 79% because every integration test skips itself;
+          # the lane's full suite sees ~91.5%. A 88% floor is below the observed
           # value with room for natural drift and above the level where a real
           # regression would hide (#1326). PR runs do not produce a coverage
-          # number, so the gate is skipped there.
+          # number, so the gate is skipped there. The judgement lives in
+          # podman-lane-coverage-floor.sh, with behaviour tests: it takes the
+          # full version (`6.2.0`) and compares its major.
           COV=$(grep -oE 'PODUP_COVERAGE=[^ ]+' "$L" | tail -1 | cut -d= -f2)
           if [ -n "$COV" ]; then
             echo "coverage on Podman $VER (full suite, integration tests included): $COV"
             echo "- **Podman $VER coverage:** $COV" >> "$GITHUB_STEP_SUMMARY"
-            if [ "$VER" = "6" ] && [ "${{ github.event_name }}" = "schedule" ]; then
-              # Strip the trailing `%` and compare as integers (the lane prints
-              # `91.5` for `91.5%`).
-              COV_INT=$(printf '%.0f' "${COV%%%}")
-              if [ "$COV_INT" -lt 88 ]; then
-                echo "::error::Podman 6 coverage $COV is below the 88% nightly floor (#1326). The full suite measured $COV, likely a regression that the floor is here to catch."
-                exit 1
-              fi
-            fi
+            bash "$GITHUB_WORKSPACE/.github/scripts/checks/podman-lane-coverage-floor.sh" "$VER" "${{ github.event_name }}" "$COV" || exit 1
           fi
           PASS=$(echo "$SUM" | grep -oE 'pass=[0-9]+' | cut -d= -f2)
           FAIL=$(echo "$SUM" | grep -oE 'fail=[0-9]+' | cut -d= -f2)
