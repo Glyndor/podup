@@ -99,7 +99,7 @@ Wants=podman-user-wait-network-online.service
 After=podman-user-wait-network-online.service
 ```
 
-The shim has shipped since Podman 5.3.0, so every supported Podman has it. `autostart status` reports whether the shim is loadable.
+Every supported Podman ships the shim. `autostart status` reports whether it is loadable.
 
 ## Running `systemctl --user` for a login-less account
 

@@ -422,12 +422,6 @@ pub fn render_service_unit(opts: &ServiceUnitOpts) -> String {
 	// ours runs `podup up`, and rootless pasta builds the container network at
 	// start time.
 	//
-	// Measured 2026-08-30: the shim first ships in Podman 5.3.0, and podup's
-	// floor was 5.0 then. On 5.0 through 5.2 systemd finds no such unit, drops the
-	// `Wants=`/`After=` with `LoadState=not-found`, and starts this unit clean
-	// with `Result=success` and nothing in the journal, which is the behaviour
-	// those versions already had.
-	//
 	// `WorkingDirectory=` takes the rest of its line literally: unlike an
 	// exec-line token, it understands none of the C-style backslash escapes
 	// `quote_arg` uses. But `%%` is not one of those escapes: it is systemd's
