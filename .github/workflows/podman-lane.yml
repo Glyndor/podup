@@ -843,7 +843,7 @@ jobs:
         run: |
           start=$SECONDS
           rc=0
-          cargo test --locked --features test-helpers --test engine_integration -- --test-threads=1 || rc=$?
+          cargo test --locked --features test-helpers --test engine_integration || rc=$?
           scan=0
           if [ -s target/podup-leak-scan-pid ]; then
             PODUP_LEAK_SCAN_PID="$(cat target/podup-leak-scan-pid)" \
@@ -867,6 +867,19 @@ jobs:
           cargo test --locked --features test-helpers --test hostile_quadlet_units || rc=$?
           echo "quadlet=$((SECONDS - start))" >> "$PHASES"
           [ "$rc" -eq 0 ]
+      - name: Show what AppArmor refused
+        # A stop that fails with `kill network process: permission denied` is a
+        # confined pasta refusing a signal, and only the kernel log says which
+        # profile and which rule.
+        if: always()
+        run: |
+          if pasta_bin=$(command -v pasta); then
+            echo "$pasta_bin"
+            dpkg -S "$pasta_bin" || true
+          fi
+          find /etc/apparmor.d -maxdepth 1 \( -name '*pasta*' -o -name '*passt*' -o -name '*podman*' \) -print
+          sudo aa-status 2>/dev/null | grep -E 'pasta|passt|podman' || true
+          sudo dmesg | grep 'apparmor="DENIED"' | sed -E 's/^\[[^]]*\] //; s/pid=[0-9]+ //; s/audit\([^)]*\): //' | sort | uniq -c | sort -rn | head -20 || true
       - name: Report the phases
         if: always()
         run: |
