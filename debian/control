@@ -35,9 +35,9 @@ Architecture: any
 #
 # The consequence, stated rather than discovered: on a distribution whose
 # podman is below the floor, `apt install podup` now FAILS instead of leaving
-# a podup that cannot reach an engine. Ubuntu 24.04 LTS ships 4.9.3 and is
-# already documented as unsupported, so apt now refuses what the README
-# already said would not work. The cost is the operator driving a REMOTE
+# a podup that cannot reach an engine. A distribution's own podman can be
+# older (the Glyndor apt repository carries 6.2.0 for Debian 13 and Ubuntu
+# 24.04 and 26.04), so apt refuses what the README already said would not work. The cost is the operator driving a REMOTE
 # socket or a `podman machine`, who has no local engine to satisfy this and
 # must now install one; install.sh serves that case with
 # --skip-podman-check, and apt has no equivalent because a package

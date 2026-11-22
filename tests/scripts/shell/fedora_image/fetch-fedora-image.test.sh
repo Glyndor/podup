@@ -250,15 +250,15 @@ teardown
 
 # ---------------------------------------------------------------------------
 # Case 7: the lane boots the newest Fedora compose, which carries the newest
-# Podman, so the one major the script knows is 6 (rawhide). Any other major,
-# Podman 5 included, is refused before a request leaves the machine.
+# Podman, so the one major the script knows is 6 (rawhide). Any other major
+# is refused before a request leaves the machine.
 # ---------------------------------------------------------------------------
 setup
 STUB_404_dl_fedoraproject_org=0
 primary_root="$ROOT/dl.fedoraproject.org/pub/fedora/linux/development/rawhide/Cloud/x86_64/images"
 plant_rawhide "$primary_root" "$IMG_HASH" "$IMG_BODY"
 
-for major in 5 7 x; do
+for major in 4 7 x; do
 	RESULT="$(run_script "$major" "$WORK/vm-$major.qcow2")"
 	RC="$(printf '%s\n' "$RESULT" | sed -n 1p)"
 	STDERR="$(printf '%s\n' "$RESULT" | awk '/^---$/{f++; next} f==1{print}')"

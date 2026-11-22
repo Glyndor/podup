@@ -567,8 +567,9 @@ or python3 with the 'cryptography' package, or set PODUP_RELEASE_PUBKEY_B64, the
 # Verify the local Podman engine meets podup's floor. Local podman is NOT
 # required: podup can drive a remote socket, and on macOS it talks to a
 # `podman machine` VM. So absence is a WARN, not a failure. A present local
-# podman older than PODMAN_MIN_VERSION (Ubuntu 24.04 ships 4.9.3, Debian 13
-# ships 5.4.2) is refused, since installing podup against it would leave the
+# podman older than PODMAN_MIN_VERSION is refused (the distribution's own
+# podman can be older; the Glyndor apt repository carries 6.2.0 for Debian 13
+# and Ubuntu 24.04 and 26.04), since installing podup against it would leave the
 # user with a binary that cannot talk to their engine. The comparison covers
 # major, minor and patch; there is no upper bound.
 check_podman() {

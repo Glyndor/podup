@@ -272,8 +272,8 @@ jobs:
             # and was left on journald: `niche::engine_events_stream_connects`
             # failed with `Api { status: 500, message: "unable to open a handle
             # to the library" }`, the logs error word for word. `events_logger =
-            # "file"` takes the journal out of that path too. Seen first on a
-            # Podman 5 VM and not re-measured on 6.x: the lane cannot show it
+            # "file"` takes the journal out of that path too. Not measured again
+            # on 6.2: the lane cannot show it
             # without a run that drops the line.
             - path: /etc/containers/containers.conf
               content: |
@@ -341,10 +341,11 @@ jobs:
                 # This used to say the drops were specific to the nested-virt
                 # (VM-in-runner) transport, and that a single-level VM "never
                 # drops a byte". **That is measured false** (2026-08-03, #1322):
-                # on a plain KVM guest with Podman 6.0.2, the same suite fails
-                # 17 of 27 at eight test threads and 3 at one, a clean
-                # dose-response curve in thread count, reproducible across
-                # repetitions. Nesting makes it worse; it does not cause it.
+                # on a plain KVM guest the same suite fails 17 of 27 at eight
+                # test threads and 3 at one, a clean dose-response curve in
+                # thread count, reproducible across repetitions. Nesting makes
+                # it worse; it does not cause it. (Measured on Podman 6.0.2;
+                # not measured again on 6.2.)
                 #
                 # What holds is the lever: fewer concurrent streams means less
                 # peak pressure,
@@ -520,9 +521,8 @@ jobs:
           VER=$(perl -0777 -ne 'while (/PODMAN_BEGIN\s+version=podman version ([0-9.]+)(?s:(?:(?!PODMAN_BEGIN).)*?)PODMAN_END/g) { print "$1\n" }' "$L" | tail -1)
           [ -n "$VER" ] || { echo "::error::Podman not detected in VM"; exit 1; }
           # The VM must be able to serve logs. Gate on that, not on which driver
-          # provides it: Fedora 44's journald cannot open its library here and every
-          # logs request 500s, while rawhide's works fine, so requiring a specific
-          # driver reddens the major that never had the problem.
+          # provides it: where journald cannot open its library every logs request
+          # 500s, and a specific driver would be required for the wrong reason.
           #
           # This is not cosmetic. With logs unavailable, the five tests that only
           # `unwrap()` the result passed without fetching a byte, because `logs`
@@ -635,11 +635,10 @@ jobs:
           # which the identity gate above cannot see.
           #
           # Why the failure COUNT is still only a warning: it never separated a
-          # regression from noise: measured on this lane while Podman 5 was in
-          # it, the leg failed the same ~10 streaming/attach/run tests every run
-          # with ZERO connection-drop signatures, so "FAIL <= drop count" would
-          # redden every run. The identity gate replaces it for any major with a
-          # classified list.
+          # regression from noise: a count of failures that match a
+          # connection-drop signature would redden runs whose failures carry no
+          # such signature (an earlier leg failed the same ~10 streaming/attach/
+          # run tests every run with none). The identity gate replaces it.
           #
           # Podman 6 went without a list because its failing set carried a
           # variable tail that observation would have turned into false reds,
