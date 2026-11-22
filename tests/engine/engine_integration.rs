@@ -256,6 +256,9 @@ mod create_ls;
 #[path = "engine_integration/workload/lifecycle/lifecycle_output.rs"]
 mod lifecycle_output;
 
+// Unix only, with the test helpers: it reaches the Podman socket through
+// `podman_socket_url`, which is exported under the same condition.
+#[cfg(all(unix, feature = "test-helpers"))]
 #[path = "engine_integration/workload/lifecycle/healthcheck_inherits_image.rs"]
 mod healthcheck_inherits_image;
 #[path = "engine_integration/observe/logs/logs_reader_closes.rs"]
