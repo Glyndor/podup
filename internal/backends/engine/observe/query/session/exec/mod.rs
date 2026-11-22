@@ -291,7 +291,8 @@ impl Engine {
 		let resp: ExecCreateResponse = match self.client.post_json(&create_path, &exec_cfg).await {
 			Ok(resp) => resp,
 			// The exec create is where the drops measured in #1339 land most
-			// often: twice of six, more than any other endpoint. Unlike the
+			// often: twice of six, more than any other endpoint (measured before
+			// 6.2.0 and not repeated: it only shows under concurrency). Unlike the
 			// lifecycle calls, a lost response here cannot be resolved by looking
 			// at the container: what is lost is the exec id, and a container
 			// running several execs at once cannot say which of its `ExecIDs` was

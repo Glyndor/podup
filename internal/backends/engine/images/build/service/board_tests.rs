@@ -206,7 +206,7 @@ services:
 
 	#[test]
 	fn parse_image_id_line_only_matches_the_bare_full_id() {
-		// Buildah's stream, measured on Podman 5.7: the full id is a line of
+		// Buildah's stream, measured on Podman 6.2.0: the full id is a line of
 		// 64 hex digits on its own, after `Successfully tagged`. The layer
 		// markers (`--> 3f3c8b769775`), cache hits (`--> Using cache <digest>`)
 		// and the closing `Successfully built <short-id>` must NOT match: a

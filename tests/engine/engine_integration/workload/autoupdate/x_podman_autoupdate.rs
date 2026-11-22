@@ -243,7 +243,7 @@ fn ensure_alpine(socket: &str) {
 /// in the output and requires no network from the test. The output is
 /// asserted on `Pulling`, not on exit code or `Pulled`: Podman's `newer`
 /// against an unreachable `localhost:1` reports `Pulled` and exits 0
-/// (measured on 5.7.0), so the exit code is the wrong thing to assert on.
+/// (measured on 5.7.0, not repeated on 6.2.0), so the exit code is the wrong thing to assert on.
 // Unix only: it reaches the Podman socket by its `/run/user/<uid>` path.
 #[cfg(unix)]
 #[tokio::test]
@@ -280,7 +280,7 @@ async fn up_with_autoupdate_registry_pulls_even_when_the_image_is_present() {
 	// Run with the extension first. Use `Command` directly, not the test
 	// harness' `run_ok`: the exit code is not what this test pins on.
 	// Podman against `localhost:1` with `newer` reports `Pulled` and exits 0
-	// even when nothing actually answered (measured on 5.7.0), so a
+	// even when nothing actually answered (measured on 5.7.0, not repeated on 6.2.0), so a
 	// non-zero exit code would not name the bug we are trying to pin.
 	std::fs::write(&compose, &with_ext).expect("write with-extension compose");
 	let out_ext = std::process::Command::new(bin())

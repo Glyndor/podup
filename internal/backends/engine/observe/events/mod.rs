@@ -296,7 +296,7 @@ fn build_event_filters(project: &str, user_filters: &[String]) -> Result<Value> 
 /// value (#1914).
 ///
 /// The compat handler in `pkg/api/handlers/compat/events.go`
-/// (Podman v5.7.0) does exactly this and nothing more; this mirrors
+/// (read at Podman v5.7.0, not re-read for 6.2.0) does exactly this and nothing more; this mirrors
 /// it line for line. A wider rewrite (e.g. promoting `remove -> delete`
 /// for every `Type`, or copying `exitCode` on every event that
 /// carries `containerExitCode`) would diverge from the docker-compat

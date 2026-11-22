@@ -54,8 +54,8 @@ async fn an_unbounded_feed_cut_mid_body_is_a_failure() {
 #[tokio::test]
 async fn a_bounded_feed_that_ends_is_success() {
 	// `--until` is the client saying the window closes on its own, so the end
-	// is what was asked for. Measured on 5.4.2: an already-elapsed window does
-	// end the feed cleanly.
+	// is what was asked for. Measured on 6.2.0 (2026-11-22): an already-elapsed window
+	// does end the feed cleanly.
 	let fake = fake(|| FakeReply::ChunkedEnd(one_event()));
 	engine(&fake)
 		.stream_events_with_options(false, &bounded())
@@ -63,7 +63,7 @@ async fn a_bounded_feed_that_ends_is_success() {
 		.expect("a bounded feed reaching the end of its window succeeded");
 }
 
-/// `--until` alone does not bound anything: measured against 5.4.2, libpod
+/// `--until` alone does not bound anything: measured against 6.2.0 (2026-11-22), libpod
 /// leaves the feed open without a `since` to pair it with. Treating it as
 /// bounded would call an unbounded feed bounded and hand back a success.
 #[tokio::test]

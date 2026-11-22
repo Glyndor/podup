@@ -23,6 +23,11 @@
 //! was not confirmed at all, and every directory copy against Podman 6 was
 //! reported as failed whether or not it had landed.
 //!
+//! On Podman 6.2.0 (2026-11-22) this did not show up: the 13 `cp` live tests, run
+//! five times (40 PUTs counted), all got a clean 2xx back. That does not prove
+//! the close is gone, since it was intermittent on 6.0.1, so the confirmation
+//! stays and runs only when the PUT fails with an incomplete message.
+//!
 //! Fails, rather than guessing, when a post-PUT stat cannot be read or when
 //! the archive holds nothing that can be asked about.
 //!

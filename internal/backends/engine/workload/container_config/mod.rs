@@ -84,9 +84,9 @@ pub(in crate::backends::engine) fn build_restart_policy(
 // ---------------------------------------------------------------------------
 
 /// Default log rotation applied when a compose file does not carry a
-/// `logging:` block. `k8s-file` is the libpod default since Podman 4; pinning
-/// it explicitly here stops the answer from drifting between podman versions
-/// and distros. The 10 MB cap is enough for a week of typical service output
+/// `logging:` block. The libpod default depends on the host (`journald` on the
+/// Podman 6.2.0 host this was measured on, 2026-11-22); pinning `k8s-file`
+/// explicitly here stops the answer from drifting between versions and distros. The 10 MB cap is enough for a week of typical service output
 /// and small enough that a runaway loop will not exhaust the host. libpod
 /// does not honour `max-file` on any path (see `man podman-run`), so it is
 /// not part of the default; the user can override by writing their own
@@ -182,9 +182,10 @@ fn translate_user_logging(
 		);
 	}
 	// `json-file` is the name Docker gives the driver, and Podman maps it to its
-	// `k8s-file` logger, which refuses a `tag` when the container starts
-	// (`k8s-file doesn't support --log-tag`, then `conmon failed`, measured on
-	// Podman 5.7.0 with its own CLI too). Docker accepts and applies the tag.
+	// `k8s-file` logger, which refuses a `tag` (Podman 6.2.0 CLI, 2026-11-22: `log tags
+	// can only be used with the journald log driver`, for both json-file and
+	// k8s-file; the API path at start was last measured on 5.7.0 as
+	// `k8s-file doesn't support --log-tag`). Docker accepts and applies the tag.
 	// Forwarding it would keep a working compose file from starting, so, like
 	// `max-file`, it is dropped with a warning. Other drivers keep theirs.
 	if matches!(driver.as_deref(), Some("json-file" | "k8s-file"))

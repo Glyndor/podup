@@ -4,7 +4,7 @@
 //! defaults a parameter or changes the byte shape that podup
 //! interprets, and podup's user-visible behaviour (the docker-compat
 //! shape) is the contract these tests are here to keep honest. Every
-//! test runs against the same Podman 5.7.0 socket the build/lifecycle
+//! test runs against the same local Podman socket the build/lifecycle
 //! unit tests already assume, and skips cleanly when no daemon is
 //! reachable.
 //!

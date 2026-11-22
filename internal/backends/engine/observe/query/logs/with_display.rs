@@ -310,7 +310,7 @@ impl Engine {
 							// still running, live output was truncated and the
 							// command failed.
 							//
-							// Measured on real 5.4.2 by restarting the libpod socket
+							// Measured on real 5.4.2 (not repeated on 6.2.0) by restarting the libpod socket
 							// under an attached `logs -f`: the arm is reached, the
 							// container is still running, and this used to exit 0.
 							// docker compose reports `unexpected EOF` and exits 1 on

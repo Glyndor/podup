@@ -17,7 +17,8 @@ pub(super) fn stderr_supports_live() -> bool {
 
 /// Parse one libpod pull stream line into the row verb it implies, if any.
 ///
-/// On Podman 5.7.0 the `/libpod/images/pull` stream carries no byte counts:
+/// On Podman 6.2.0 (measured 2026-11-22) the `/libpod/images/pull` stream carries
+/// no byte counts:
 /// one `{"stream":"Copying blob sha256:<digest>"}` per layer, plus a
 /// `Copying config <digest>` once the manifest has been read. A blob already in
 /// storage is skipped by libpod without a `Copying blob` line, and a blob that

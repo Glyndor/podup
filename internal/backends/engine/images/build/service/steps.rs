@@ -130,9 +130,10 @@ const WSL_CGROUP_HINT: &str = "hint: if the Podman daemon runs on a host without
 /// Whether a buildah stream line is the one that carries the new image id.
 ///
 /// Buildah closes a successful build with the full image id on a line of its
-/// own: 64 hex digits, nothing else. It is the second-to-last line of the
-/// stream, between `Successfully tagged <tag>` and `Successfully built
-/// <short-id>` (measured on Podman 5.7, 2026-09-04). The `--> <short-id>`
+/// own: 64 hex digits, nothing else. On Podman 6.2.0 (measured 2026-11-22) it
+/// is the last line of the stream, right after `Successfully tagged <tag>`;
+/// Podman 5.7 also sent a `Successfully built <short-id>` line after it, which
+/// does not matter here because the match is on the bare id. The `--> <short-id>`
 /// layer markers and `--> Using cache <digest>` carry a prefix and are not
 /// matched. A script reading `podup build` from a pipe wants exactly this
 /// value, and a terminal does not (#1681).

@@ -37,7 +37,7 @@ pub(super) fn pack_to_vec(
 	buf
 }
 
-// Modes as Podman 5.7.0 reported them on 2026-09-18: 0644 file, 0755 directory.
+// Modes as Podman 5.7.0 reported them on 2026-09-18 (not repeated): 0644 file, 0755 directory.
 const FILE_MODE: u64 = 420;
 const DIR_MODE: u64 = 2_147_484_141;
 /// 0o644 plus `os.ModeNamedPipe` (1<<25): what a FIFO at the destination looks

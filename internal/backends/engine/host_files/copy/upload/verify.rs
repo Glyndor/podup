@@ -12,7 +12,7 @@
 //! not from a second walk of the source, so it cannot describe a tree other
 //! than the one uploaded.
 //!
-//! One stat per entry, about 10 ms each (measured against Podman 5.7.0 on 2026-09-18), and
+//! One stat per entry, about 10 ms each (measured against Podman 5.7.0 on 2026-09-18, not repeated), and
 //! only after a dropped response. The one request that lists a destination
 //! recursively is the archive GET, which returns the contents too and so costs
 //! what was already there instead of what was sent; that is why it is not used.
