@@ -41,7 +41,7 @@ fn container_services(units: &[quadlet::QuadletUnit]) -> Vec<String> {
 /// its verbatim body), then a blank line, then the meta lines that describe
 /// what the install would otherwise have invoked on the user manager. Split
 /// out of [`install_quadlet`] so a regression in the wording (the exact
-/// `# would run: systemctl --user start ...` line in particular) can be
+/// `# would run: systemctl --user restart ...` line in particular) can be
 /// pinned in a unit test that does not have to capture stdout.
 pub(super) fn dry_run_plan(
 	units: &[quadlet::QuadletUnit],
@@ -69,7 +69,7 @@ pub(super) fn dry_run_plan(
 	// operator can tell what install will actually do.
 	if !build_services.is_empty() {
 		lines.push(format!(
-			"# would run: systemctl --user start {}",
+			"# would run: systemctl --user restart {}",
 			build_services.join(" ")
 		));
 	}
@@ -122,7 +122,7 @@ fn retire_obsolete_units<S: SystemCtl>(
 
 /// Install quadlet-mode autostart: render the stack's units in the prebuilt
 /// shape, write them under `~/.config/containers/systemd/`, reload the user
-/// manager, start every `.build` service in one `systemctl --user start
+/// manager, restart every `.build` service in one `systemctl --user restart
 /// ...` call so the local images exist, then (unless `no_start`) start each
 /// container service in one more call. Boot start comes from the units'
 /// own `[Install] WantedBy=default.target`, so no `enable` is needed.
@@ -177,9 +177,9 @@ pub fn install_quadlet<S: SystemCtl>(
 	// `podup autostart rebuild` is what restarts a `.build` unit to rebuild an
 	// image, so the install path only has to build once. List the `.build`
 	// services here (the same `result.units` we just validated against), in the
-	// order the generator wrote them: the install path starts them all on one
-	// `systemctl --user start ...` argv (a `.build` service is a oneshot that is
-	// inactive once it has run, so a re-install rebuilds a stale image) and
+	// order the generator wrote them: the install path restarts them all on one
+	// `systemctl --user restart ...` argv (so a re-install rebuilds a stale
+	// image) and
 	// `checked` propagates any non-zero exit, which is what stops the container
 	// start from running after a failed build.
 	let build_services: Vec<String> = result
@@ -223,19 +223,22 @@ pub fn install_quadlet<S: SystemCtl>(
 	// first boot (which `--no-start` leaves to happen unattended) would fail
 	// with "image not found". A stack with no `.build` units skips this call.
 	//
-	// A `.build` service is a oneshot without `RemainAfterExit=yes` (measured on
-	// Podman 6.2.0, 2026-11-22), so it is inactive once it has run and `start`
-	// builds again on a re-install, which is what a re-install wants. The
-	// explicit `podup autostart rebuild` keeps using `restart`.
+	// `restart`, not `start`. Measured on Podman 6.2.0 (2026-11-22): a `.build`
+	// service is `Type=oneshot` without `RemainAfterExit=yes`, so `start` on it
+	// would also build again today. `restart` stays because it is what a
+	// re-install needs whatever the unit type is: on an inactive unit it
+	// starts it, on an active one (a `RemainAfterExit=yes` oneshot, which an
+	// older or later Quadlet may write) it re-runs the build instead of
+	// short-circuiting, and it is what `podup autostart rebuild` does.
 	if !build_services.is_empty() {
 		let mut build_args: Vec<&str> = Vec::with_capacity(build_services.len() + 1);
-		build_args.push("start");
+		build_args.push("restart");
 		for svc in &build_services {
 			build_args.push(svc.as_str());
 		}
 		checked(
 			sc.systemctl(&build_args),
-			&format!("start {}", build_services.join(" ")),
+			&format!("restart {}", build_services.join(" ")),
 		)?;
 		crate::ui::errln!(
 			"podup: built {} image(s) for '{project}'",

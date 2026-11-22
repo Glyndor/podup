@@ -71,10 +71,10 @@ fn install_build_writes_prebuilt_container_and_starts_build_then_container() {
 			calls,
 			vec![
 				vec!["daemon-reload".to_string()],
-				vec!["start".to_string(), "proj-web-build.service".to_string()],
+				vec!["restart".to_string(), "proj-web-build.service".to_string()],
 				vec!["start".to_string(), "proj-web.service".to_string()],
 			],
-			"daemon-reload then start build, then start container: {calls:?}"
+			"daemon-reload then restart build, then start container: {calls:?}"
 		);
 	});
 }
@@ -101,7 +101,7 @@ fn install_build_no_start_reloads_starts_build_only() {
 			calls,
 			vec![
 				vec!["daemon-reload".to_string()],
-				vec!["start".to_string(), "proj-web-build.service".to_string()],
+				vec!["restart".to_string(), "proj-web-build.service".to_string()],
 			],
 			"the build still runs under --no-start; the container does not: {calls:?}"
 		);
@@ -116,7 +116,7 @@ fn install_build_failure_returns_error_and_skips_container_start() {
 	super::with_env(|_root| {
 		let sc = ScriptedCtl::new(|args| {
 			i32::from(
-				args.first() == Some(&"start") && args.get(1) == Some(&"proj-web-build.service"),
+				args.first() == Some(&"restart") && args.get(1) == Some(&"proj-web-build.service"),
 			)
 		});
 		let err = install_quadlet(
@@ -137,7 +137,7 @@ fn install_build_failure_returns_error_and_skips_container_start() {
 			calls,
 			vec![
 				vec!["daemon-reload".to_string()],
-				vec!["start".to_string(), "proj-web-build.service".to_string()],
+				vec!["restart".to_string(), "proj-web-build.service".to_string()],
 			],
 			"the build call ran and failed; the container start did not run: {calls:?}"
 		);
@@ -249,7 +249,7 @@ fn install_no_build_units_byte_identical_to_generate_at() {
 	});
 }
 
-/// #1970: `--dry-run` lists the build start in its plan and runs no
+/// #1970: `--dry-run` lists the build restart in its plan and runs no
 /// systemctl at all. The operator reading the plan must be able to tell
 /// that an install will rebuild the images, and that no shell-out happens.
 #[test]
@@ -299,8 +299,8 @@ fn install_build_dry_run_prints_build_line_and_runs_no_systemctl() {
 		);
 		assert!(
 			plan.iter()
-				.any(|l| l == "# would run: systemctl --user start proj-web-build.service"),
-			"dry-run plan must name the build start exactly; got: {plan:?}"
+				.any(|l| l == "# would run: systemctl --user restart proj-web-build.service"),
+			"dry-run plan must name the build restart exactly; got: {plan:?}"
 		);
 	});
 }
@@ -344,9 +344,8 @@ fn install_dry_run_skips_build_line_when_there_is_no_build_unit() {
 		assert!(
 			!plan
 				.iter()
-				.any(|l| l.starts_with("# would run: systemctl --user start")
-					&& l.contains("-build.service")),
-			"no build unit means no build start; got: {plan:?}"
+				.any(|l| l.starts_with("# would run: systemctl --user restart")),
+			"no build unit means no build restart; got: {plan:?}"
 		);
 	});
 }
