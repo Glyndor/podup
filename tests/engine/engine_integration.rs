@@ -255,6 +255,9 @@ mod cli_wait_flags;
 mod create_ls;
 #[path = "engine_integration/workload/lifecycle/lifecycle_output.rs"]
 mod lifecycle_output;
+
+#[path = "engine_integration/workload/lifecycle/healthcheck_inherits_image.rs"]
+mod healthcheck_inherits_image;
 #[path = "engine_integration/observe/logs/logs_reader_closes.rs"]
 mod logs_reader_closes;
 #[path = "engine_integration/compose_files/multi_file.rs"]

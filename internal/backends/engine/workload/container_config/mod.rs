@@ -222,9 +222,9 @@ pub(in crate::backends::engine) fn build_healthcheck(hc: &HealthCheck) -> Option
 /// `Healthcheck` of the image inspect. Only what neither the compose file nor the
 /// image gives falls back to the specification's 30s / 30s / 3.
 ///
-/// A compose file that gives timings and no `test` also takes the image's test,
-/// so the probe survives on a libpod that replaces the image healthcheck with
-/// any non-empty request (Podman 5.4.2).
+/// A compose file that gives timings and no `test` sends no test: libpod merges
+/// field by field in that case and keeps the image's probe (measured on Podman
+/// 6.2.0, 2026-11-22).
 pub(in crate::backends::engine) fn build_healthcheck_inheriting(
 	hc: &HealthCheck,
 	image: Option<&ImageHealthcheck>,
@@ -239,7 +239,7 @@ pub(in crate::backends::engine) fn build_healthcheck_inheriting(
 	// empty Test as absent and inherits the image probe. An empty shell string
 	// stays an explicit `["CMD-SHELL", ""]` probe, as it always was, because
 	// Podman runs it (#1893).
-	let mut test = hc.test.as_ref().and_then(|cmd| match cmd {
+	let test = hc.test.as_ref().and_then(|cmd| match cmd {
 		ComposeCommand::Shell(s) => Some(vec!["CMD-SHELL".to_string(), s.clone()]),
 		ComposeCommand::Exec(v) if !v.is_empty() => Some(v.clone()),
 		_ => None,
@@ -249,20 +249,22 @@ pub(in crate::backends::engine) fn build_healthcheck_inheriting(
 		|| hc.retries.is_some()
 		|| hc.start_period.is_some()
 		|| hc.start_interval.is_some();
-	// Podman 5.4.2 (still supported) inherits the image HEALTHCHECK only when
-	// the whole `healthconfig` is absent from the request, so we must omit the
-	// field entirely, not just leave every value `None`, when there is no
-	// test and the user set no timing (#1893).
+	// With no test and no timing there is nothing to say: the field is left out
+	// of the request so the image HEALTHCHECK applies untouched (#1893).
 	if test.is_none() && !has_timings {
 		return None;
 	}
+	// Without a test of its own the request only merges into an image that has a
+	// probe; an image that has none (or turns it off) lends nothing.
+	let lender = image.filter(|i| {
+		test.is_some()
+			|| i.test
+				.as_ref()
+				.and_then(|t| t.first())
+				.is_some_and(|mode| mode != "NONE")
+	});
 	let from_image =
-		|pick: fn(&ImageHealthcheck) -> Option<i64>| image.and_then(pick).filter(|v| *v > 0);
-	if test.is_none() {
-		test = image
-			.and_then(|i| i.test.clone())
-			.filter(|t| t.first().is_some_and(|mode| mode != "NONE"));
-	}
+		|pick: fn(&ImageHealthcheck) -> Option<i64>| lender.and_then(pick).filter(|v| *v > 0);
 	let nanos = |value: &Option<String>| value.as_deref().and_then(size::parse_duration_nanos);
 	let mut interval = nanos(&hc.interval).or_else(|| from_image(|i| i.interval));
 	let mut timeout = nanos(&hc.timeout).or_else(|| from_image(|i| i.timeout));
