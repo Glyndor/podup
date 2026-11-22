@@ -64,7 +64,7 @@ pub struct ImageInspect {
 	/// Present in the default inspect response, so reading it costs no extra
 	/// call and no query parameter, unlike a container's size, which libpod
 	/// leaves `null` until asked. Defaults to zero when the field is absent, so
-	/// an older server renders an empty cell rather than failing the whole
+	/// an answer without it renders an empty cell rather than failing the whole
 	/// listing.
 	#[serde(rename = "Size", default)]
 	pub size: u64,
@@ -72,7 +72,7 @@ pub struct ImageInspect {
 	///
 	/// Note the shape: the image **list** endpoint reports this as Unix seconds,
 	/// the **inspect** endpoint this code calls reports it as RFC 3339. Measured
-	/// on Podman 5.7.0; reading the list's documentation and applying it here
+	/// on Podman 6.2.0 (2026-11-22, still so); reading the list's documentation and applying it here
 	/// yields a parse failure and a blank column.
 	#[serde(rename = "Created", default)]
 	pub created: String,
@@ -81,7 +81,7 @@ pub struct ImageInspect {
 	pub config: Option<ImageConfig>,
 	/// The healthcheck the image declares (`HEALTHCHECK`), `null` when it has
 	/// none. libpod reports it at the top level of the image inspect, not in
-	/// `Config`; measured on Podman 5.7.0 for an image built in the docker
+	/// `Config`; measured on Podman 6.2.0 (2026-11-22) for an image built in the docker
 	/// format (an OCI-format image cannot carry one).
 	#[serde(rename = "Healthcheck", default)]
 	pub healthcheck: Option<ImageHealthcheck>,

@@ -35,7 +35,7 @@ const CGROUP_FIELD: &str = "cgroup";
 /// would be in.
 ///
 /// This list used to be the whole allow-list, shared by all five slots, and
-/// that made it wrong for four of them. Measured against podman 5.7.0, only
+/// that made it wrong for four of them. Measured against podman 6.2.0 (2026-11-22, `podman create`), only
 /// `host`, `private` and `pod` are universal: `none` and `shareable` parse for
 /// `ipc` alone, and `keep-id`/`auto`/`nomap` for `userns_mode` alone. The
 /// per-slot extras live in [`IPC_EXTRA_MODES`] and [`USERNS_EXTRA_MODES`].

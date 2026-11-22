@@ -410,7 +410,7 @@ pub struct HealthConfig {
 }
 
 /// Action Podman takes when a container's healthcheck transitions to unhealthy
-/// (Podman 5's `--health-on-failure`).
+/// (`--health-on-failure`).
 ///
 /// Podman's `define.HealthCheckOnFailureAction` is an untagged `int` with no
 /// custom JSON marshaller, so it travels the wire as a bare number. The explicit
@@ -442,7 +442,7 @@ impl Serialize for HealthCheckOnFailureAction {
 	}
 }
 
-/// Startup-healthcheck configuration (Podman 5's `--health-startup-*`).
+/// Startup-healthcheck configuration (`--health-startup-*`).
 ///
 /// Podman's `define.StartupHealthCheck` embeds `Schema2HealthConfig` and adds a
 /// `Successes` count; the embedded probe fields are flattened to the top level of
