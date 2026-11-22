@@ -65,7 +65,7 @@ CI is split by responsibility rather than gathered in one file:
 | `debian-build.yml` | the `.deb` builds under `debian/rules`' narrower feature set, on every change that can shift it |
 | `binary-budget.yml` | the release binary fits `bench/budgets/binary-budget-mib` |
 | `asset-contract.yml` | the release asset names, install self-test, and shell/PowerShell signing fixtures |
-| `podman-lane.yml` | the integration suite against live Podman 5 and Podman 6 in a Fedora qemu VM, with VM boot skipped for changes that cannot affect runtime behaviour (prose, templates) |
+| `podman-lane.yml` | the integration suite against live Podman 6 in a Fedora rawhide qemu VM, with VM boot skipped for changes that cannot affect runtime behaviour (prose, templates) |
 | `podman-lane-develop-nightly.yml` | the coverage lane against Podman 6, fired nightly from `develop` |
 | `dco.yml`, `line-limit.yml`, `workflow-lint.yml` | one rule each |
 | `main-guard.yml` | `develop-only`: only the release pull request can target `main` |

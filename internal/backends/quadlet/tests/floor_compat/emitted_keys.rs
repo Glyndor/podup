@@ -1,21 +1,23 @@
-//! Regression guard for the Quadlet export's Podman 5.0 floor.
+//! Regression guard for the keys the Quadlet export writes.
 //!
-//! podup promises Podman 5.0 or newer. Quadlet silently drops a whole unit
+//! podup requires Podman 6.2.0 or newer. Quadlet silently drops a whole unit
 //! at daemon-reload if any of its keys were added after the running Quadlet
-//! release, so a single un-flagged post-5.0 key makes every generated unit
-//! with that key fail to start on a 5.0 host. These tests pin that:
+//! release. Every key in the tables is older than the floor, but the renderer
+//! was written against Podman 5.0 and still sends the keys added after it
+//! through `PodmanArgs=` flags. These tests pin that routing, so adopting a
+//! native key is a deliberate edit of the guard and not an accident:
 //!
 //! - `every_emitted_key_is_in_the_5_0_set` walks a compose fixture that
 //!   exercises every `Key=` the renderer can produce and asserts each one
-//!   is either at the floor (in 5.0 for `[Container]`/`[Pod]`/`[Network]`/
-//!   `[Volume]`, in 5.2 for `[Build]`) or registered in `min_podman.rs`.
+//!   is either in the 5.0 reference (`[Container]`/`[Pod]`/`[Network]`/
+//!   `[Volume]`) or the 5.2 one (`[Build]`), with no row in `min_podman.rs`.
 //!   `PodmanArgs=` / `GlobalArgs=` are exempt (they appear on every unit
 //!   type in 5.0).
 //! - `every_emitted_key_is_registered` is the coverage companion: a key
 //!   rendered but missing from the allowlist fails, so the maintainer
 //!   either adds a row or removes the emitter.
-//! - `build_unit_emits_a_warning` pins the one-line warning a project
-//!   gets when any `.build` unit is written.
+//! - `build_unit_carries_no_podman_version_warning` pins that writing a
+//!   `.build` unit does not warn about the Podman release any more.
 //!
 //! The companion tests for the source-level inventory and empty-value
 //! handling live in `source_inventory.rs` and `empty_values.rs`
@@ -231,16 +233,16 @@ fn every_emitted_key_is_in_the_5_0_set() {
 		let unit_type = unit_type_from_filename(&unit.filename);
 		for key in crate::backends::quadlet::min_podman::keys_in_unit(&unit.contents) {
 			match floor_required(unit_type, &key) {
-				// No row, so the key is expected to be at the floor. The
+				// No row, so the key is expected to be in the 5.0 set. The
 				// `every_emitted_key_is_registered` companion test below
 				// catches a key we emit that is missing from the table
 				// entirely; this test catches a key whose table row is
-				// wrong (a post-5.0 key still being emitted natively).
+				// wrong (a post-5.0 key being emitted natively).
 				None => {}
 				Some(v) => panic!(
-					"unit {} emits {key}= on {unit_type:?}, which Podman only added in {}; \
-					 the floor is 5.0; route the value through PodmanArgs= or update \
-					 the table if a recent 5.x release is the new supported floor",
+					"unit {} emits {key}= on {unit_type:?}, which Podman added in {}; \
+					 the renderer still routes it through PodmanArgs=. Adopting the \
+					 native key is its own change: update this guard with it",
 					unit.filename,
 					v.fmt()
 				),
@@ -327,12 +329,11 @@ services:
 	);
 }
 
-/// A project that emits at least one `.build` unit produces a single
-/// per-project warning naming the Podman 5.2.0 floor. The warning goes
-/// through `out.warnings`, the same channel every other field-mismatch
-/// warning uses.
+/// Writing a `.build` unit adds no warning about the Podman release: the
+/// unit type arrived in 5.2.0 and the floor is 6.2.0, so every supported
+/// Podman reads it. The project below does write one.
 #[test]
-fn build_unit_emits_a_warning() {
+fn build_unit_carries_no_podman_version_warning() {
 	let yaml = r#"
 services:
   app:
@@ -342,52 +343,14 @@ services:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
-	let joined = out.warnings.join("\n");
 	assert!(
-		joined.contains(".build") && joined.contains("5.2"),
-		"expected a warning mentioning both `.build` and `5.2`; got:\n{joined}"
+		out.units.iter().any(|u| u.filename.ends_with(".build")),
+		"the fixture must write a `.build` unit; got {:?}",
+		out.units.iter().map(|u| &u.filename).collect::<Vec<_>>()
 	);
-}
-
-/// A project that does not emit a `.build` unit must not emit the
-/// warning. The warning is keyed on the actual rendering, not on the
-/// presence of a `build:` field: an inline Dockerfile rejects the unit
-/// (and is itself warned) so no `.build` is written and no extra
-/// 5.2 warning should fire.
-#[test]
-fn no_build_unit_means_no_build_floor_warning() {
-	let yaml = r#"
-services:
-  app:
-    image: x
-"#;
-	let file = parse_str(yaml).unwrap();
-	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let joined = out.warnings.join("\n");
 	assert!(
-		!joined.contains("5.2"),
-		"no .build unit was written; the 5.2 warning must not fire; got:\n{joined}"
-	);
-}
-
-/// An inline-Dockerfile build rejects the `.build` unit (the existing
-/// path) and therefore does not trigger the 5.2 warning either: the
-/// warning is gated on actually writing the unit.
-#[test]
-fn inline_dockerfile_does_not_trigger_build_floor_warning() {
-	let yaml = r#"
-services:
-  app:
-    build:
-      dockerfile_inline: |
-        FROM alpine
-"#;
-	let file = parse_str(yaml).unwrap();
-	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
-	let joined = out.warnings.join("\n");
-	assert!(
-		!joined.contains("5.2"),
-		"an inline-Dockerfile build does not emit a `.build` unit; the 5.2 \
-		 warning must not fire; got:\n{joined}"
+		!joined.contains("5.2") && !joined.contains("Podman"),
+		"a `.build` unit needs no Podman release warning; got:\n{joined}"
 	);
 }

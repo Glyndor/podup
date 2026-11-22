@@ -1,12 +1,15 @@
 //! The minimum Podman release each Quadlet key we can emit first appeared in.
 //!
-//! podup promises Podman 5.0 or newer (the floor), and Quadlet silently drops
+//! podup requires Podman 6.2.0 or newer (the floor). Quadlet silently drops
 //! a whole unit at daemon-reload if any of its keys were added after the
-//! running Quadlet release. The table below is the regression guard against
-//! that: `floor_required(key)` returns the lowest Podman release that knows
-//! the key, and a test verifies that every `Key=` line we render is either
-//! at the floor or absent. New keys above the floor must add a row, or the
-//! floor test names the missing entry.
+//! running Quadlet release. The tables below record, for each key, the first
+//! release that knew it, and a test verifies that every `Key=` line we render
+//! is either in the 5.0 reference or has a row. Every row predates the
+//! current floor, so none of these keys can be dropped on a supported Podman
+//! any more; the renderer still writes them as `PodmanArgs=` flags, and the
+//! tests pin that routing until the native keys are adopted on purpose. A key
+//! newer than the floor must add a row, or the floor test names the missing
+//! entry.
 //!
 //! Sources: the Podman 5.0 reference at `podman-systemd.unit.5.md` (a key
 //! listed there for its unit type is 5.0), the 5.2 reference for the
@@ -37,7 +40,7 @@ pub(crate) enum UnitType {
 	/// `.volume` units (the `[Volume]` section).
 	Volume,
 	/// `.build` units (the `[Build]` section; the whole unit type appeared in
-	/// 5.2.0, so every entry below is 5.2.0).
+	/// 5.2.0, so every entry below is 5.2.0 or later).
 	Build,
 }
 
@@ -55,9 +58,9 @@ impl UnitType {
 	}
 }
 
-/// The floor: Podman 5.0.0. Keys whose `floor_required` returns a version
-/// above this are rendered as `PodmanArgs=` flags instead.
-const FLOOR: PodmanVersion = PodmanVersion::new(5, 0);
+/// The floor: Podman 6.2.0. A key whose `floor_required` returns a version
+/// above this must be rendered as a `PodmanArgs=` flag instead.
+const FLOOR: PodmanVersion = PodmanVersion::new(6, 2);
 
 /// A Podman release, encoded as major + minor. Patch numbers do not gate
 /// Quadlet keys, so the table records `5.x` versions rather than the
@@ -85,6 +88,7 @@ impl PodmanVersion {
 			(5, 5) => "5.5",
 			(5, 6) => "5.6",
 			(5, 7) => "5.7",
+			(6, 2) => "6.2",
 			_ => "?",
 		}
 	}
@@ -355,8 +359,8 @@ pub(crate) fn is_floor_compliant(unit_type: UnitType, key: &str) -> bool {
 	is_at_floor(unit_type, key) || min_podman_table().contains_key(&(unit_type, key))
 }
 
-/// The podup floor: Podman 5.0.0. Keys whose `floor_required` returns a
-/// version above this are rendered as `PodmanArgs=` flags instead.
+/// The podup floor: Podman 6.2.0. A key whose `floor_required` returns a
+/// version above this must be rendered as a `PodmanArgs=` flag instead.
 pub(crate) const fn floor() -> PodmanVersion {
 	FLOOR
 }

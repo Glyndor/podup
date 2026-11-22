@@ -22,7 +22,7 @@ pub fn answer(stream: &mut UnixStream, request: &Request) {
 	let path = request.target.split('?').next().unwrap();
 	if path.ends_with("/_ping") {
 		if request.method == "HEAD" {
-			reply(stream, 200, "Libpod-API-Version: 5.0.0\r\n", b"");
+			reply(stream, 200, "Libpod-API-Version: 6.2.0\r\n", b"");
 		} else {
 			ping_ok(stream);
 		}

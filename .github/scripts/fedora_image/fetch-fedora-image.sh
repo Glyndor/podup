@@ -14,7 +14,7 @@
 # of which host the bytes came from.
 #
 # Args:
-#   <podman-major>   5 (Fedora 44) or 6 (rawhide).
+#   <podman-major>   6 (Fedora rawhide, which carries the newest Podman).
 #   <output-path>    Path to write the image to. Must be writable; existing
 #                    files are resumed (-C -) rather than truncated.
 #
@@ -76,19 +76,15 @@ CURL_SPEED_TIME=30
 DEADLINE_HIT=0
 
 # The directory on each host that holds the cloud images for the release.
-# The IMAGE_PATTERN is the same one the workflow grep used; Podman 5 boots
-# against Fedora 44, Podman 6 against rawhide.
+# The IMAGE_PATTERN is the same one the workflow grep used; Podman 6 boots
+# against rawhide.
 case "$MAJOR" in
-	5)
-		IMAGES_PATH="/pub/fedora/linux/releases/44/Cloud/x86_64/images/"
-		IMAGE_PATTERN='Fedora-Cloud-Base-Generic-44-[0-9.]+\.x86_64\.qcow2'
-		;;
 	6)
 		IMAGES_PATH="/pub/fedora/linux/development/rawhide/Cloud/x86_64/images/"
 		IMAGE_PATTERN='Fedora-Cloud-Base-Generic-Rawhide-[0-9]+\.n\.[0-9]+\.x86_64\.qcow2'
 		;;
 	*)
-		echo "::error::unsupported Podman major '$MAJOR' (expected 5 or 6)" >&2
+		echo "::error::unsupported Podman major '$MAJOR' (expected 6)" >&2
 		exit 1
 		;;
 esac

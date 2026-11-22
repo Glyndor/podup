@@ -34,7 +34,7 @@ pub(in super::super) fn emit_runtime(name: &str, service: &Service, container: &
 		.filter(|text| crate::compose::types::service::umask::validate_runtime(name, text).is_ok())
 	{
 		let mask = crate::compose::types::service::umask::normalized(text);
-		// A CLI flag keeps the unit readable by Quadlet at the Podman 5.0 floor.
+		// The initial umask travels as a CLI flag through `PodmanArgs=`.
 		container.add("PodmanArgs", format!("--umask={mask}"));
 	}
 	if let Some(wd) = &service.working_dir {

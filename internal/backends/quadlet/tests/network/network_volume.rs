@@ -292,8 +292,8 @@ fn duplicate_network_aliases_are_emitted_once() {
 	// A repeated alias must not produce duplicate `--network-alias=`
 	// flags on the same argv, which podman may reject at container create.
 	// The flag is emitted through `PodmanArgs=` because `NetworkAlias=` on
-	// `[Container]` is a Podman 5.2.0 addition and the supported floor is
-	// 5.0.
+	// `[Container]` has been in Quadlet since Podman 5.2.0 and is not written
+	// natively yet.
 	let yaml = "services:\n  s:\n    image: x\n    networks:\n      front:\n        aliases: [dup, dup, uniq]\nnetworks:\n  front:\n";
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));

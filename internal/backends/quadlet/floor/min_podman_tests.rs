@@ -9,9 +9,38 @@ use super::{
 };
 
 #[test]
-fn floor_is_5_0() {
-	assert_eq!(floor().major, 5);
-	assert_eq!(floor().minor, 0);
+fn floor_is_6_2() {
+	assert_eq!(floor().major, 6);
+	assert_eq!(floor().minor, 2);
+	assert_eq!(floor().fmt(), "6.2");
+}
+
+/// Every key in the tables is older than the floor, so the release that
+/// introduced it cannot be the reason a unit is dropped on a supported
+/// Podman. A row at or above the floor would need the `PodmanArgs=` routing
+/// to be a requirement again, not a leftover.
+#[test]
+fn every_registered_key_predates_the_floor() {
+	let cases: &[(UnitType, &str)] = &[
+		(UnitType::Container, "GroupAdd"),
+		(UnitType::Container, "LogOpt"),
+		(UnitType::Container, "StopSignal"),
+		(UnitType::Container, "NetworkAlias"),
+		(UnitType::Container, "AddHost"),
+		(UnitType::Pod, "StopTimeout"),
+		(UnitType::Pod, "ExitPolicy"),
+		(UnitType::Build, "BuildArg"),
+		(UnitType::Build, "IgnoreFile"),
+	];
+	for (unit_type, key) in cases {
+		let v = floor_required(*unit_type, key).unwrap_or_else(|| panic!("{key} has a row"));
+		assert!(
+			v < floor(),
+			"{key} on {unit_type:?} is registered at {} but the floor is {}",
+			v.fmt(),
+			floor().fmt()
+		);
+	}
 }
 
 #[test]

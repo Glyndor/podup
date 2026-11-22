@@ -242,18 +242,10 @@ teardown() {
 
 # --- fixtures -----------------------------------------------------------------
 #
-# A real Fedora 44 image name from the live index on 2026-10-02, with
-# the corresponding CHECKSUM filename the index carries next to it.
-# shellcheck disable=SC2034 # the consumer (the test file) uses them
-IMG_44=Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2
-# shellcheck disable=SC2034 # the consumer (the test file) uses them
-CS_44=Fedora-Cloud-44-1.7-x86_64-CHECKSUM
-
 # Rawhide image name and the actual CHECKSUM filename rawhide uses.
 # The CHECKSUM filename embeds the compose and the word `images`, so
-# it does not match the stable path's pattern; the script does not
-# derive it from the image, it parses both out of the index side by
-# side.
+# it does not follow the image's name; the script does not derive it
+# from the image, it parses both out of the index side by side.
 # shellcheck disable=SC2034 # the consumer (the test file) uses them
 IMG_RAWHIDE=Fedora-Cloud-Base-Generic-Rawhide-20261002.n.0.x86_64.qcow2
 # shellcheck disable=SC2034 # the consumer (the test file) uses them
@@ -315,11 +307,11 @@ plant_exit_after() { # <host> <path> <exit-code>
 	printf '%s' "$code" > "$LIMITS/$host/$path.exit_after"
 }
 
-# Stable path the script asks for; the CHECKSUM path is the file
+# Images directory the script asks for; the CHECKSUM path is the file
 # name appended on top of it. Used by the per-path 404 limit helper
 # to plant a limit on the CHECKSUM request only.
 # shellcheck disable=SC2034
-STABLE_IMAGES="/pub/fedora/linux/releases/44/Cloud/x86_64/images"
+LANE_IMAGES="/pub/fedora/linux/development/rawhide/Cloud/x86_64/images"
 
 # Assertion: the per-host call log for `host` contains zero entries
 # matching the given substring. Used to assert that the CHECKSUM was

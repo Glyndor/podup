@@ -42,8 +42,8 @@ pub(in super::super) fn emit_group_add(service: &Service, container: &mut Sectio
 		if group.is_empty() {
 			continue;
 		}
-		// `GroupAdd=` was added to Quadlet in Podman 5.1.0. The supported
-		// floor is 5.0, so route each entry through `PodmanArgs=` as
+		// `GroupAdd=` has been in Quadlet since Podman 5.1.0, but the native
+		// key is not written yet, so route each entry through `PodmanArgs=` as
 		// `--group-add`, like the memory/CPU limits. Quoted per #1734 for
 		// the same reason as `mem_limit`.
 		container.add(

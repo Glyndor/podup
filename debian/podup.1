@@ -17,10 +17,10 @@ library.
 .PP
 .B podup
 requires
-.B Podman 5.0
-or newer: it targets the
+.B Podman 6.2.0
+or newer, with no upper bound: it talks to the libpod API under the
 .B /v5.0.0/libpod
-API surface. The socket must be local \(em a
+path, which Podman 6 serves. The socket must be local \(em a
 .B unix://
 path (or an
 .B npipe://

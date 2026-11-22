@@ -22,8 +22,8 @@ use crate::quadlet::tests::unit_named;
 /// nothing performed.
 ///
 /// Both the default rotation and the user options are routed through
-/// `PodmanArgs=--log-opt=` rather than `LogOpt=`, because the latter is a
-/// Podman 5.2.0 addition and the supported floor is 5.0.
+/// `PodmanArgs=--log-opt=` rather than `LogOpt=`: the native key (Podman
+/// 5.2.0) is not written yet.
 #[test]
 fn logging_default_is_emitted_when_logging_block_is_absent() {
 	let yaml = r#"

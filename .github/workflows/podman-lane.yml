@@ -4,12 +4,12 @@ name: podman-lane
 # not finish. Use `actionlint -shellcheck= -pyflakes= .github/workflows/podman-lane.yml`
 # when checking this workflow by hand. Measured 2026-08-24; the repository's own
 # workflow-lint job is unaffected because it runs actionlint with its own flags.
-# Live-Podman integration for podup, validated against the FULL supported window.
-# Support policy: the latest Podman major + the one below it, today Podman 5 and 6.
-# Every engine PR runs the integration suite on BOTH majors (matrix), each inside a
-# Fedora qemu VM booted in the runner (nested-virt: the ubuntu-24.04 runner exposes
-# /dev/kvm) with full systemd, as a rootless user. Podman 6 = Fedora rawhide;
-# Podman 5 = Fedora 44.
+# Live-Podman integration for podup.
+# Support policy: podup requires Podman 6.2.0 or newer and sets no upper bound, so
+# the lane runs the newest Podman there is. Every engine PR runs the integration
+# suite on it, inside a Fedora qemu VM booted in the runner (nested-virt: the
+# ubuntu-24.04 runner exposes /dev/kvm) with full systemd, as a rootless user.
+# Podman 6 = Fedora rawhide.
 
 # Three triggers, three questions:
 # workflow_dispatch: starts the lane on demand.
@@ -167,12 +167,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # This list appears in the required check names `podman-vm (5)` /
-        # `podman-vm (6)`. Editing it changes the emitted names while the
-        # ruleset still requires the old ones, so the PR carrying the edit
-        # blocks itself. The stable gate a ruleset should require is
-        # `Supported Podman majors`. See #1552.
-        podman: ["5", "6"]
+        # This list appears in the check name `podman-vm (6)`. Editing it
+        # changes the emitted name while the ruleset could still require the
+        # old one, so the PR carrying the edit would block itself. The stable
+        # gate a ruleset should require is `Supported Podman majors`. See #1552.
+        podman: ["6"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -221,7 +220,7 @@ jobs:
             sleep 10
           done
           exit 1
-      - name: Fetch Fedora cloud image (Podman 6 = rawhide, 5 = Fedora 44)
+      - name: Fetch Fedora cloud image (Podman 6 = rawhide)
         if: needs.decide.outputs.engine == 'true'
         run: |
           # The script lives in .github/scripts/fedora_image/ so it ships with the repo;
@@ -321,9 +320,8 @@ jobs:
                 # counted; it just reddened the leg, which is exactly what happened to
                 # fifteen streaming tests when a mid-stream error was made fatal.
                 #
-                # EXPERIMENT (#1039): the thread cap is per major, substituted into
-                # this script when the seed is built: Podman 6 runs at 1, Podman 5
-                # stays at 2 as the control.
+                # EXPERIMENT (#1039): the thread cap is substituted into this
+                # script when the seed is built; the suite runs at 1.
                 #
                 # Every hypothesis for Podman 6's failing tail has been falsified in
                 # turn: journald, SELinux, and a boot race on systemd-resolved, the
@@ -476,15 +474,6 @@ jobs:
           runcmd:
             - bash -c 'F=$(findmnt -no FSTYPE /); case $F in btrfs) btrfs filesystem resize max / ;; xfs) xfs_growfs / ;; ext4) resize2fs $(findmnt -no SOURCE /) ;; esac >/dev/console 2>&1; echo "DISK_BEGIN value=$(df -h / | tail -1) DISK_END" >/dev/console'
             - bash -c 'dnf install -y podman rust cargo gcc git llvm >/dev/console 2>&1'
-            # The Fedora cloud image ships Podman preinstalled, so `dnf install`
-            # above leaves it at whatever the image was cut with. The Podman 5 leg
-            # sat on 5.8.1 (Fedora 44 GA) for months while updates carried 5.8.7,
-            # and 5.8.1 vendors buildah 1.43.0, whose layer-cache lookup aborts a
-            # build with "getting top layer info: layer not known" whenever any
-            # other image is deleted mid-lookup. buildah 1.43.1 (Podman 5.8.2)
-            # skips that image instead. With two test threads and tests that
-            # remove their images, that was #1922. Test what an updated host runs.
-            - bash -c 'dnf upgrade -y podman >/dev/console 2>&1'
             # Prove the driver took, so a silently-ignored config cannot put the
             # logs tests back to passing without reading anything.
             - bash -c 'echo "LOGDRIVER_BEGIN value=$(podman info --format {{.Host.LogDriver}} 2>/dev/null) LOGDRIVER_END" >/dev/console'
@@ -495,10 +484,9 @@ jobs:
             - bash -c 'sudo -iu tester /usr/local/bin/run-suite.sh >/dev/console 2>&1'
             - bash -c 'echo PROBE_DONE >/dev/console; sleep 2; poweroff'
           EOF
-          # The seed heredoc is quoted, so the matrix value cannot expand inside
-          # it. Substitute the per-major thread cap here instead (#1039).
-          THREADS=2
-          [ "${{ matrix.podman }}" = "6" ] && THREADS=1
+          # The seed heredoc is quoted, so a shell variable cannot expand inside
+          # it. Substitute the thread cap here instead (#1039).
+          THREADS=1
           echo "test-threads for Podman ${{ matrix.podman }}: $THREADS"
           sed -i "s/__THREADS__/$THREADS/" "$RUNNER_TEMP/user-data"
           # Coverage on the scheduled and manual paths only. A pull request must
@@ -648,17 +636,14 @@ jobs:
           #
           # The floor is a second, cruder signal: it catches "fewer tests ran"
           # (a suite that half-executed reports few failures and few passes),
-          # which the identity gate above cannot see. It stays for both majors.
+          # which the identity gate above cannot see.
           #
           # Why the failure COUNT is still only a warning: it never separated a
-          # regression from noise: measured on this lane, Podman 5 fails the
-          # same ~10 streaming/attach/run tests every run with ZERO
-          # connection-drop signatures, so "FAIL <= drop count" would redden
-          # every run. The identity gate replaces it for any major with a
-          # classified list, and BOTH majors now have one.
-          #
-          # Podman 5's entries were each proved environmental by running the same
-          # suite on a real host (155/155) while the lane reported failures.
+          # regression from noise: measured on this lane while Podman 5 was in
+          # it, the leg failed the same ~10 streaming/attach/run tests every run
+          # with ZERO connection-drop signatures, so "FAIL <= drop count" would
+          # redden every run. The identity gate replaces it for any major with a
+          # classified list.
           #
           # Podman 6 went without a list because its failing set carried a
           # variable tail that observation would have turned into false reds,
@@ -691,12 +676,12 @@ jobs:
 
   podman-majors:
     name: Supported Podman majors
-    # A required status check is matched by name, and `podman-vm (5)` / `podman-vm (6)`
-    # carry the matrix values. The support policy moves that matrix: when Podman 7
-    # ships, `["5", "6"]` becomes `["6", "7"]`, and on that pull request the required
-    # name `podman-vm (5)` stops being emitted while the ruleset still requires it, so
-    # the pull request that carries the change blocks itself. This name does not move.
-    # See #1552.
+    # A required status check is matched by name, and `podman-vm (6)` carries the
+    # matrix value. The lane follows the newest Podman: when Podman 7 ships, `["6"]`
+    # becomes `["7"]`, and on that pull request the name `podman-vm (6)` stops being
+    # emitted while a ruleset could still require it, so the pull request that carries
+    # the change would block itself. This name does not move, and it keeps its
+    # wording from when the lane ran two majors. See #1552.
     needs: podman-vm
     # `needs` on its own SKIPS this job when the matrix fails, and a skipped required
     # check does not block a merge, the exact failure this job exists to prevent.
@@ -715,6 +700,6 @@ jobs:
           # here: podman-vm carries no `if:` and runs on every pull request, so a
           # skipped matrix means something went wrong rather than a caller opting out.
           case "$RESULT" in
-            success) echo "every supported Podman major passed" ;;
+            success) echo "the Podman lane passed" ;;
             *) echo "::error::the Podman matrix did not pass (result: $RESULT)"; exit 1 ;;
           esac

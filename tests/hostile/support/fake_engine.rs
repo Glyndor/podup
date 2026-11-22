@@ -182,7 +182,7 @@ fn serve(mut stream: UnixStream, handler: Handler, log: &Mutex<Vec<Vec<u8>>>, he
 	let ping = line.contains("/libpod/_ping");
 	let reply = handler(&line, &request).unwrap_or_else(|| default_reply(&line));
 	let version = if ping {
-		"Libpod-API-Version: 5.4.0\r\n"
+		"Libpod-API-Version: 6.2.0\r\n"
 	} else {
 		""
 	};

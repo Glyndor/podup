@@ -31,15 +31,13 @@ body:
   - type: dropdown
     id: podman-scope
     attributes:
-      label: Podman majors this should work with
-      description: podup supports Podman 5 and Podman 6; the latest stable and the one below it. A change that needs Podman 7 is an API break, not a feature.
+      label: Podman releases this should work with
+      description: podup requires Podman 6.2.0 or newer and sets no upper bound. A change that needs a newer Podman than 6.2.0 raises the floor, which is a breaking change, not a feature.
       options:
-        - label: 'Both 5 and 6 (default support window)'
-          value: both
-        - label: 'Podman 6 only (newest)'
-          value: 6
-        - label: 'Podman 5 only (older)'
-          value: 5
+        - label: 'Every supported Podman (6.2.0 and newer)'
+          value: all
+        - label: 'Only a newer Podman than 6.2.0 (name the release in the description)'
+          value: newer
         - label: 'Engine-agnostic (no Podman API change)'
           value: agnostic
   - type: dropdown

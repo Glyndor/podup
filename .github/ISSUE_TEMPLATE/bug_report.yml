@@ -52,9 +52,9 @@ body:
   - type: input
     id: podman-version
     attributes:
-      label: Podman version and major
-      description: "The output of `podman --version`. The major is what gates support: podup requires Podman 5 or 6."
-      placeholder: '5.4.2 (Podman 5)'
+      label: Podman version
+      description: "The output of `podman --version`. The version gates support: podup requires Podman 6.2.0 or newer."
+      placeholder: '6.2.0'
     validations:
       required: true
   - type: input

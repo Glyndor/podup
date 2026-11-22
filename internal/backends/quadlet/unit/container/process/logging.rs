@@ -18,8 +18,8 @@ pub(in super::super) fn emit_logging(
 	// `LogDriver=` set and `--log-opt` rotation policy on the generated
 	// unit (#1354). The render path is the same as the live engine's, so
 	// `up` and `generate quadlet` produce equivalent rotation. The
-	// options are emitted through `PodmanArgs=` because `LogOpt=` is a
-	// Podman 5.2.0 key and the floor is 5.0; see `emit_log_config`.
+	// options are emitted through `PodmanArgs=` because the native
+	// `LogOpt=` key (Podman 5.2.0) is not written yet; see `emit_log_config`.
 	match build_log_config(name, service.logging.as_ref()) {
 		Ok(Some(logging)) => emit_log_config(container, logging),
 		Ok(None) => {}
@@ -51,8 +51,8 @@ pub(in super::super) fn emit_logging(
 /// `max-size=10m` on Podman 5.7.0, so no suffix has to be reconstructed.
 ///
 /// Each entry is emitted through `PodmanArgs=` (`--log-opt=`) rather than
-/// as the native `LogOpt=` Quadlet key, because `LogOpt=` is a Podman 5.2.0
-/// addition; the supported floor is 5.0.
+/// as the native `LogOpt=` Quadlet key (Podman 5.2.0), which is not written
+/// yet.
 pub(in super::super) fn emit_log_config(
 	container: &mut Section,
 	logging: crate::libpod::types::container::LogConfig,
@@ -60,8 +60,8 @@ pub(in super::super) fn emit_log_config(
 	if let Some(driver) = &logging.driver {
 		container.add("LogDriver", driver.clone());
 	}
-	// `LogOpt=` was added to Quadlet in Podman 5.2.0. The supported floor
-	// is 5.0, so route the rotation cap and each user option through
+	// `LogOpt=` has been in Quadlet since Podman 5.2.0, but the native key is
+	// not written yet, so route the rotation cap and each user option through
 	// `PodmanArgs=` as `--log-opt`, like the other escape-hatch flags. Both
 	// the key and the value are quoted (#1734): a hostile value carrying
 	// whitespace must not become two argv elements, and the key half has

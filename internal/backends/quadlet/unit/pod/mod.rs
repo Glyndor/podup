@@ -8,9 +8,10 @@
 //! `Pod=<stem>.pod` and drops the fields the pod carries. The `.container`
 //! side of that contract is in `super::container::container_unit_with_mode`.
 //!
-//! Every promoted pod key arrived after Podman 5.0, so
-//! those values travel through `PodmanArgs=` and keep the unit loadable on
-//! the supported floor.
+//! Every promoted pod key arrived after Podman 5.0 and is older than the
+//! supported floor (6.2.0). The values still travel through `PodmanArgs=`,
+//! which every unit type has carried since 5.0; writing the native keys is
+//! a separate change.
 
 use crate::compose::types::ComposeFile;
 use crate::ports;
@@ -111,9 +112,10 @@ pub(crate) fn pod_unit(
 
 	// One `<service>:127.0.0.1` per service, so a compose `db:5432` reference
 	// resolves to the shared namespace the way it resolves on a project
-	// network. The live engine builds the same map. `AddHost=` was added to
-	// Quadlet in Podman 5.3.0, but the supported floor is 5.0, so route the
-	// entry through `PodmanArgs=` as `--add-host`, like the container side.
+	// network. The live engine builds the same map. `AddHost=` has been in
+	// Quadlet since Podman 5.3.0, but the native key is not written yet, so
+	// route the entry through `PodmanArgs=` as `--add-host`, like the container
+	// side.
 	// Quoted per #1734: a hostile value carrying whitespace must not become
 	// two argv elements.
 	let mut hosts: Vec<String> = file
@@ -131,9 +133,9 @@ pub(crate) fn pod_unit(
 
 	// Carry the project ownership label the live engine stamps onto pods, so
 	// `down`/`down --remove-orphans` can find the unit by label. `Label=` on
-	// `[Pod]` was added in Podman 5.6.0; the supported floor is 5.0, so the
-	// label travels through `PodmanArgs=` as `--label=` for the same reason
-	// the host entries above go through `--add-host=`. Quoted per #1734.
+	// `[Pod]` has been in Quadlet since Podman 5.6.0; the label still travels
+	// through `PodmanArgs=` as `--label=` for the same reason the host entries
+	// above go through `--add-host=`. Quoted per #1734.
 	pod.add(
 		"PodmanArgs",
 		format!(
@@ -146,7 +148,7 @@ pub(crate) fn pod_unit(
 	// generates agrees with what the live engine stamps on the pod it
 	// creates. Quadlet hard-codes `--exit-policy stop` in the command line
 	// it builds for `podman pod create`, and the native `ExitPolicy=` key
-	// needs Podman 5.6 while the floor is 5.0. `PodmanArgs=` flags are
+	// (Podman 5.6) is not written yet. `PodmanArgs=` flags are
 	// appended after it on that line, so this flag wins, and the exported
 	// pod keeps running when its last service container exits. The live
 	// engine sets the same value explicitly: the API path defaults to

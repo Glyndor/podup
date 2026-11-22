@@ -174,8 +174,8 @@ async fn runtime_path_validation_surfaces_the_field() {
 	// when the container actually executes user code depends on the
 	// Podman/OCI runtime version, so we exercise the path and assert
 	// only that, if a failure is surfaced, it is operator-readable
-	// (no raw libpod JSON body). The lane covers both Podman 5 and 6
-	// to catch a regression on either (#1357).
+	// (no raw libpod JSON body). The lane covers it on every pull request
+	// (#1357).
 	if podman().await.is_none() {
 		return;
 	}

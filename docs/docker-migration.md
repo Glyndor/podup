@@ -63,7 +63,7 @@ An `env_file` entry is read as dotenv by default. Unquoted and double-quoted val
 
 Interpolation follows `docker compose config`. A form Docker refuses is an error that names the key, such as `${A:foo}`, `${A:=foo}` or an unclosed `${A`. A `{` inside a default is text (`${A:-{}` gives `{`), and the message of `${A:?msg}` is interpolated too. Mapping keys are not interpolated: `${NAME}` as a key stays as written, with a warning. The project `.env` is read as strictly as `--env-file`, so a required variable with no value or an invalid form in it is an error naming the file and the key.
 
-`umask` sets the initial process permission mask. Use a string of one to four octal digits, such as `"0022"`, `"022"` or `"22"` (range `0000` to `7777`). Only integer `0` is accepted; quote every other numeric value to avoid YAML radix ambiguity. Validation follows normal interpolation and refuses leftover variables with the service name and a quote hint before container or pod replacement. Normal interpolation can turn numeric text into a YAML integer, so use a leading-zero value such as `0022`. With `config --no-interpolate`, a placeholder in `umask` is refused because the typed field still requires a valid mask. Valid output is padded to four digits. Omitted or null leaves the runtime default; explicit zero sends `"0000"` and masks no permission bits. The quadlet export uses `PodmanArgs=--umask=<value>`, compatible with Podman 5.0. Scalar inheritance, `!reset` and `!override` apply. Explicit `umask: null` changes the configuration hash once on upgrade because the previously unknown null key is now omitted. Tagged payloads use normal interpolation before merge tags are stripped; unresolved masks still fail validation.
+`umask` sets the initial process permission mask. Use a string of one to four octal digits, such as `"0022"`, `"022"` or `"22"` (range `0000` to `7777`). Only integer `0` is accepted; quote every other numeric value to avoid YAML radix ambiguity. Validation follows normal interpolation and refuses leftover variables with the service name and a quote hint before container or pod replacement. Normal interpolation can turn numeric text into a YAML integer, so use a leading-zero value such as `0022`. With `config --no-interpolate`, a placeholder in `umask` is refused because the typed field still requires a valid mask. Valid output is padded to four digits. Omitted or null leaves the runtime default; explicit zero sends `"0000"` and masks no permission bits. The quadlet export writes it as `PodmanArgs=--umask=<value>`. Scalar inheritance, `!reset` and `!override` apply. Explicit `umask: null` changes the configuration hash once on upgrade because the previously unknown null key is now omitted. Tagged payloads use normal interpolation before merge tags are stripped; unresolved masks still fail validation.
 
 `command:` and `entrypoint:` given as a string are split into words the way Docker Compose splits them, and run without a shell: `entrypoint: echo got` with `command: [x, y]` runs `echo got x y`. Whitespace separates words, single and double quotes group, and a backslash keeps the next character (`\n` and `\t` are a newline and a tab). Shell syntax is not interpreted. An unquoted `;`, `&`, `|`, `<` or `>` ends the string and the rest is dropped, as Compose does (`command: make && make install` runs `make`; podup names the dropped part in a warning), and an unquoted parenthesis or a quote that never closes fails the load. For a shell, write the list form (`["sh", "-c", "make && make install"]`) or `sh -c '...'` with the script in quotes. The same rules apply to `run --entrypoint`. A healthcheck `test:` string still runs through `sh -c`.
 
@@ -465,7 +465,7 @@ podup ships for Linux, macOS and Windows, each x86_64/arm64. Install paths are i
 
 ### Engine and transport
 
-podup needs a Podman 5.0 or newer engine. The supported majors are 5.x and 6.x; the libpod client requires the engine's reported major to be at or above `MIN_LIBPOD_API_MAJOR` (5), and the engine version is checked on the first request that contacts Podman. Commands that contact Podman check the version. `config --resolve-image-digests` and `autostart uninstall --purge` also contact it.
+podup needs a Podman 6.2.0 or newer engine and sets no upper bound: a newer release is accepted. The libpod client compares the engine's reported version (major, minor and patch) with `MIN_PODMAN_VERSION` (6.2.0), and the engine version is checked on the first request that contacts Podman. Commands that contact Podman check the version. `config --resolve-image-digests` and `autostart uninstall --purge` also contact it.
 
 The transport is local-only. Only `unix://` (or `npipe://` on Windows) is accepted, from `--socket`, `PODMAN_SOCKET`, `DOCKER_HOST`, or auto-detection; remote `tcp://`/`ssh://`/`http(s)://`/`fd://` schemes are rejected before any connection. This applies to `podman machine` as well. Driving a remote engine over TCP or SSH is not supported; run podup beside the engine.
 
@@ -473,18 +473,21 @@ The transport is local-only. Only `unix://` (or `npipe://` on Windows) is accept
 
 The Linux release binaries are statically linked with musl. The package build is described in [Debian packaging](debian-packaging.md).
 
-Recorded distribution package versions (2026-08-24, with later Ubuntu observations noted):
+Recorded distribution package versions (2026-08-24, with later Ubuntu observations noted and Fedora 45 recorded on 2026-11-20):
 
-| distribution        | Podman | podup runs |
-|---------------------|--------|------------|
-| Debian 12 bookworm  | 4.3.1  | no         |
-| Debian 13 trixie    | 5.4.2  | yes        |
-| Ubuntu 22.04 LTS    | 3.4.4  | no         |
-| Ubuntu 24.04 LTS    | 4.9.3  | no         |
-| Ubuntu 26.04 LTS    | 5.7.0  | yes        |
-| Fedora 42 and newer | 5.x+   | yes        |
+| distribution         | its own Podman | podup runs on it |
+|----------------------|--------|------------|
+| Debian 12 bookworm   | 4.3.1  | no         |
+| Debian 13 trixie     | 5.4.2  | no         |
+| Ubuntu 22.04 LTS     | 3.4.4  | no         |
+| Ubuntu 24.04 LTS     | 4.9.3  | no         |
+| Ubuntu 26.04 LTS     | 5.7.0  | no         |
+| Fedora 42 to 44      | 5.x    | no         |
+| Fedora 45 and newer  | 6.2.0  | yes        |
 
-apt requires an installable Podman >=5 package; it does not guarantee a running socket. Tested majors are 5 and 6. Distributions below Podman 5 need another engine source.
+The table is about the Podman each distribution packages. The Glyndor apt repository carries Podman 6.2.0 for Debian 13, Ubuntu 24.04 and Ubuntu 26.04, and the podup package depends on it, so installing podup from that repository installs that Podman on those three. Any other distribution whose Podman is older than 6.2.0 needs another engine source.
+
+apt requires an installable Podman >= 6.2.0 package; it does not guarantee a running socket.
 
 ### macOS
 

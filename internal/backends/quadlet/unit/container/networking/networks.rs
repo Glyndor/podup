@@ -190,8 +190,8 @@ pub(in super::super) fn emit_network_extras(
 			if alias.is_empty() {
 				continue;
 			}
-			// `NetworkAlias=` was added to Quadlet in Podman 5.2.0.
-			// The supported floor is 5.0, so route each alias
+			// `NetworkAlias=` has been in Quadlet since Podman 5.2.0, but the
+			// native key is not written yet, so route each alias
 			// through `PodmanArgs=` as `--network-alias`, like
 			// the other escape-hatch flags. Quoted per #1734.
 			container.add(

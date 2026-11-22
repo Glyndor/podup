@@ -33,9 +33,8 @@ jobs:
     timeout-minutes: 95
     strategy:
       fail-fast: false
-      # Only the Podman 6 leg runs coverage. Podman 5 and 6 both measure the
-      # suite at ~91.5%, so gating the older major would be redundant. The
-      # per-PR lane is the full-support cross-check.
+      # Coverage runs on the Podman 6 leg, the only one there is. The per-PR
+      # lane is the pass/fail cross-check.
       matrix:
         podman: ["6"]
     steps:
