@@ -239,7 +239,7 @@ services:
     userns_mode: auto
 ```
 
-`auto` needs available subuid/subgid ranges; request `auto:size=65536` only if it fits. Existing `keep-id`/`nomap` allocations may exhaust them. `keep-id` creates are serialized per command after observed Podman 5.7.0 mapping failures (2026-09-27); separate commands may overlap. Mount permissions must allow mapped IDs. `:U` recursively changes host ownership; separate ranges need compatible permissions for shared volumes.
+`auto` needs available subuid/subgid ranges; request `auto:size=65536` only if it fits. Existing `keep-id`/`nomap` allocations may exhaust them. `keep-id` creates are serialized per command after mapping failures observed on Podman 5.7.0 (2026-09-27); 60 concurrent creates on Podman 6.2.0 did not reproduce them (2026-11-22), which does not show they are gone, so the serialization stays. Separate commands may overlap. Mount permissions must allow mapped IDs. `:U` recursively changes host ownership; separate ranges need compatible permissions for shared volumes.
 
 ### Volume SELinux labels
 
