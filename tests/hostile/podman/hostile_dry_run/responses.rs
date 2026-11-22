@@ -37,7 +37,7 @@ pub fn answer(stream: &mut UnixStream, request: &Request) {
 	} else if path.ends_with("/volumes/json") {
 		br#"[{"Name":"hostile_data","Driver":"local","Labels":{"podup.project":"hostile"}}]"#
 	} else if path.ends_with("/version") {
-		br#"{"Version":"5.0.0","ApiVersion":"5.0.0","Os":"linux","Arch":"amd64"}"#
+		br#"{"Version":"6.2.0","ApiVersion":"6.2.0","Os":"linux","Arch":"amd64"}"#
 	} else {
 		reply(stream, 404, "", br#"{"message":"uncanned endpoint"}"#);
 		return;

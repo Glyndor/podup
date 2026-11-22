@@ -205,7 +205,7 @@ fn down_started_during_up_waits_for_it() {
 	);
 	// The network removal is down's; the start of the container is up's last
 	// step. Down has to come after it.
-	let seen = order(&fake, &["/start HTTP", "DELETE /v5.0.0/libpod/networks/"]);
+	let seen = order(&fake, &["/start HTTP", "DELETE /v6.2.0/libpod/networks/"]);
 	let last_start = seen
 		.iter()
 		.rposition(|&i| i == 0)
