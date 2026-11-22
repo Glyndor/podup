@@ -110,9 +110,9 @@ impl Engine {
 	/// opened.
 	///
 	/// A window needs **both** ends to close, and both must already have
-	/// elapsed. Measured against Podman 5.4.2: `since` and `until` together
+	/// elapsed. Measured against Podman 6.2.0 (2026-11-22): `since` and `until` together
 	/// close the feed, whether absolute or relative (a past relative window is
-	/// `--since 2h --until -1h`; re-measured on 5.7.0 with `since=30s&until=-1s`); either one
+	/// `--since 2h --until -1h`, or `since=30s&until=-1s` on the wire); either one
 	/// alone leaves it open, as does any `until` in the future. So `--until 5m`
 	/// follows indefinitely rather than stopping in five minutes, and `--until
 	/// -5m` alone does too.
@@ -148,11 +148,11 @@ impl Engine {
 		// reaching `None` is the same anomaly as one reaching `Err`, and the
 		// previous code exited 0 for both.
 		//
-		// A window needs BOTH ends to close. Measured against 5.4.2 with curl,
+		// A window needs BOTH ends to close. Measured against 6.2.0 with curl,
 		// no podup involved, `stream=true`:
 		//
 		//   since + until, both past, absolute   closes
-		//   since + until, relative past window  closes (5.7.0: since=30s, until=-1s)
+		//   since + until, relative past window  closes (since=30s, until=-1s)
 		//   until alone, past                    stays open
 		//   since alone, past                    stays open
 		//

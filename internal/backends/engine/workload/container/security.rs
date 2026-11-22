@@ -1,8 +1,9 @@
 //! Security/device builders that translate compose fields onto the dedicated
 //! Podman SpecGenerator fields: `security_opt` decomposition, `device_cgroup_rules`
-//! parsing, and CDI device injection. Podman 5.x has no `security_opt` or
-//! `cdi_devices` SpecGenerator field, and `device_cgroup_rule` is structured, not
-//! a string list, and sending the compose shapes verbatim silently drops them (or,
+//! parsing, and CDI device injection. The Podman SpecGenerator has no `security_opt` field
+//! (a request carrying one is accepted and the option dropped, measured on
+//! 6.2.0 on 2026-11-22), and `device_cgroup_rule` is structured, not a string
+//! list, and sending the compose shapes verbatim silently drops them (or,
 //! for cgroup rules, fails the request), so each is converted here.
 
 use tracing::warn;
@@ -12,10 +13,11 @@ use crate::libpod::types::container::{LinuxDevice, LinuxDeviceCgroup};
 
 /// Build a `LinuxDevice` carrying a CDI qualified name (e.g. `nvidia.com/gpu=all`).
 ///
-/// Podman 5.x has no SpecGenerator CDI field: `ExtractCDIDevices` scans the
-/// `devices` array and pulls out any entry whose `path` is a CDI qualified name,
-/// ignoring the major/minor/type fields entirely. So the name rides in as the
-/// device path with the device-node fields left zeroed.
+/// Podman 6.2.0 has no SpecGenerator CDI field (checked 2026-11-22):
+/// `ExtractCDIDevices` scans the `devices` array and pulls out any entry whose
+/// `path` is a CDI qualified name, ignoring the major/minor/type fields
+/// entirely. So the name rides in as the device path with the device-node
+/// fields left zeroed.
 pub(crate) fn cdi_device(name: String) -> LinuxDevice {
 	LinuxDevice {
 		path: name,

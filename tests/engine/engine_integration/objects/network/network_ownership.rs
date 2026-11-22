@@ -301,7 +301,7 @@ async fn unlabelled_existing_network_is_refused_without_external_true() {
 		"dns_enabled": true,
 	});
 	let _: serde_json::Value = client
-		.post_json("/v5.0.0/libpod/networks/create", &body)
+		.post_json("/v6.2.0/libpod/networks/create", &body)
 		.await
 		.expect("create unlabelled network");
 
@@ -353,7 +353,7 @@ async fn unlabelled_existing_network_is_refused_without_external_true() {
 	// removed, so both projects are taken down first.
 	drop(no_external);
 	drop(external);
-	let path = format!("/v5.0.0/libpod/networks/{}", netname_encode(&shared));
+	let path = format!("/v6.2.0/libpod/networks/{}", netname_encode(&shared));
 	client
 		.delete_ok(&path)
 		.await
@@ -385,7 +385,7 @@ async fn network_owner(name: &str) -> std::result::Result<Option<String>, String
 	let client: Client = podup::podman::connect_from_env()
 		.or_else(|_| podup::podman::connect(None))
 		.map_err(|e| e.to_string())?;
-	let path = format!("/v5.0.0/libpod/networks/{}/json", netname_encode(name));
+	let path = format!("/v6.2.0/libpod/networks/{}/json", netname_encode(name));
 	let resp: serde_json::Value = client.get_json(&path).await.map_err(|e| e.to_string())?;
 	let owner = resp
 		.get("labels")

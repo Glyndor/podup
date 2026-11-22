@@ -193,7 +193,7 @@ impl Engine {
 	///
 	/// The container-side deletion is a `rm -rf` exec rather than a DELETE
 	/// against the archive endpoint. libpod's archive DELETE was answered
-	/// with `405 Method Not Allowed` on Podman 5.7.0 (the endpoint documents
+	/// with `405 Method Not Allowed` (measured on Podman 6.2.0, 2026-11-22; the endpoint documents
 	/// only GET/PUT/HEAD), and the engine contract here is "the file is
 	/// gone inside the container"; both paths satisfy it. Matching docker
 	/// compose's own watch handler (#17 in their tar syncer upstream), which

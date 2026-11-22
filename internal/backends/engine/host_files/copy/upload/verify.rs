@@ -12,7 +12,7 @@
 //! not from a second walk of the source, so it cannot describe a tree other
 //! than the one uploaded.
 //!
-//! One stat per entry, about 10 ms each against Podman 5.7.0 on 2026-09-18, and
+//! One stat per entry, about 10 ms each (measured against Podman 5.7.0 on 2026-09-18), and
 //! only after a dropped response. The one request that lists a destination
 //! recursively is the archive GET, which returns the contents too and so costs
 //! what was already there instead of what was sent; that is why it is not used.
@@ -26,14 +26,14 @@
 //!   existing named pipe would otherwise be confirmed by the unchanged pipe.
 //! - Directories (`SentKind::Dir`): must be a directory at the destination.
 //! - Symbolic links (`SentKind::Link(target)`): must be a symlink at the
-//!   destination whose `linkTarget` (Podman 5.7.0 carries it in
+//!   destination whose `linkTarget` (Podman 6.2.0 carries it in
 //!   `X-Docker-Container-Path-Stat`, including on a 404 for a dangling link
 //!   that `head_path_stat_even_if_missing` reads) matches the sent target
 //!   after the lexical normalization Podman applies. `size` is also compared
 //!   against the byte length of the target as written: independent evidence,
 //!   and the two together close any one of them being stale. The stat for a
-//!   dangling link on Podman 5.7.0 was carried on the 404 response in the
-//!   same header, which `head_path_stat` threw away;
+//!   dangling link on Podman 6.2.0 is still carried on the 404 response in the
+//!   same header (measured 2026-11-22), which `head_path_stat` threw away;
 //!   `head_path_stat_even_if_missing` reads it back so a cut stream cannot
 //!   be confirmed against the link that was already there.
 //! - Hard links, FIFOs, char/block devices and anything else: an entry of a
@@ -50,7 +50,7 @@
 //! A `cp` whose upload was cut, or that landed on a tree where a link of the
 //! same name already pointed somewhere else, was reported as landed.
 //!
-//! Podman 5.7.0 already sent the target back in the stat header
+//! Podman 6.2.0 sends the target back in the stat header
 //! (`linkTarget`, normalised against the directory the link lives in). The
 //! sent target was read out of the tar in `sent_entries` and thrown away.
 //! `entry_landed` now compares the two, after applying the same lexical
@@ -139,7 +139,7 @@ impl SentEntry {
 /// path does not gzip (the bytes never leave the host).
 ///
 /// Symbolic links are kept here even though `head_path_stat` cannot ask about
-/// them: on Podman 5.7.0 the 404 for a dangling link still carried the
+/// them: on Podman 6.2.0 the 404 for a dangling link still carries the
 /// `X-Docker-Container-Path-Stat` header, and the runtime is asked through
 /// `head_path_stat_even_if_missing` so the stat is read on the 404 too.
 ///
@@ -329,7 +329,7 @@ pub(in crate::backends::engine::host_files::copy) fn entry_landed(
 /// Relative targets are joined to the directory part of `entry_path` and
 /// resolved `.` / `..` lexically, without touching the filesystem: a
 /// dangling link points somewhere that does not exist, and Podman resolves
-/// the `..` lexically the same way (measured on Podman 5.7.0, 2026-09-20:
+/// the `..` lexically the same way (measured on Podman 5.7.0, 2026-09-20, and again on 6.2.0, 2026-11-22:
 /// `/tmp/d/rel -> ../etc/hosts` reports `/tmp/etc/hosts`, which does not
 /// exist).
 fn normalize_link_target(sent_target: &str, entry_path: &str) -> String {
@@ -501,7 +501,7 @@ impl Engine {
 	///
 	/// Symbolic links go through `head_path_stat_even_if_missing` rather than
 	/// `head_path_stat`; a dangling link answers 404 with the stat header on
-	/// Podman 5.7.0, and `head_path_stat` would throw that stat away. A regular
+	/// Podman 6.2.0, and `head_path_stat` would throw that stat away. A regular
 	/// file or directory that answers 404 (the link was cut and the upload
 	/// failed) returns `None` either way, so the dispatch does not matter for
 	/// them; links are the only kind that benefit.

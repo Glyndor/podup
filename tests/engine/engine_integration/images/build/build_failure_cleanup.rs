@@ -1,19 +1,19 @@
 //! #1910: a `podup build` that fails must not leave a buildah working
-//! container behind. The build query Podman 5.7.0 reads carries
+//! container behind. The build query Podman reads carries
 //! `rm=true` to remove intermediate containers after a successful
 //! build and `forcerm=true` to remove them after a failure; podup
 //! shipped with the first and not the second, so every failed build
 //! kept one buildah working container rooted at an image this build
-//! produced. Measured on 2026-09-24 against Podman 5.7.0 by posting
-//! the same failing build to `/v5.0.0/libpod/build`: `layers=true`
-//! alone leaked 2 of 2 runs (one container each); `layers=true&
-//! forcerm=true` leaked 0 of 2. Adding `forcerm=true` to the query
+//! produced. Measured on 2026-11-22 against Podman 6.2.0 by posting
+//! the same failing build to `/v6.2.0/libpod/build`: `layers=true`
+//! alone leaked 1 of 1 run (one container); `layers=true&
+//! forcerm=true` leaked 0 of 1. Adding `forcerm=true` to the query
 //! `internal/backends/engine/images/build/service/mod.rs` sends closed the leak.
 //!
 //! The test drives the built `podup` binary (via
 //! `env!("CARGO_BIN_EXE_podup")`) rather than the in-process `Engine`,
 //! because the in-process path did not reproduce the leak when
-//! measured. On 2026-09-24, against Podman 5.7.0, the CLI binary
+//! measured (2026-09-24, Podman 5.7.0, not repeated since). The CLI binary
 //! leaked the buildah working container on 2 of 2 runs while the
 //! in-process `engine.build_all` path leaked on 0 of 3. The test
 //! runs a Containerfile whose `RUN exit 1` makes the build fail,
@@ -142,7 +142,7 @@ fn remove_external_containers(socket: &str, ids: &[String]) {
 	}
 }
 
-/// A failing `podup build` against Podman 5.7.0 must not leave a
+/// A failing `podup build` must not leave a
 /// buildah working container behind. The build's intermediate images
 /// are tagged with `podup.project=<project>` via the `layerLabel=`
 /// parameter (`internal/backends/engine/images/build/service/mod.rs`), so identification

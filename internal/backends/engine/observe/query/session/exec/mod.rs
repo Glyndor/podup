@@ -298,7 +298,7 @@ impl Engine {
 			// this one.
 			//
 			// Retrying is safe instead, because creating an exec changes nothing.
-			// Measured on Podman 5.7.0: five execs created and never started leave
+			// Measured on Podman 6.2.0 (2026-11-22): five execs created and never started leave
 			// the container `running` on the same pid with no extra process
 			// inside; they are inert handles that die with it. So the worst case
 			// of a retry is one leaked handle, against an `exec` that fails for a
@@ -388,7 +388,7 @@ impl Engine {
 	/// The connection is hijacked, so the caller's input and the command's
 	/// output share it: what is written to it after the response head is the
 	/// command's stdin, and what comes back is its multiplexed output.
-	/// Measured against Podman 5.7.0.
+	/// Measured against Podman 5.7.0 and again on 6.2.0 (2026-11-22).
 	async fn exec_piped(&self, exec_id: &str) -> Result<()> {
 		let start_path = format!("{API_PREFIX}/exec/{}/start", urlencoded(exec_id));
 		let body = br#"{"Detach":false,"Tty":false}"#;
@@ -500,7 +500,7 @@ mod tests;
 /// The exec create is the endpoint the #1339 drops land on most, and a lost
 /// response there cannot be resolved by looking at the container; what is lost
 /// is the exec id. Retrying is safe because creating an exec changes nothing:
-/// measured on Podman 5.7.0, five unstarted execs leave the container running on
+/// measured on Podman 6.2.0 (2026-11-22), five unstarted execs leave the container running on
 /// the same pid with no extra process inside.
 #[cfg(all(test, unix))]
 mod create_retry_tests;

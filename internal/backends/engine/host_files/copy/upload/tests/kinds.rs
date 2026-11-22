@@ -6,7 +6,7 @@ use std::path::Path;
 
 use super::*;
 
-/// A directory containing only a symbolic link. On Podman 5.7.0 the link
+/// A directory containing only a symbolic link. On Podman 6.2.0 the link
 /// answers the stat `HEAD` with 404 that still carries the link's stat header;
 /// the runtime reads the link back and the upload is confirmed.
 #[cfg(unix)]
@@ -183,7 +183,7 @@ async fn a_single_empty_file_over_a_zero_length_fifo_is_a_failure() {
 
 /// A symlink source copied without `-L/--follow-link` confirms on the link
 /// itself: the archive stores the link, and the destination must answer the
-/// stat as a symlink. The 404-with-stat-on-Podman-5.7.0 shape the link code
+/// stat as a symlink. The 404-with-stat shape of Podman 6.2.0 the link code
 /// was written for is exercised here, matching how the tree path handles
 /// the dangling-link case.
 #[cfg(unix)]

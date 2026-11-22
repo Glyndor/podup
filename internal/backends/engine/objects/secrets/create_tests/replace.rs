@@ -37,10 +37,10 @@ async fn create_skips_the_delete_when_the_secret_does_not_exist() {
 	);
 }
 
-/// The other half of the same rule: a secret that IS there still has to be
-/// removed before the create, because `replace=true` is rejected on some
-/// Podman 5.x builds. Skipping the delete unconditionally would break
-/// re-`up` idempotence, which is the reason the delete exists at all.
+/// The other half of the same rule: a secret that IS there is removed, by the
+/// ID that was inspected, before the create. `replace=true` works on Podman
+/// 6.2.0 but goes by name, so it would overwrite a secret that took the name
+/// after the inspect.
 #[tokio::test]
 #[cfg(unix)]
 async fn create_still_deletes_a_secret_that_already_exists() {
