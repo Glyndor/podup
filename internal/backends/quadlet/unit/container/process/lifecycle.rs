@@ -20,8 +20,8 @@ pub(in super::super) fn emit_stop(service: &Service, container: &mut Section) {
 			// podman-args route is the new code path; matching the
 			// old behaviour silently is the smallest change.
 		} else {
-			// `StopSignal=` was added to Quadlet in Podman 5.2.0. The
-			// supported floor is 5.0, so route the signal through
+			// `StopSignal=` has been in Quadlet since Podman 5.2.0, but the
+			// native key is not written yet, so route the signal through
 			// `PodmanArgs=` as `--stop-signal`, like the other
 			// escape-hatch flags. Quoted per #1734: a hostile value
 			// carrying whitespace must not become two argv elements.

@@ -7,9 +7,9 @@
 //! `collect_build_warnings` instead of being dropped.
 //!
 //! Every key this module writes natively landed with the `.build` unit
-//! type itself (Podman 5.2.0), so a 5.2 host loads the unit. The keys that
-//! post-date it (`BuildArg=` in 5.7.0) stay behind `PodmanArgs=`, which
-//! every unit type has carried since 5.0.
+//! type itself (Podman 5.2.0). The keys that post-date it (`BuildArg=` in
+//! 5.7.0) stay behind `PodmanArgs=`, which every unit type has carried
+//! since 5.0; writing them natively is a separate change.
 
 use std::collections::HashMap;
 use std::path::Path;

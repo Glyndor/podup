@@ -28,10 +28,10 @@ pub(in super::super) fn emit_host_config(
 			if host.is_empty() {
 				continue;
 			}
-			// `AddHost=` was added to Quadlet in Podman 5.3.0. The supported
-			// floor is 5.0, so route each entry through `PodmanArgs=` as
-			// `--add-host`, like the memory/CPU limits: Quadlet sees no key
-			// above the floor, podman sees the same flag. Quoted per #1734 for
+			// `AddHost=` has been in Quadlet since Podman 5.3.0, but the native
+			// key is not written yet, so route each entry through `PodmanArgs=`
+			// as `--add-host`, like the memory/CPU limits: podman sees the
+			// same flag. Quoted per #1734 for
 			// the same reason as `mem_limit`: a value carrying whitespace
 			// must not become two argv elements.
 			container.add(

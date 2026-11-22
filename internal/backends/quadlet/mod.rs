@@ -426,7 +426,6 @@ fn generate_with_mode(
 		pod_network_mode: crate::engine::pod_network_mode(file),
 		pod_fields: &pod_fields,
 	};
-	let mut build_units_emitted = 0u32;
 	for (name, service) in &file.services {
 		// Emit a `.build` unit first so the systemd generator builds the image
 		// before the container that references it via `Image=<stem>.build`.
@@ -439,7 +438,6 @@ fn generate_with_mode(
 			&mut out.warnings,
 		) {
 			out.units.push(unit);
-			build_units_emitted += 1;
 		}
 		out.units.push(container_unit_with_mode(
 			name,
@@ -450,34 +448,16 @@ fn generate_with_mode(
 		));
 	}
 
-	// The `.build` unit type appeared in Podman 5.2.0; the floor podup
-	// supports is 5.0, and a 5.0/5.1 host will drop the whole unit at
-	// daemon-reload. There is no key above 5.2.0 to route this through,
-	// so warn the operator once per project when at least one `.build`
-	// unit was actually written. The warning goes through the same
-	// `out.warnings` channel every other field-mismatch warning uses,
-	// which `generate.rs` re-emits to stderr.
-	// Jobs go after the services so their `.build` units are counted below, and
-	// only in the standard shape: `autostart` enables the units it installs,
-	// and nothing may enable a timer on a project's behalf there.
+	// Jobs go after the services, and only in the standard shape: `autostart`
+	// enables the units it installs, and nothing may enable a timer on a
+	// project's behalf there.
 	match mode {
 		ContainerUnitMode::Standard => {
-			let before = out.units.len();
 			jobs::append_job_units(file, &ctx, &mut out);
-			build_units_emitted += out.units[before..]
-				.iter()
-				.filter(|unit| unit.filename.ends_with(".build"))
-				.count() as u32;
 		}
 		ContainerUnitMode::Prebuilt => {
 			out.warnings.extend(warnings::jobs_not_exported(&file.jobs));
 		}
-	}
-	if build_units_emitted > 0 {
-		out.warnings.push(format!(
-			"{build_units_emitted} .build unit(s) were written; Quadlet build units need \
-			 Podman 5.2.0 or newer and the supported floor is 5.0"
-		));
 	}
 
 	out
