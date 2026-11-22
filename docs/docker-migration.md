@@ -475,7 +475,7 @@ The Linux release binaries are statically linked with musl. The package build is
 
 Recorded distribution package versions (2026-08-24, with later Ubuntu observations noted and Fedora 45 recorded on 2026-11-20):
 
-| distribution         | Podman | podup runs |
+| distribution         | its own Podman | podup runs on it |
 |----------------------|--------|------------|
 | Debian 12 bookworm   | 4.3.1  | no         |
 | Debian 13 trixie     | 5.4.2  | no         |
@@ -485,7 +485,9 @@ Recorded distribution package versions (2026-08-24, with later Ubuntu observatio
 | Fedora 42 to 44      | 5.x    | no         |
 | Fedora 45 and newer  | 6.2.0  | yes        |
 
-apt requires an installable Podman >= 6.2.0 package; it does not guarantee a running socket. A distribution whose Podman is older than 6.2.0 needs another engine source.
+The table is about the Podman each distribution packages. The Glyndor apt repository carries Podman 6.2.0 for Debian 13, Ubuntu 24.04 and Ubuntu 26.04, and the podup package depends on it, so installing podup from that repository installs that Podman on those three. Any other distribution whose Podman is older than 6.2.0 needs another engine source.
+
+apt requires an installable Podman >= 6.2.0 package; it does not guarantee a running socket.
 
 ### macOS
 

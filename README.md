@@ -20,7 +20,9 @@ of its own, no Python.
 
 podup needs **Podman 6.2.0 or newer**, reached through a local socket, and runs
 on Linux, macOS and Windows (x86_64 and arm64). Current Debian and Ubuntu
-releases ship an older Podman; see [Platforms](docs/docker-migration.md#platforms).
+releases ship an older Podman of their own. The apt repository below carries
+Podman 6.2.0 for Debian 13 and Ubuntu 24.04 and 26.04, and installing podup from
+it installs that Podman too; see [Platforms](docs/docker-migration.md#platforms).
 
 ```sh
 curl -fsSL https://apt.glyndor.net/install/podup | sudo sh
