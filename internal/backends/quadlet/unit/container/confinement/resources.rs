@@ -34,7 +34,7 @@ pub(in super::super) fn emit_limits(service: &Service, in_pod: bool, container: 
 	if let Some(mem) = service.mem_limit.as_ref().filter(|m| !m.trim().is_empty()) {
 		// The value is validated as a size before generation, so it is a
 		// well-formed limit here; Quadlet passes it to `--memory` as one word.
-		container.add("Memory", mem.trim().to_string());
+		container.add_native("Memory", "--memory=", mem);
 	}
 	// Measured on Podman 6.2.0 (2026-11-22): Quadlet has no CPU, `--cpuset-cpus`,
 	// `--memory-reservation`, `--memory-swap` or `--oom-score-adj` key (the
@@ -241,7 +241,7 @@ pub(in super::super) fn emit_deploy_limits(service: &Service, container: &mut Se
 			.and_then(|r| r.limits.as_ref())
 			.and_then(|l| l.memory.as_ref())
 		{
-			container.add("Memory", mem.trim().to_string());
+			container.add_native("Memory", "--memory=", mem);
 		}
 	}
 }

@@ -117,7 +117,7 @@ pub(crate) fn pod_unit(
 		.collect();
 	hosts.sort();
 	for entry in &hosts {
-		pod.add("AddHost", entry.clone());
+		pod.add_native("AddHost", "--add-host=", entry);
 	}
 
 	// Carry the project ownership label the live engine stamps onto pods, so

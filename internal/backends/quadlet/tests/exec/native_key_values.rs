@@ -15,7 +15,7 @@ use super::podman_argv::tokenise_podman_argv;
 use crate::parse_str;
 use crate::quadlet::{generate_at, write_units};
 
-fn generator() -> Option<PathBuf> {
+pub(super) fn generator() -> Option<PathBuf> {
 	["/usr/libexec/podman/quadlet", "/usr/lib/podman/quadlet"]
 		.iter()
 		.map(PathBuf::from)
@@ -24,7 +24,7 @@ fn generator() -> Option<PathBuf> {
 
 /// The argv of the `podman run` / `podman build` line Quadlet builds for the
 /// unit with this suffix, with systemd's `%%` read back as `%`.
-fn argv_of(yaml: &str, suffix: &str) -> Vec<String> {
+pub(super) fn argv_of(yaml: &str, suffix: &str) -> Vec<String> {
 	let generator = generator().expect("generator");
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
@@ -36,23 +36,40 @@ fn argv_of(yaml: &str, suffix: &str) -> Vec<String> {
 		.output()
 		.unwrap();
 	let text = String::from_utf8_lossy(&run.stdout).into_owned();
-	let word = if suffix == "build" { "build" } else { "run" };
+	let word = match suffix {
+		"build" => " build ",
+		"pod" => " pod create ",
+		_ => " run ",
+	};
 	let line = text
 		.lines()
-		.find(|l| l.starts_with("ExecStart=/usr/bin/podman ") && l.contains(&format!(" {word} ")))
+		.find(|l| {
+			(l.starts_with("ExecStart=/usr/bin/podman ")
+				|| l.starts_with("ExecStartPre=/usr/bin/podman "))
+				&& l.contains(word)
+		})
 		.unwrap_or_else(|| panic!("no ExecStart for {suffix}:\n{text}"));
-	tokenise_podman_argv(line.trim_start_matches("ExecStart="))
+	tokenise_podman_argv(line.split_once('=').expect("a directive").1)
 		.into_iter()
 		.map(|w| w.replace("%%", "%"))
 		.collect()
 }
 
-/// The values that follow every occurrence of `flag` in `argv`.
-fn values_of(argv: &[String], flag: &str) -> Vec<String> {
-	argv.windows(2)
-		.filter(|pair| pair[0] == flag)
-		.map(|pair| pair[1].clone())
-		.collect()
+/// The values of every occurrence of `flag` in `argv`, whether it was written
+/// as `--flag value` (a native key) or as `--flag=value` (`PodmanArgs=`).
+pub(super) fn values_of(argv: &[String], flag: &str) -> Vec<String> {
+	let joined = format!("{flag}=");
+	let mut out = Vec::new();
+	for (i, word) in argv.iter().enumerate() {
+		if word == flag {
+			if let Some(next) = argv.get(i + 1) {
+				out.push(next.clone());
+			}
+		} else if let Some(value) = word.strip_prefix(&joined) {
+			out.push(value.to_string());
+		}
+	}
+	out
 }
 
 const HOSTILE: &[&str] = &[

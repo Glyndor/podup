@@ -134,8 +134,10 @@ pub(super) fn map_security_opt(
 	{
 		// `profile` is composed input; a value like `my-profile --privileged`
 		// stays one `--security-opt` argument: Quadlet reads `AppArmor=` as a
-		// single word.
-		container.add("AppArmor", profile.to_string());
+		// single word. Quadlet trims the value, so a profile with a space at
+		// either end (`apparmor= unconfined `) would reach Podman as another
+		// profile; that one stays on `PodmanArgs=`, which keeps the bytes.
+		container.add_native("AppArmor", "--security-opt apparmor=", profile);
 	} else if let Some(label) = opt.strip_prefix("label=") {
 		if label == "disable" {
 			container.add("SecurityLabelDisable", "true".to_string());

@@ -1,4 +1,4 @@
-use super::sanitize_value;
+use super::{quote_podman_arg_value, sanitize_value};
 
 /// Keys whose value Quadlet/systemd splits on whitespace (a `KEY=VALUE` option
 /// list): an unquoted space would split a single value into a truncated value
@@ -145,6 +145,19 @@ pub(super) fn escape_unit_value(key: &str, value: &str) -> String {
 	}
 }
 
+/// Whether Quadlet hands this value to Podman with the bytes it has here.
+///
+/// Quadlet trims the whitespace around the value of a key, and an assignment
+/// that is empty once the control characters are gone does not add an entry: on
+/// a key that holds a list it empties the list. A value that is not stripped of
+/// anything and does not start or end with whitespace is read back unchanged.
+pub(in super::super) fn native_value_is_exact(value: &str) -> bool {
+	!value.is_empty()
+		&& sanitize_value(value) == value
+		&& !value.starts_with(char::is_whitespace)
+		&& !value.ends_with(char::is_whitespace)
+}
+
 /// A single `[Section]` accumulating `Key=Value` lines in insertion order.
 pub(in super::super) struct Section {
 	name: &'static str,
@@ -174,6 +187,22 @@ impl Section {
 			value = value.replace('$', "$$");
 		}
 		self.lines.push(format!("{key}={value}"));
+	}
+
+	/// Write `value` to the native key `key` when Quadlet reads it back with the
+	/// same bytes (see [`native_value_is_exact`]); otherwise write it to
+	/// `PodmanArgs=` as `arg` followed by the quoted value, which is the route
+	/// that keeps every byte. `arg` is the flag with its separator, for example
+	/// `--group-add=` or `--build-arg `.
+	pub(in super::super) fn add_native(&mut self, key: &str, arg: &str, value: &str) {
+		if native_value_is_exact(value) {
+			self.add(key, value.to_string());
+		} else {
+			self.add(
+				"PodmanArgs",
+				format!("{arg}{}", quote_podman_arg_value(value)),
+			);
+		}
 	}
 
 	/// True when no lines have been added; lets the caller skip emitting an empty

@@ -167,8 +167,10 @@ pub(crate) fn build_unit(
 					continue;
 				}
 				match val {
-					Some(v) => section.add("BuildArg", format!("{key}={v}")),
-					None => section.add("BuildArg", key),
+					Some(v) => {
+						section.add_native("BuildArg", "--build-arg ", &format!("{key}={v}"))
+					}
+					None => section.add_native("BuildArg", "--build-arg ", &key),
 				}
 			}
 			for (key, val) in sorted_label_pairs(labels.to_map()) {

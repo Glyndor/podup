@@ -22,11 +22,13 @@ pub(in super::super) fn emit_host_config(
 	if !(in_pod && pod_fields.owns(PodField::AddHost)) {
 		for host in &values.extra_hosts {
 			// An empty entry (`- ""`) would render as a bare `AddHost=`, which
-			// resets the list instead of adding a host.
+			// resets the list instead of adding a host. An entry that is empty
+			// once the control characters are stripped, or that has a space at
+			// either end, stays on `PodmanArgs=` (see `Section::add_native`).
 			if host.is_empty() {
 				continue;
 			}
-			container.add("AddHost", host.clone());
+			container.add_native("AddHost", "--add-host=", host);
 		}
 	}
 	if !(in_pod && pod_fields.owns(PodField::Dns)) {

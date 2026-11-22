@@ -22,40 +22,69 @@
 /// group have their quotes stripped, the way systemd does (the consumed
 /// double quotes are not preserved as characters).
 pub fn tokenise_podman_argv(value: &str) -> Vec<String> {
-	let mut out = Vec::new();
-	let mut current = String::new();
+	// Work on bytes: systemd splits on ASCII whitespace only, and the generator
+	// writes a non-ASCII character as one `\xNN` escape per UTF-8 byte.
+	let mut out: Vec<Vec<u8>> = Vec::new();
+	let mut current: Vec<u8> = Vec::new();
+	let mut started = false;
 	let mut in_quotes = false;
-	let mut chars = value.chars().peekable();
-	while let Some(c) = chars.next() {
+	let bytes = value.as_bytes();
+	let mut i = 0;
+	while i < bytes.len() {
+		let c = bytes[i];
+		i += 1;
+		if c == b'\\' && i < bytes.len() {
+			match bytes[i] {
+				b'"' | b'\\' if in_quotes => {
+					current.push(bytes[i]);
+					i += 1;
+					started = true;
+					continue;
+				}
+				b'x' if i + 2 < bytes.len()
+					&& bytes[i + 1].is_ascii_hexdigit()
+					&& bytes[i + 2].is_ascii_hexdigit() =>
+				{
+					let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).expect("hex escape");
+					current.push(u8::from_str_radix(hex, 16).expect("hex escape"));
+					i += 3;
+					started = true;
+					continue;
+				}
+				_ => {}
+			}
+		}
 		if in_quotes {
-			match c {
-				'"' => in_quotes = false,
-				'\\' if matches!(chars.peek(), Some('"' | '\\')) => {
-					current.push(chars.next().expect("escaped quote or backslash"));
-				}
-				'\\' if chars.peek() == Some(&'x') => {
-					chars.next();
-					let hex: String = chars.by_ref().take(2).collect();
-					current.push(u8::from_str_radix(&hex, 16).expect("hex escape") as char);
-				}
-				_ => current.push(c),
+			if c == b'"' {
+				in_quotes = false;
+			} else {
+				current.push(c);
 			}
 			continue;
 		}
 		match c {
-			'"' => in_quotes = true,
-			c if c.is_whitespace() => {
-				if !current.is_empty() {
+			b'"' => {
+				in_quotes = true;
+				started = true;
+			}
+			c if c.is_ascii_whitespace() => {
+				if started {
 					out.push(std::mem::take(&mut current));
+					started = false;
 				}
 			}
-			_ => current.push(c),
+			_ => {
+				current.push(c);
+				started = true;
+			}
 		}
 	}
-	if !current.is_empty() {
+	if started {
 		out.push(current);
 	}
-	out
+	out.into_iter()
+		.map(|word| String::from_utf8_lossy(&word).into_owned())
+		.collect()
 }
 
 /// Parse every `PodmanArgs=` line out of a unit body, concatenate the values

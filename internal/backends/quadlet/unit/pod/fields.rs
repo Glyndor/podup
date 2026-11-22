@@ -216,39 +216,39 @@ impl PodFields {
 	pub(crate) fn emit(&self, pod: &mut Section) {
 		if let Agreement::Agreed(values) = &self.dns {
 			for value in values {
-				add_key(pod, "DNS", value);
+				add_trimmed(pod, "DNS", "--dns=", value);
 			}
 		}
 		if let Agreement::Agreed(values) = &self.dns_option {
 			for value in values {
-				add_key(pod, "DNSOption", value);
+				add_trimmed(pod, "DNSOption", "--dns-option=", value);
 			}
 		}
 		if let Agreement::Agreed(values) = &self.dns_search {
 			for value in values {
-				add_key(pod, "DNSSearch", value);
+				add_trimmed(pod, "DNSSearch", "--dns-search=", value);
 			}
 		}
 		if let Agreement::Agreed(values) = &self.extra_hosts {
 			for value in values {
-				add_key(pod, "AddHost", value);
+				pod.add_native("AddHost", "--add-host=", &sanitize_value(value));
 			}
 		}
 		if let Agreement::Agreed(value) = &self.userns {
-			add_key(pod, "UserNS", value);
+			add_trimmed(pod, "UserNS", "--userns=", value);
 		}
 		if let Some(bytes) = self.shm_size.bytes {
-			add_key(pod, "ShmSize", &bytes.to_string());
+			pod.add("ShmSize", bytes.to_string());
 		}
 		if let Agreement::Agreed(value) = &self.ipv4 {
-			add_key(pod, "IP", value);
+			add_trimmed(pod, "IP", "--ip=", value);
 		}
 		if let Agreement::Agreed(value) = &self.ipv6 {
-			add_key(pod, "IP6", value);
+			add_trimmed(pod, "IP6", "--ip6=", value);
 		}
 		if let Agreement::Agreed(values) = &self.aliases {
 			for value in values {
-				add_key(pod, "NetworkAlias", value);
+				pod.add_native("NetworkAlias", "--network-alias=", &sanitize_value(value));
 			}
 		}
 	}
@@ -265,8 +265,10 @@ impl<T> Agreement<T> {
 	}
 }
 
-/// Append one native key to the pod unit. Quadlet drops the boundary
-/// whitespace of a value when it reads the unit, so it is trimmed here too.
-fn add_key(pod: &mut Section, key: &str, value: &str) {
-	pod.add(key, sanitize_value(value).trim().to_string());
+/// Append a pod value that was always written trimmed: these fields went
+/// through `PodmanArgs=` with the boundary whitespace removed, which is also
+/// what the native key does on the container side. Host entries and aliases
+/// are not trimmed (they keep their spaces, see `Section::add_native`).
+fn add_trimmed(pod: &mut Section, key: &str, arg: &str, value: &str) {
+	pod.add_native(key, arg, sanitize_value(value).trim());
 }

@@ -13,7 +13,7 @@ pub(in super::super) fn emit_stop(service: &Service, container: &mut Section) {
 		// is a no-op the user almost certainly did not intend, and a bare
 		// `StopSignal=` would only reset the key.
 		if !signal.is_empty() {
-			container.add("StopSignal", signal.clone());
+			container.add_native("StopSignal", "--stop-signal=", signal);
 		}
 	}
 	if let Some(grace) = &service.stop_grace_period {

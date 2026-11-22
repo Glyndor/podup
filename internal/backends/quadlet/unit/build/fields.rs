@@ -65,7 +65,7 @@ pub(super) fn emit_build_fields(
 		// An empty tag would render as a bare `ImageTag=`, which resets the
 		// list and drops the tag the unit is named after.
 		if !tag.is_empty() {
-			section.add("ImageTag", tag.clone());
+			section.add_native("ImageTag", "--tag ", tag);
 		}
 	}
 	emit_additional_contexts(name, additional_contexts, base_dir, section, warnings);

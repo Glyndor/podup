@@ -37,11 +37,13 @@ pub(in super::super) fn emit_userns(
 pub(in super::super) fn emit_group_add(service: &Service, container: &mut Section) {
 	for group in &service.group_add {
 		// An empty entry (`- ""`) would render as a bare `GroupAdd=`, which
-		// resets the list instead of adding a group.
+		// resets the list instead of adding a group. An entry that is empty
+		// once the control characters are stripped, or that has a space at
+		// either end, stays on `PodmanArgs=` (see `Section::add_native`).
 		if group.is_empty() {
 			continue;
 		}
-		container.add("GroupAdd", group.clone());
+		container.add_native("GroupAdd", "--group-add=", group);
 	}
 }
 

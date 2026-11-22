@@ -61,7 +61,7 @@ pub(in super::super) fn emit_log_config(
 	// quote, so a hostile value cannot become two `--log-opt` arguments, and the
 	// key half has the same protection on the other side of the `=`.
 	if let Some(size) = logging.size {
-		container.add("LogOpt", format!("max-size={size}"));
+		container.add_native("LogOpt", "--log-opt=", &format!("max-size={size}"));
 	}
 	for (key, val) in sorted_label_pairs(logging.options) {
 		// An empty value (`options: { tag: "" }`) would render as `tag=`, which
@@ -70,6 +70,6 @@ pub(in super::super) fn emit_log_config(
 		if key.is_empty() || val.is_empty() {
 			continue;
 		}
-		container.add("LogOpt", format!("{key}={val}"));
+		container.add_native("LogOpt", "--log-opt=", &format!("{key}={val}"));
 	}
 }

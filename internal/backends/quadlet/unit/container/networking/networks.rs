@@ -184,11 +184,13 @@ pub(in super::super) fn emit_network_extras(
 	if !(in_pod && pod_fields.owns(PodField::NetworkAlias)) {
 		for alias in &values.aliases {
 			// An empty alias would render as a bare `NetworkAlias=`, which
-			// resets the list instead of adding an alias.
+			// resets the list instead of adding an alias. An alias that is empty
+			// once the control characters are stripped, or that has a space at
+			// either end, stays on `PodmanArgs=` (see `Section::add_native`).
 			if alias.is_empty() {
 				continue;
 			}
-			container.add("NetworkAlias", alias.clone());
+			container.add_native("NetworkAlias", "--network-alias=", alias);
 		}
 	}
 	if !(in_pod && pod_fields.owns(PodField::Ip)) {

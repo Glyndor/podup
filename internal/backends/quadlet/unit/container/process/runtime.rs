@@ -34,7 +34,7 @@ pub(in super::super) fn emit_runtime(name: &str, service: &Service, container: &
 		.filter(|text| crate::compose::types::service::umask::validate_runtime(name, text).is_ok())
 	{
 		let mask = crate::compose::types::service::umask::normalized(text);
-		container.add("Umask", mask);
+		container.add_native("Umask", "--umask=", &mask);
 	}
 	if let Some(wd) = &service.working_dir {
 		container.add("WorkingDir", wd.clone());
