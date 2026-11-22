@@ -30,8 +30,8 @@ pub(super) fn pod_json(project: &str) -> Option<serde_json::Value> {
 		return None;
 	}
 	let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
-	// Podman 5 returns an object, Podman 6 an array with one object.
-	Some(v.as_array().and_then(|a| a.first().cloned()).unwrap_or(v))
+	// `podman pod inspect` prints an array with one object.
+	v.as_array().and_then(|a| a.first().cloned())
 }
 
 pub(super) fn down(compose: &str, proj: &str) {
