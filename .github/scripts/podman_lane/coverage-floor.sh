@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Usage: podman-lane-coverage-floor.sh PODMAN_VERSION EVENT COVERAGE
+# Usage: coverage-floor.sh PODMAN_VERSION EVENT COVERAGE
 # PODMAN_VERSION is the full version the VM booted (`6.2.0`), EVENT the
 # GitHub event name and COVERAGE the figure the VM printed (`91.5%`).
 #
@@ -18,7 +18,7 @@ FLOOR=88
 GATED_MAJOR=6
 
 [ "$#" -eq 3 ] || {
-	echo "usage: podman-lane-coverage-floor.sh PODMAN_VERSION EVENT COVERAGE" >&2
+	echo "usage: coverage-floor.sh PODMAN_VERSION EVENT COVERAGE" >&2
 	exit 1
 }
 ver="$1"

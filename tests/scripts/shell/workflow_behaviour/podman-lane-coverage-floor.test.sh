@@ -4,7 +4,7 @@
 set -uo pipefail
 export LC_ALL=C
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-script="$HERE/.github/scripts/checks/podman-lane-coverage-floor.sh"
+script="$HERE/.github/scripts/podman_lane/coverage-floor.sh"
 workflow="$HERE/.github/workflows/podman-lane.yml"
 pass=0
 fail=0
@@ -48,7 +48,7 @@ check "the refusal names the floor" 1 "$(printf '%s\n' "$out" | grep -cF 'below 
 # must not carry its own copy of the old comparison.
 # shellcheck disable=SC2016 # the pattern is literal workflow text
 check "the lane calls the floor script" 1 \
-	"$(grep -cF 'podman-lane-coverage-floor.sh" "$VER" "${{ github.event_name }}" "$COV"' "$workflow")"
+	"$(grep -cF 'coverage-floor.sh" "$VER" "${{ github.event_name }}" "$COV"' "$workflow")"
 # shellcheck disable=SC2016 # the pattern is literal workflow text
 check "the lane no longer compares the full version with a bare major" 0 \
 	"$(grep -cE '\[ "\$VER" = "[0-9]+" \]' "$workflow")"
