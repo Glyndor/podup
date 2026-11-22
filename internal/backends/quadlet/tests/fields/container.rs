@@ -125,15 +125,15 @@ services:
 		"ShmSize=64m",
 		"PidsLimit=100",
 		"UserNS=keep-id",
-		"PodmanArgs=--stop-signal=\"SIGTERM\"",
+		"StopSignal=SIGTERM",
 		"StopTimeout=30",
 		"AddDevice=/dev/fuse",
 		"DNS=1.1.1.1",
-		"PodmanArgs=--add-host=\"db:10.0.0.2\"",
+		"AddHost=db:10.0.0.2",
 		"Annotation=run.oci.keep=1",
 		"Network=host",
-		"PodmanArgs=--memory=\"512m\"",
-		"HealthCmd=curl -f http://localhost",
+		"Memory=512m",
+		"HealthCmd=[\"CMD\",\"curl\",\"-f\",\"http://localhost\"]",
 		"HealthInterval=5s",
 		"HealthRetries=3",
 		"StartLimitBurst=5",
@@ -187,16 +187,16 @@ networks:
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	for needle in [
-		"PodmanArgs=--group-add=\"audio\"",
+		"GroupAdd=audio",
 		"ExposeHostPort=8080",
 		"NoNewPrivileges=true",
 		"SeccompProfile=/etc/seccomp.json",
 		"SecurityLabelType=container_t",
 		"Pull=always",
 		"LogDriver=journald",
-		"PodmanArgs=--log-opt=\"tag=mytag\"",
+		"LogOpt=tag=mytag",
 		"Network=p-net.network:alias=s,alias=web-alias",
-		"PodmanArgs=--memory=\"256m\"",
+		"Memory=256m",
 	] {
 		assert!(c.contains(needle), "missing `{needle}` in:\n{c}");
 	}

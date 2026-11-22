@@ -1,11 +1,11 @@
 //! Source-level companion to `emitted_keys.rs`.
 //!
 //! The rendered-fixture tests in `emitted_keys.rs` only see keys reachable
-//! from those fixtures. A post-floor key in an uncovered branch would
-//! slip through. This is the source-level companion: read every emitter
+//! from those fixtures. A key newer than the floor in an uncovered branch
+//! would slip through. This is the source-level companion: read every emitter
 //! file (the `.container` folder is walked at run time, the other units are
 //! included by path), collect every `Key=` literal passed to the
-//! unit builder, and assert each is floor-compliant. A new emitter that
+//! unit builder, and assert each is a key of the floor's Quadlet. A new emitter that
 //! writes a key the fixtures never reach still fails here.
 //!
 //! Split out into its own file so the small parser can sit alongside the
@@ -60,20 +60,12 @@ fn container_sources() -> String {
 }
 
 /// The rendered-fixture tests only see keys reachable from the
-/// fixtures. A post-floor key in an uncovered branch would slip through.
-/// This is the source-level companion: read every emitter file,
-/// collect every `Key=` literal passed to the unit
-/// builder, and assert each is at the floor (in 5.0 for the non-build
-/// unit types, in 5.2 for `[Build]`) or is a floor-exempt passthrough
-/// (`PodmanArgs`/`GlobalArgs`).
-///
-/// The check is stricter than the rendered-fixture tests' coverage
-/// check: this sees every literal key the renderer passes to the
-/// builder, regardless of whether it would be routed through
-/// `PodmanArgs=` at render time, so a `Retry=` line that the post-5.2
-/// table documents as a known 5.5.0 addition still fails here; a
-/// renderer must re-route it through `PodmanArgs=` rather than emit it
-/// natively.
+/// fixtures. A key newer than the floor in an uncovered branch would slip
+/// through. This is the source-level companion: read every emitter file,
+/// collect every `Key=` literal passed to the unit builder, and assert each
+/// is a key of the floor's Quadlet (Podman 6.2.0) or a passthrough
+/// (`PodmanArgs`/`GlobalArgs`). It sees every literal key the renderer
+/// passes to the builder, whether or not a fixture reaches it.
 #[test]
 fn source_inventory_lists_every_emitted_key() {
 	// Map each emitter file to the unit type it writes to. Files without
@@ -128,15 +120,8 @@ fn source_inventory_lists_every_emitted_key() {
 			assert!(
 				is_at_floor(*unit_type, &key),
 				"internal/backends/quadlet/unit/{filename} writes `{var}.add({key}, ...)` to \
-				 {unit_type:?}, which is not in the Podman {} reference for that unit \
-				 type; the unit-builder shape forces the native key, but a 5.0 host \
-				 drops it. Route the value through PodmanArgs= if the key landed after \
-				 the floor, or remove the emitter",
-				if matches!(unit_type, UnitType::Build) {
-					"5.2"
-				} else {
-					"5.0"
-				}
+				 {unit_type:?}, which Podman 6.2.0's Quadlet does not read. Route the \
+				 value through PodmanArgs= or remove the emitter",
 			);
 		}
 	}

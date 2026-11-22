@@ -29,10 +29,10 @@ fn assert_multiple_networks(field: &str, key: &str, flag: &str, address: &str) {
 
 #[test]
 fn static_ipv4_stays_on_container_with_two_pod_networks() {
-	assert_multiple_networks("ipv4_address", "IP", "--ip=", "10.5.0.7");
+	assert_multiple_networks("ipv4_address", "IP", "IP=", "10.5.0.7");
 }
 
 #[test]
 fn static_ipv6_stays_on_container_with_two_pod_networks() {
-	assert_multiple_networks("ipv6_address", "IP6", "--ip6=", "2001:db8::7");
+	assert_multiple_networks("ipv6_address", "IP6", "IP6=", "2001:db8::7");
 }

@@ -1,10 +1,10 @@
-//! Initial process masks travel through the floor-compatible CLI passthrough.
+//! Initial process masks are written as the native `Umask=` key.
 
 use crate::compose::parse_str;
 use crate::quadlet::{generate_at, min_podman};
 
 #[test]
-fn umask_quadlet_uses_floor_passthrough() {
+fn umask_quadlet_uses_the_native_key() {
 	for (value, flag) in [
 		("'0022'", Some("0022")),
 		("0", Some("0000")),
@@ -20,16 +20,15 @@ fn umask_quadlet_uses_floor_passthrough() {
 			.iter()
 			.find(|u| u.filename == "demo-web.container")
 			.unwrap();
-		assert!(!unit.contents.contains("Umask="), "{}", unit.contents);
+		assert!(!unit.contents.contains("--umask"), "{}", unit.contents);
 		if let Some(mask) = flag {
 			assert!(
-				unit.contents
-					.contains(&format!("PodmanArgs=--umask={mask}\n")),
+				unit.contents.contains(&format!("Umask={mask}\n")),
 				"{}",
 				unit.contents
 			);
 		} else {
-			assert!(!unit.contents.contains("--umask="), "{}", unit.contents);
+			assert!(!unit.contents.contains("Umask="), "{}", unit.contents);
 		}
 		for key in min_podman::keys_in_unit(&unit.contents) {
 			assert!(

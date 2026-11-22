@@ -4,7 +4,7 @@ use indexmap::IndexMap;
 
 use crate::compose::types::{SecretConfig, ServiceSecretRef};
 
-use super::{quote_podman_arg_value, Section};
+use super::Section;
 
 /// Sanitize one `Secret=` option-list field: drop control characters and the
 /// `,`/`=` separators so a hostile compose value cannot inject extra options.
@@ -132,19 +132,10 @@ pub(super) fn map_security_opt(
 		.strip_prefix("apparmor=")
 		.or_else(|| opt.strip_prefix("apparmor:"))
 	{
-		// `AppArmor=` is not a recognised [Container] Quadlet key (Quadlet would
-		// drop the whole unit at daemon-reload), so route it through PodmanArgs= as
-		// `--security-opt apparmor=<profile>`, like the other escape-hatch flags.
 		// `profile` is composed input; a value like `my-profile --privileged`
-		// must stay one argv element rather than two podman args: `escape_unit_value`
-		// short-circuits on `PodmanArgs` (#1734), so the quote happens here.
-		container.add(
-			"PodmanArgs",
-			format!(
-				"--security-opt apparmor={}",
-				quote_podman_arg_value(profile)
-			),
-		);
+		// stays one `--security-opt` argument: Quadlet reads `AppArmor=` as a
+		// single word.
+		container.add("AppArmor", profile.to_string());
 	} else if let Some(label) = opt.strip_prefix("label=") {
 		if label == "disable" {
 			container.add("SecurityLabelDisable", "true".to_string());

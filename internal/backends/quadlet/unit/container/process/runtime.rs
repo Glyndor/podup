@@ -34,8 +34,7 @@ pub(in super::super) fn emit_runtime(name: &str, service: &Service, container: &
 		.filter(|text| crate::compose::types::service::umask::validate_runtime(name, text).is_ok())
 	{
 		let mask = crate::compose::types::service::umask::normalized(text);
-		// The initial umask travels as a CLI flag through `PodmanArgs=`.
-		container.add("PodmanArgs", format!("--umask={mask}"));
+		container.add("Umask", mask);
 	}
 	if let Some(wd) = &service.working_dir {
 		container.add("WorkingDir", wd.clone());
@@ -44,8 +43,9 @@ pub(in super::super) fn emit_runtime(name: &str, service: &Service, container: &
 		container.add("ReadOnly", "true".to_string());
 	}
 	if service.privileged == Some(true) {
-		// No dedicated [Container] key exists for privileged mode; pass it through
-		// as a raw podman flag, like the other escape-hatch fields.
+		// Measured on Podman 6.2.0 (2026-11-22): Quadlet has no [Container] key
+		// for privileged mode (the generator rejects `Privileged=`), so pass it
+		// through as a raw podman flag, like the other escape-hatch fields.
 		container.add("PodmanArgs", "--privileged".to_string());
 		// The live `up` engine emits a per-call warning for every active
 		// host-binding mode. Quadlet cannot call the engine (it has no Podman

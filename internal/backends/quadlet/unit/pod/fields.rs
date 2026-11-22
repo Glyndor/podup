@@ -10,7 +10,7 @@ use crate::compose::types::ComposeFile;
 use super::super::super::render::sanitize_value;
 
 use super::super::shared_values::{host_values, network_values, userns};
-use super::super::{quote_podman_arg_value, Section};
+use super::super::Section;
 
 /// A compose field that can move from a container unit to its pod unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -216,39 +216,39 @@ impl PodFields {
 	pub(crate) fn emit(&self, pod: &mut Section) {
 		if let Agreement::Agreed(values) = &self.dns {
 			for value in values {
-				add_podman_arg(pod, "--dns", value);
+				add_key(pod, "DNS", value);
 			}
 		}
 		if let Agreement::Agreed(values) = &self.dns_option {
 			for value in values {
-				add_podman_arg(pod, "--dns-option", value);
+				add_key(pod, "DNSOption", value);
 			}
 		}
 		if let Agreement::Agreed(values) = &self.dns_search {
 			for value in values {
-				add_podman_arg(pod, "--dns-search", value);
+				add_key(pod, "DNSSearch", value);
 			}
 		}
 		if let Agreement::Agreed(values) = &self.extra_hosts {
 			for value in values {
-				add_podman_arg(pod, "--add-host", value);
+				add_key(pod, "AddHost", value);
 			}
 		}
 		if let Agreement::Agreed(value) = &self.userns {
-			add_podman_arg(pod, "--userns", value);
+			add_key(pod, "UserNS", value);
 		}
 		if let Some(bytes) = self.shm_size.bytes {
-			add_podman_arg(pod, "--shm-size", &bytes.to_string());
+			add_key(pod, "ShmSize", &bytes.to_string());
 		}
 		if let Agreement::Agreed(value) = &self.ipv4 {
-			add_podman_arg(pod, "--ip", value);
+			add_key(pod, "IP", value);
 		}
 		if let Agreement::Agreed(value) = &self.ipv6 {
-			add_podman_arg(pod, "--ip6", value);
+			add_key(pod, "IP6", value);
 		}
 		if let Agreement::Agreed(values) = &self.aliases {
 			for value in values {
-				add_podman_arg(pod, "--network-alias", value);
+				add_key(pod, "NetworkAlias", value);
 			}
 		}
 	}
@@ -265,17 +265,8 @@ impl<T> Agreement<T> {
 	}
 }
 
-/// Append one quoted Podman argument to a pod unit.
-fn add_podman_arg(pod: &mut Section, flag: &str, value: &str) {
-	let sanitized = sanitize_value(value);
-	// Native container directives lose boundary whitespace during unit parsing.
-	// Host entries and aliases already use quoted arguments on the container.
-	let value = match flag {
-		"--add-host" | "--network-alias" => sanitized.as_str(),
-		_ => sanitized.trim(),
-	};
-	pod.add(
-		"PodmanArgs",
-		format!("{flag}={}", quote_podman_arg_value(value)),
-	);
+/// Append one native key to the pod unit. Quadlet drops the boundary
+/// whitespace of a value when it reads the unit, so it is trimmed here too.
+fn add_key(pod: &mut Section, key: &str, value: &str) {
+	pod.add(key, sanitize_value(value).trim().to_string());
 }

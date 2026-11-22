@@ -21,6 +21,7 @@ fn key_is_word_split(key: &str) -> bool {
 			| "EnvironmentFile"
 			| "Label"
 			| "Annotation"
+			| "BuildArg"
 			| "Sysctl"
 			| "Secret"
 			| "AddCapability"
@@ -75,6 +76,26 @@ fn key_is_arg_line(key: &str) -> bool {
 	matches!(key, "PodmanArgs" | "Exec" | "Entrypoint")
 }
 
+/// Keys Quadlet reads as shell-like words: it splits the value on whitespace
+/// and honours `"` and `'` groups but, unlike the word-split keys such as
+/// `Label=` and `BuildArg=`, does not decode backslash escapes (measured on
+/// Podman 6.2.0: `LogOpt=k=a\\b` reaches `--log-opt` with both backslashes,
+/// and `LogOpt="k=a\"b"` ends the group at the quote and loses the entry). A
+/// value with a space in it is therefore one `--log-opt` only when it is
+/// wrapped in a quote group.
+fn key_is_shell_split(key: &str) -> bool {
+	matches!(key, "LogOpt")
+}
+
+/// Quote a value for a [`key_is_shell_split`] key. The value goes into one
+/// `"..."` group, which keeps whitespace, `'` and backslashes literal; a `"`
+/// inside it closes the group, is written in a `'"'` group and reopens it, so
+/// the reader joins the pieces back into the original text.
+fn quote_shell_split_value(value: &str) -> String {
+	let body = value.replace('"', "\"'\"'\"");
+	format!("\"{body}\"")
+}
+
 /// Escape a value for a single-line systemd `Key=Value` entry.
 ///
 /// On top of [`sanitize_value`] (control characters stripped so a value can
@@ -98,6 +119,15 @@ fn key_is_arg_line(key: &str) -> bool {
 pub(super) fn escape_unit_value(key: &str, value: &str) -> String {
 	if key_is_arg_line(key) {
 		return sanitize_value(value);
+	}
+	if key_is_shell_split(key) {
+		let clean = sanitize_value(value);
+		let body = if value_needs_quoting(&clean) {
+			quote_shell_split_value(&clean)
+		} else {
+			clean
+		};
+		return body.replace('%', "%%");
 	}
 	let needs_quote = (key_is_word_split(key) && value_needs_quoting(value))
 		|| value.ends_with('\\')

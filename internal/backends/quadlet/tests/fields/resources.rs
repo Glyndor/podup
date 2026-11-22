@@ -33,17 +33,17 @@ services:
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
-		c.contains("PodmanArgs=--memory=\"512m\""),
-		"mem_limit must route through PodmanArgs in:\n{c}"
+		c.contains("Memory=512m\n"),
+		"mem_limit must be written as Memory= in:\n{c}"
 	);
 	assert!(
-		c.contains("PodmanArgs=--security-opt apparmor=\"my-profile\""),
-		"apparmor must route through PodmanArgs in:\n{c}"
+		c.contains("AppArmor=my-profile\n"),
+		"apparmor must be written as AppArmor= in:\n{c}"
 	);
-	for forbidden in ["Memory=512m", "AppArmor=my-profile"] {
+	for forbidden in ["--memory", "--security-opt"] {
 		assert!(
 			!c.contains(forbidden),
-			"memory/apparmor must not use an unrecognised native key `{forbidden}` in:\n{c}"
+			"memory/apparmor must not travel as a podman flag `{forbidden}` in:\n{c}"
 		);
 	}
 }
@@ -366,9 +366,8 @@ services:
 fn podman_args_doubles_percent_specifiers() {
 	// systemd specifiers like `%h` would otherwise be expanded at unit
 	// activation time (the same behaviour `Environment=` already escapes).
-	// After the fix a value carrying `%h` is doubled to `%%h` in the
-	// interpolated podman arg, so podman receives `%h` literally and systemd
-	// does not substitute it for the unit's hostname.
+	// A value carrying `%h` is doubled to `%%h` in the key, so podman receives
+	// `%h` literally and systemd does not substitute it for the unit's hostname.
 	let yaml = r#"
 services:
   web:
@@ -383,8 +382,8 @@ services:
 	// the fix, podman would receive `mem` with `%h` expanded to the host's
 	// hostname.
 	assert!(
-		c.contains("PodmanArgs=--memory=\"%%h/mem\""),
-		"`%%h` must be doubled on the PodmanArgs path; got:\n{c}"
+		c.contains("Memory=%%h/mem\n"),
+		"`%%h` must be doubled on the Memory= path; got:\n{c}"
 	);
 }
 

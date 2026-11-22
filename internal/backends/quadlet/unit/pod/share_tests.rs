@@ -24,7 +24,7 @@ fn the_pod_shares_only_the_network() {
 #[test]
 fn a_hostname_every_service_agrees_on_stays_on_each_container() {
 	// With only the network shared, the pod's hostname never reaches its
-	// members (Podman 5.7.0: the member answers with its own id).
+	// members (measured on Podman 5.7.0: the member answers with its own id).
 	let (pod, web, db, warnings) = units(
 		"x-podman-pod: true\nservices:\n  web:\n    image: nginx\n    hostname: same\n  db:\n    image: postgres\n    hostname: same\n",
 	);
@@ -45,7 +45,7 @@ fn different_hostnames_stay_on_their_containers_without_a_warning() {
 }
 
 fn pod_shm(pod: &str) -> Vec<&str> {
-	pod.lines().filter(|l| l.contains("--shm-size")).collect()
+	pod.lines().filter(|l| l.contains("ShmSize=")).collect()
 }
 
 #[test]

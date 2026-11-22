@@ -1,15 +1,13 @@
 //! The compose `build:` fields a `.build` unit carries.
 //!
 //! Quadlet's `[Build]` section has a native key for some of the compose
-//! build fields (`Pull=`, `Secret=`, `Arch=`, `Variant=`) and none for the
-//! rest, which go through `PodmanArgs=` as the `podman build` flag they
-//! stand for. A field with neither a key nor a flag is reported by
-//! `collect_build_warnings` instead of being dropped.
-//!
-//! Every key this module writes natively landed with the `.build` unit
-//! type itself (Podman 5.2.0). The keys that post-date it (`BuildArg=` in
-//! 5.7.0) stay behind `PodmanArgs=`, which every unit type has carried
-//! since 5.0; writing them natively is a separate change.
+//! build fields (`Pull=`, `Secret=`, `Arch=`, `Variant=`, `ImageTag=`) and
+//! none for the rest, which go through `PodmanArgs=` as the `podman build`
+//! flag they stand for. Measured on Podman 6.2.0 (2026-11-22): the generator
+//! rejects `NoCache=`, `ShmSize=`, `AddHost=`, `SSH=`, `CacheFrom=`,
+//! `CacheTo=`, `BuildContext=`, `Ulimit=`, `Isolation=`, `Platform=` and
+//! `Layers=` as unsupported keys. A field with neither a key nor a flag is
+//! reported by `collect_build_warnings` instead of being dropped.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -64,7 +62,11 @@ pub(super) fn emit_build_fields(
 		add_flag(section, "--add-host", host);
 	}
 	for tag in tags {
-		add_flag(section, "--tag", tag);
+		// An empty tag would render as a bare `ImageTag=`, which resets the
+		// list and drops the tag the unit is named after.
+		if !tag.is_empty() {
+			section.add("ImageTag", tag.clone());
+		}
 	}
 	emit_additional_contexts(name, additional_contexts, base_dir, section, warnings);
 	for entry in ssh {

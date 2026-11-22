@@ -221,7 +221,6 @@ fn extended_build_values_cannot_inject_podman_arguments() {
 		("cache_from", "--cache-from"),
 		("cache_to", "--cache-to"),
 		("ssh", "--ssh"),
-		("tags", "--tag"),
 		("extra_hosts", "--add-host"),
 		("additional_contexts", "--build-context"),
 	] {
