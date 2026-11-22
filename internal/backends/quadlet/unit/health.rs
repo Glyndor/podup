@@ -36,7 +36,11 @@ pub(super) fn render_healthcheck(
 				// `Test: ["CMD","wget","-q","a b"]`, where a plain string is stored as
 				// `CMD-SHELL`), so the words reach the probe as they are and the image
 				// needs no shell.
-				Some("CMD") if parts.len() > 1 => serde_json::to_string(parts).unwrap_or_default(),
+				// Written through `Value`, whose rendering cannot fail: a list of
+				// strings always has a JSON form, so there is no error to drop.
+				Some("CMD") if parts.len() > 1 => {
+					serde_json::Value::from(parts.clone()).to_string()
+				}
 				Some("CMD") => String::new(),
 				_ => parts.join(" "),
 			},
