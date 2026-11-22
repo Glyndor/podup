@@ -1,0 +1,109 @@
+//! Which commands may run under `--dry-run`.
+//!
+//! The list is an allowlist: a command that only reads, or that already has a
+//! way to show what it would do, runs; every other command, including one added
+//! later, refuses. `--dry-run` that a command ignored would change things while
+//! looking safe, so a refusal is the only wrong-looking answer that is right.
+
+use clap::CommandFactory;
+
+use crate::cli::{AutostartCommands, Cli, Commands, GenerateCommands};
+
+/// `None` when the command may run under `--dry-run`, otherwise the message
+/// that explains why it does not.
+pub(crate) fn refusal(cli: &Cli) -> Option<String> {
+	refusal_for(cli, std::env::args_os())
+}
+
+/// [`refusal`] against an explicit argument list, which a test can supply.
+pub(crate) fn refusal_for(
+	cli: &Cli,
+	args: impl IntoIterator<Item = std::ffi::OsString>,
+) -> Option<String> {
+	// `run` and `exec` hand every token after the first word of the command to
+	// the container, so a `--dry-run` written there never reaches this parser and
+	// the command would run for real. It is refused, with the way to say what was
+	// meant, rather than guessed at.
+	if swallowed(&cli.command) {
+		return Some(
+			"a `--dry-run` after the command of `run` or `exec` belongs to the command, not to \
+			 podup, so it would not stop anything. Put the flag before the command name \
+			 (`podup --dry-run run ...`), or write it inside `sh -c '...'` if the program in \
+			 the container is meant to receive it. Nothing was run."
+				.to_string(),
+		);
+	}
+	if !cli.dry_run || allowed(&cli.command) {
+		return None;
+	}
+	Some(format!(
+		"--dry-run is not supported for `{}`: it would change something, and the flag \
+		 does not stop it yet. Nothing was run. Use a read-only command (`ps`, `config`, \
+		 `ls`, `images`, `volumes`, `audit`), or `autostart install --dry-run`.",
+		command_name(args)
+	))
+}
+
+/// Whether the container command of `run` or `exec` carries a `--dry-run`.
+fn swallowed(command: &Commands) -> bool {
+	let words = match command {
+		Commands::Run(args) => &args.cmd,
+		Commands::Exec(args) => &args.cmd,
+		_ => return false,
+	};
+	words.iter().any(|word| word == "--dry-run")
+}
+
+// Two commands that look like reads are not on this list, because the request they
+// send is a GET that still does something on the Podman side. `top` asks Podman for
+// `ps -ef`, which Podman runs as the container's own `ps` when the container can be
+// traced, so a program in the image runs. `export` makes Podman mount the container's
+// storage and emit an event. A method gate cannot tell either from a read.
+fn allowed(command: &Commands) -> bool {
+	match command {
+		Commands::Ls { .. }
+		| Commands::Stats { .. }
+		| Commands::Ps(_)
+		| Commands::Events(_)
+		| Commands::Port { .. }
+		| Commands::Volumes { .. }
+		| Commands::Images { .. }
+		| Commands::Logs(_)
+		| Commands::Config(_)
+		| Commands::Audit { .. }
+		| Commands::Help { .. }
+		| Commands::Version { .. } => true,
+		#[cfg(feature = "completions")]
+		Commands::Completions { .. } => true,
+		// Prints the units on stdout; `-o` writes them into a directory.
+		Commands::Generate {
+			kind: GenerateCommands::Quadlet { output },
+		} => output.is_none(),
+		// `install` shows the unit and the actions; `status` only reads.
+		Commands::Autostart { kind } => {
+			matches!(
+				kind,
+				AutostartCommands::Install { .. } | AutostartCommands::Status
+			)
+		}
+		_ => false,
+	}
+}
+
+/// The command as the operator typed it (`down`, `autostart uninstall`), read
+/// back from clap so the message never names a different command.
+fn command_name(args: impl IntoIterator<Item = std::ffi::OsString>) -> String {
+	let Ok(matches) = Cli::command().try_get_matches_from(args) else {
+		return "this command".to_string();
+	};
+	match matches.subcommand() {
+		Some((name, sub)) => match sub.subcommand_name() {
+			Some(inner) if name == "autostart" || name == "generate" => format!("{name} {inner}"),
+			_ => name.to_string(),
+		},
+		None => "this command".to_string(),
+	}
+}
+
+#[cfg(test)]
+mod tests;

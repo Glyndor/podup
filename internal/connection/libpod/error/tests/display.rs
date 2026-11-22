@@ -116,8 +116,19 @@ fn display_incompatible_api_version_reports_version() {
 		reported: "4.9.3".into(),
 	};
 	let msg = e.to_string();
-	assert!(msg.contains("Podman >= 5.0"));
-	assert!(msg.contains("4.9.3"));
+	assert!(
+		msg.contains("podup requires Podman >= 6.2.0;"),
+		"got {msg:?}"
+	);
+	assert!(
+		msg.contains("reports libpod API version 4.9.3"),
+		"got {msg:?}"
+	);
+	assert!(msg.contains("running 6.2.0 or newer"), "got {msg:?}");
+	assert!(
+		!msg.contains("5.0"),
+		"the old floor is still named: {msg:?}"
+	);
 }
 
 #[test]

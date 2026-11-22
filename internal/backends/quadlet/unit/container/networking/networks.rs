@@ -7,7 +7,7 @@ use crate::quadlet::is_no_warn_set;
 
 use super::super::super::pod::{PodField, PodFields};
 use super::super::super::shared_values::network_values;
-use super::super::{quote_podman_arg_value, unit_stem, ExternalNames, Section};
+use super::super::{unit_stem, ExternalNames, Section};
 
 /// Emit a `Network=` line per declared network the service attaches to, unless
 /// the pod carries the attachment instead.
@@ -183,21 +183,14 @@ pub(in super::super) fn emit_network_extras(
 	let values = network_values(service);
 	if !(in_pod && pod_fields.owns(PodField::NetworkAlias)) {
 		for alias in &values.aliases {
-			// An empty alias would render as `--network-alias=`,
-			// which podman rejects. The native `NetworkAlias=`
-			// key omits empty values, so the podman-args route
-			// has to skip them too.
+			// An empty alias would render as a bare `NetworkAlias=`, which
+			// resets the list instead of adding an alias. An alias that is empty
+			// once the control characters are stripped, or that has a space at
+			// either end, stays on `PodmanArgs=` (see `Section::add_native`).
 			if alias.is_empty() {
 				continue;
 			}
-			// `NetworkAlias=` was added to Quadlet in Podman 5.2.0.
-			// The supported floor is 5.0, so route each alias
-			// through `PodmanArgs=` as `--network-alias`, like
-			// the other escape-hatch flags. Quoted per #1734.
-			container.add(
-				"PodmanArgs",
-				format!("--network-alias={}", quote_podman_arg_value(alias)),
-			);
+			container.add_native("NetworkAlias", "--network-alias=", alias);
 		}
 	}
 	if !(in_pod && pod_fields.owns(PodField::Ip)) {

@@ -111,21 +111,20 @@ pub(crate) async fn run_ls(
 	quiet: bool,
 	filter: &[String],
 	format: crate::cli::OutputFormat,
-	env_file: &[String],
-	socket: Option<&str>,
-	connection_pool_size: Option<usize>,
+	cli: &Cli,
 ) -> podup::Result<()> {
 	// `ls` is project-agnostic and short-circuits before compose parsing, so
 	// validate the global `--env-file` paths it would otherwise silently
 	// ignore (the other paths validate them while parsing).
-	for ef in env_file {
+	for ef in &cli.env_file {
 		if !std::path::Path::new(ef).is_file() {
 			return Err(podup::ComposeError::Unsupported(format!(
 				"--env-file {ef} does not exist or is not a file"
 			)));
 		}
 	}
-	let client = connect_podman(socket, connection_pool_size).await?;
+	let client =
+		connect_podman(cli.socket.as_deref(), cli.connection_pool_size, cli.dry_run).await?;
 	podup::list_projects_filtered(
 		&client,
 		podup::LsOptions::new(all, quiet, format == crate::cli::OutputFormat::Json),
@@ -213,7 +212,8 @@ pub(crate) async fn run_ps(
 		.with_all_services(true)
 		.print_configured_services(&file);
 	}
-	let client = connect_podman(cli.socket.as_deref(), cli.connection_pool_size).await?;
+	let client =
+		connect_podman(cli.socket.as_deref(), cli.connection_pool_size, cli.dry_run).await?;
 	let engine = podup::Engine::with_base_dir(client, project, base_dir);
 	engine
 		.ps_filtered_with_display(
@@ -269,7 +269,8 @@ pub(crate) async fn run_down_by_label(cli: &Cli, compose_files: &[PathBuf]) -> p
 	}
 	let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
 	let stop_timeout = podup::validate_stop_timeout(*timeout)?;
-	let client = connect_podman(cli.socket.as_deref(), cli.connection_pool_size).await?;
+	let client =
+		connect_podman(cli.socket.as_deref(), cli.connection_pool_size, cli.dry_run).await?;
 	let engine =
 		podup::Engine::with_base_dir(client, project, base_dir).with_stop_timeout(stop_timeout);
 	// `down` is mutating, so serialize it against concurrent runs as the

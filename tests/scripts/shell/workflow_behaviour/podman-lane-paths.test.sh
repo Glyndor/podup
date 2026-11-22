@@ -51,7 +51,7 @@ for path in internal/x.rs Cargo.toml Cargo.lock build.rs .cargo/config.toml \
 	rust-toolchain rust-toolchain.toml tests/unknown/x.rs tests/engine/x.rs tests/cli.rs \
 	tests/engine/engine_integration.rs tests/engine/integration_leak_scan.rs \
 	.github/workflows/podman-lane.yml .github/workflows/future.yml \
-	.github/podman_lane/known-failures-5 .github/podman_lane/known-failures-6 \
+	.github/podman_lane/known-failures-6 \
 	.github/podman_lane/baseline-tests .github/podman_lane/baseline .github/podman_lane/notes.md \
 	.github/scripts/checks/podman-lane-paths.sh .github/scripts/checks/is-version-bump.sh \
 	.github/scripts/fedora_image/fetch-fedora-image.sh .github/scripts/release/sign.py \
@@ -135,6 +135,18 @@ check "Nothing to boot keeps the non-engine path successful" 1 \
 	"$(grep -A2 -- '- name: Nothing to boot' "$workflow" | grep -cF "if: needs.decide.outputs.engine != 'true'")"
 check "the required check name remains stable" 1 "$(grep -cF 'name: Supported Podman majors' "$workflow")"
 check "the required check waits for the matrix" 1 "$(grep -cF 'needs: podman-vm' "$workflow")"
+# The lane boots one Podman major, the newest, and the identity gate reads the
+# known-failures file of the major the VM actually booted. A gate that finds no
+# file skips silently, so every major in the matrix needs its own.
+matrix_line="$(grep -E '^[[:space:]]+podman: \[' "$workflow")"
+check "the matrix is one line" 1 "$(printf '%s\n' "$matrix_line" | grep -c .)"
+majors="$(printf '%s' "$matrix_line" | grep -oE '"[0-9]+"' | tr -d '"')"
+check "the matrix runs exactly one Podman major" 1 "$(printf '%s\n' "$majors" | grep -c .)"
+for major in $majors; do
+	check "Podman $major has its known-failures file" 1 \
+		"$([ -f "$HERE/.github/podman_lane/known-failures-$major" ] && echo 1 || echo 0)"
+done
+check "the lane does not boot a Fedora release image" 0 "$(grep -cE 'releases/[0-9]+/Cloud' "$workflow" "$HERE/.github/scripts/fedora_image/fetch-fedora-image.sh" | awk -F: '{s+=$NF} END {print s+0}')"
 # Execute the required check's actual result handler too.
 awk '
  /      - name: Reflect the matrix result/ { step=1 }

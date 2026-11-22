@@ -1,26 +1,18 @@
-//! Empty-value handling for the `PodmanArgs=` escape-hatch flags added in
-//! round one.
+//! Empty-value handling for the native Quadlet keys the renderer writes from
+//! lists and optional fields.
 //!
-//! podup renders post-5.0 container keys through `PodmanArgs=` flags
-//! rather than the native Quadlet keys (the native keys do not exist in
-//! 5.0). The native Quadlet keys silently drop empty values; the
-//! podman-args route has to skip them too, since `podman run --flag=`
-//! fails with `error parsing additional short argument`.
-//!
-//! Split out into its own file to keep `emitted_keys.rs` under the
-//! per-file code-line cap. Each site that emits a `PodmanArgs=` flag
-//! from a list or optional field has its own test here so a regression
-//! that re-introduces empty handling on one but not another shows up
-//! individually.
+//! A bare `Key=` line is not "no value" for Quadlet: it resets the list of
+//! that key, and `podman run --flag=` fails with `error parsing additional
+//! short argument`. Each site that emits a key from a list or optional field
+//! skips empty values, and has its own test here so a regression that drops
+//! the skip on one but not another shows up individually.
 
 use crate::parse_str;
 use crate::quadlet::generate_at;
 use crate::quadlet::tests::unit_named;
 
-/// An empty `stop_signal:` (`""`) renders to a `--stop-signal=` flag, which
-/// podman rejects with `error parsing additional short argument`. The native
-/// `StopSignal=` Quadlet key omits empty values; the podman-args route must
-/// skip them too.
+/// An empty `stop_signal:` (`""`) would render a bare `StopSignal=`; it emits
+/// nothing.
 #[test]
 fn empty_stop_signal_emits_no_flag() {
 	let yaml = r#"
@@ -33,15 +25,13 @@ services:
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
-		!c.contains("--stop-signal"),
-		"empty stop_signal must not emit --stop-signal=; got:\n{c}"
+		!c.contains("StopSignal"),
+		"empty stop_signal must not emit StopSignal=; got:\n{c}"
 	);
 }
 
-/// An empty entry in `group_add:` (`["audio", ""]`) would render a
-/// `--group-add=` flag podman rejects. The native `GroupAdd=` key omits
-/// empty values; the podman-args route must skip them too. The non-empty
-/// entry still emits.
+/// An empty entry in `group_add:` (`["audio", ""]`) would render a bare
+/// `GroupAdd=`, which resets the list. The non-empty entry still emits.
 #[test]
 fn empty_group_add_entry_emits_no_flag() {
 	let yaml = r#"
@@ -56,19 +46,17 @@ services:
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
-		!c.contains("--group-add=\"\""),
-		"empty group_add entry must not emit --group-add=; got:\n{c}"
+		!c.contains("GroupAdd=\n"),
+		"empty group_add entry must not emit a bare GroupAdd=; got:\n{c}"
 	);
 	assert!(
-		c.contains("PodmanArgs=--group-add=\"audio\""),
+		c.contains("GroupAdd=audio\n"),
 		"non-empty group_add entry must still emit; got:\n{c}"
 	);
 }
 
 /// An empty entry in `extra_hosts:` (`["db:10.0.0.2", ""]`) would render a
-/// `--add-host=` flag podman rejects. The native `AddHost=` key omits empty
-/// values; the podman-args route must skip them too. The non-empty entry
-/// still emits.
+/// bare `AddHost=`, which resets the list. The non-empty entry still emits.
 #[test]
 fn empty_extra_hosts_entry_emits_no_flag() {
 	let yaml = r#"
@@ -83,19 +71,17 @@ services:
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
-		!c.contains("--add-host=\"\""),
-		"empty extra_hosts entry must not emit --add-host=; got:\n{c}"
+		!c.contains("AddHost=\n"),
+		"empty extra_hosts entry must not emit a bare AddHost=; got:\n{c}"
 	);
 	assert!(
-		c.contains("PodmanArgs=--add-host=\"db:10.0.0.2\""),
+		c.contains("AddHost=db:10.0.0.2\n"),
 		"non-empty extra_hosts entry must still emit; got:\n{c}"
 	);
 }
 
-/// An empty network alias (`aliases: ["web", ""]`) would render a
-/// `--network-alias=` flag podman rejects. The native `NetworkAlias=` key
-/// omits empty values; the podman-args route must skip them too. The
-/// non-empty alias still emits.
+/// An empty network alias (`aliases: ["web", ""]`) is left out of the
+/// `Network=` line; the non-empty alias still emits.
 #[test]
 fn empty_network_alias_emits_no_flag() {
 	let yaml = r#"
@@ -119,10 +105,8 @@ networks:
 	);
 }
 
-/// An empty value in `logging.options:` (`{ tag: "" }`) would render a
-/// `--log-opt=tag=` flag podman rejects. The native `LogOpt=` key omits
-/// empty values; the podman-args route must skip them too. The non-empty
-/// option still emits.
+/// An empty value in `logging.options:` (`{ tag: "" }`) would render
+/// `LogOpt=tag=`, which podman rejects. The non-empty option still emits.
 #[test]
 fn empty_logging_option_value_emits_no_flag() {
 	let yaml = r#"
@@ -139,11 +123,11 @@ services:
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
-		!c.contains("--log-opt=\"tag=\""),
-		"empty logging option value must not emit --log-opt=tag=; got:\n{c}"
+		!c.contains("LogOpt=tag="),
+		"empty logging option value must not emit LogOpt=tag=; got:\n{c}"
 	);
 	assert!(
-		c.contains("PodmanArgs=--log-opt=\"path=/var/log/x.log\""),
+		c.contains("LogOpt=path=/var/log/x.log\n"),
 		"non-empty logging option value must still emit; got:\n{c}"
 	);
 }

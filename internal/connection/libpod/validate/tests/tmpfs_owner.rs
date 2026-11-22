@@ -13,7 +13,7 @@ fn options_without_an_owner_are_left_as_they_are() {
 
 #[test]
 fn an_owner_that_is_the_user_becomes_u() {
-	// Measured: Podman 5.7.0 refuses `uid=1000` and, with `U`, gives the tmpfs
+	// Measured on Podman 6.2.0 (2026-11-22): it refuses `uid=1000` and, with `U`, gives the tmpfs
 	// to the user the container runs as (1000:1000 for `user: "1000:1000"`).
 	let got = translate_owner(
 		&opts(&["uid=1000", "gid=1000", "mode=1777"]),

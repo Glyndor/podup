@@ -85,7 +85,7 @@ async fn engine_cp_uploads_a_directory_holding_a_sparse_file() {
 	);
 	assert!(
 		result.is_ok(),
-		"a directory copy of the payload must report Ok on Podman 6 as on Podman 5; \
+		"a directory copy of the payload must report Ok on Podman 6.2.0; \
 		 got {result:?}"
 	);
 }

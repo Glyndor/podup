@@ -6,7 +6,7 @@ Commands, options and environment settings. Run `podup <command> --help` for ter
 podup [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS] [SERVICE...]
 ```
 
-`-f/--file` and `-p/--project` come before the command. `--socket`, `--connection-pool-size`, `--profile`, `--project-directory`, `--env-file`, `--ansi` and `--no-warn` work either side of it.
+`-f/--file` and `-p/--project` come before the command. `--socket`, `--connection-pool-size`, `--profile`, `--project-directory`, `--env-file`, `--ansi`, `--no-warn` and `--dry-run` work either side of it.
 
 ## Global options
 
@@ -21,6 +21,7 @@ podup [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS] [SERVICE...]
 | `--ansi <WHEN>` | | Colour output: `auto`, `always` or `never`. `--ansi always` forces colour even into a pipe or file and overrides `NO_COLOR`; `--ansi auto` honours `NO_COLOR` and TTY detection. |
 | `--env-file <PATH>` | | Env file(s) for interpolation. External extends chains retain the root compose file's resolved env paths. Repeatable; later files win. A relative path is read from the working directory, not the compose file's. Replaces `.env` rather than adding to it. Process environment takes precedence. `COMPOSE_ENV_FILES` (comma-separated) is the same list. A value in an env file can refer to the process environment and to the keys before it (`B=${A} World`, `${X:-fallback}`); a single-quoted value stays literal. `COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR`, `COMPOSE_PROJECT_NAME` and `COMPOSE_PROFILES` can be set in these files too: a flag wins over the process environment, and that over the file. With `run`, also seeds the one-off container's environment below service `environment:` and `-e`. The variables it defines interpolate the compose file; they do not reach the `env_file:` of a service. |
 | `--no-warn` | | Suppress host-binding / privilege-escalation warnings during `up`/`create`/`run`/`exec`. The port-exposure warning is shown only by `up`/`create`/`run`/`scale`/`watch`/`generate quadlet`/`autostart` unless `--no-warn` is set, and by `config` regardless of `--no-warn`. `config` still surfaces the active modes at the default log level. |
+| `--dry-run` | | Show what a command would do and change nothing: no request that is not a read reaches Podman, and nothing is written on the host. The commands that only read (`ps`, `config`, `ls`, `images`, `volumes`, `audit`, `version`, `port`, `logs`, `events`, `stats`, `generate quadlet` to stdout, `autostart status`) run as usual, and `autostart install` prints the unit and the actions it would run. Every other command refuses with an error that names it and exits 2, before it touches anything, rather than ignoring the flag. A `--dry-run` written after the command of `run` or `exec` belongs to that command, so podup refuses it instead of running; put the flag before the command name. |
 | `-h, --help` | | Per-command help, including inherited global options. `help [COMMAND]` shows command-specific help without those global options. |
 | `-V, --version` | | Print `podup version vX.Y.Z`. Same as `podup version`. |
 
@@ -209,7 +210,7 @@ Stream Podman events for this project's containers. The default output is one `T
 | `--since <TIME>` | Only stream events at or after this timestamp or relative time. | stream start |
 | `--until <TIME>` | End of the window. Only closes the feed when paired with `--since` and already elapsed. | no end |
 
-**Bounding a feed needs both flags.** A past window such as `--since 2h --until -1h` ends the feed (measured on Podman 5.7.0 on 2026-09-23 with `--since 30s --until -1s`); `--until` alone, `--since` alone, and any `--until` in the future leave it following indefinitely. podup warns when `--until` is given without `--since`. This also decides the exit code; see [Exit status](#exit-status).
+**Bounding a feed needs both flags.** A past window such as `--since 2h --until -1h` ends the feed (measured on Podman 6.2.0 on 2026-11-22 with `--since 30s --until -1s`); `--until` alone, `--since` alone, and any `--until` in the future leave it following indefinitely. podup warns when `--until` is given without `--since`. This also decides the exit code; see [Exit status](#exit-status).
 
 ### `top [SERVICE...]`
 Show the running processes of service containers.

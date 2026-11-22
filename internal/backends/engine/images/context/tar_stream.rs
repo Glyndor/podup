@@ -16,7 +16,7 @@
 /// type, which is why a context `podman build` accepts could be one
 /// `podup build` rejected (#1775).
 ///
-/// The refusal has two spellings, measured on Podman 5.7.0, and a search for
+/// The refusal has two spellings, both measured again on Podman 6.2.0 (2026-11-22), and a search for
 /// either one alone misses half the damage:
 ///
 /// - the build endpoint answers `unhandled tar header type 83`, from

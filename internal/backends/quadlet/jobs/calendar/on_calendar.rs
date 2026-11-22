@@ -109,7 +109,8 @@ pub(super) fn is_safe_calendar(text: &str) -> bool {
 		&& text.len() <= MAX_CALENDAR_BYTES
 		&& text.chars().all(|c| {
 			c.is_ascii_alphanumeric() || matches!(c, '*' | ',' | '.' | '/' | ':' | '-' | ' ')
-		}) && !text.starts_with(' ')
+		})
+		&& !text.starts_with(' ')
 		&& !text.ends_with(' ')
 		&& !text.contains("  ")
 }

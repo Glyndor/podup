@@ -207,3 +207,82 @@ fn an_unknown_ulimit_name_is_reported_and_skipped() {
 		"expected a warning naming the resource; got:\n{joined}"
 	);
 }
+
+/// Every field must reach generation independently, and keep its value whole.
+#[test]
+fn extended_build_values_cannot_inject_podman_arguments() {
+	use super::super::exec::podman_argv::{podman_argv_from_unit, tokenise_podman_argv};
+
+	let generator = crate::backends::quadlet::tests::generator::generator();
+
+	for (field, flag) in [
+		("cache_from", "--cache-from"),
+		("cache_to", "--cache-to"),
+		("ssh", "--ssh"),
+		("extra_hosts", "--add-host"),
+		("additional_contexts", "--build-context"),
+	] {
+		for payload in [
+			"benign",
+			r#"cache" --privileged "tail"#,
+			r"cache\ --privileged tail",
+			"cache --privileged tail",
+		] {
+			let value = if field == "additional_contexts" {
+				format!("https://example.invalid/{payload}")
+			} else {
+				payload.to_string()
+			};
+			let quoted = serde_json::to_string(&value).unwrap();
+			let body = if field == "additional_contexts" {
+				format!("{field}:\n  base: {quoted}")
+			} else {
+				format!("{field}: [{quoted}]")
+			};
+			let unit = build_unit_for(&body);
+			let argv = podman_argv_from_unit(&unit);
+			let expected = if field == "additional_contexts" {
+				format!("base={value}")
+			} else {
+				value
+			};
+			let pairs: Vec<_> = argv.windows(2).filter(|pair| pair[0] == flag).collect();
+			assert_eq!(pairs.len(), 1, "{field} {payload:?}: {unit}");
+			assert_eq!(pairs[0][1], expected, "{field} {payload:?}: {argv:?}");
+			if let Some(generator) = &generator {
+				let dir = tempfile::tempdir().unwrap();
+				std::fs::write(dir.path().join("proj-app.build"), &unit).unwrap();
+				let output = std::process::Command::new(generator)
+					.args(["-dryrun", "-user"])
+					.env("QUADLET_UNIT_DIRS", dir.path())
+					.output()
+					.unwrap();
+				let text = String::from_utf8_lossy(&output.stdout);
+				let line = text
+					.lines()
+					.find_map(|line| line.strip_prefix("ExecStart="))
+					.unwrap_or_else(|| {
+						panic!(
+							"{field}: no ExecStart: {}",
+							String::from_utf8_lossy(&output.stderr)
+						)
+					});
+				let generated = tokenise_podman_argv(line);
+				assert!(
+					generated
+						.windows(2)
+						.any(|pair| pair[0] == flag && pair[1] == expected),
+					"{field} {payload:?}: {line}"
+				);
+				assert!(
+					!generated.iter().any(|arg| arg == "--privileged"),
+					"{field}: {line}"
+				);
+			}
+			assert!(
+				!argv.iter().any(|arg| arg == "--privileged"),
+				"{field}: {argv:?}"
+			);
+		}
+	}
+}

@@ -52,7 +52,9 @@ fn device_cgroup_rule_serializes_as_struct_array() {
 
 #[test]
 fn no_cdi_devices_key_is_emitted() {
-	// Podman 5.x has no cdi_devices field; CDI names ride in `devices`.
+	// The SpecGenerator of Podman 6.2.0 has no CDI field (measured 2026-11-22: a
+	// `cdi_devices` key is ignored and the container starts); CDI names ride in
+	// `devices`.
 	let v = serde_json::to_value(SpecGenerator::default()).unwrap();
 	assert!(v.get("cdi_devices").is_none(), "stale cdi_devices key: {v}");
 }

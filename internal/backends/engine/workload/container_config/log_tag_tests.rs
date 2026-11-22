@@ -1,8 +1,10 @@
 //! `logging.options.tag` with the drivers Podman cannot give a tag.
 //!
-//! Measured on Podman 5.7.0, with its own CLI as well: `--log-driver json-file
-//! --log-opt tag=x` ends in `k8s-file doesn't support --log-tag` and `conmon
-//! failed`, and the container does not start. Docker accepts the tag.
+//! Measured on Podman 6.2.0 (2026-11-22) with its own CLI: `--log-driver
+//! json-file --log-opt tag=x` and the same with `k8s-file` are refused with `log
+//! tags can only be used with the journald log driver`. On 5.7.0 the same
+//! request got as far as `k8s-file doesn't support --log-tag` and `conmon
+//! failed` at start (not repeated through the API). Docker accepts the tag.
 
 use super::*;
 use crate::compose::types::LoggingConfig;

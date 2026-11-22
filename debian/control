@@ -28,16 +28,16 @@ Architecture: any
 # podup without an engine is not a degraded install, it is an install that
 # cannot do the one thing it is for.
 #
-# The floor is the same one MIN_LIBPOD_API_MAJOR enforces at run time and
-# PODMAN_MIN_MAJOR checks in install.sh. Three copies of one number, tied by
+# The floor is the same one MIN_PODMAN_VERSION enforces at run time and
+# PODMAN_MIN_VERSION checks in install.sh. Three copies of one version, tied by
 # tests/repository/packaging/podman_floor.rs, because as a Depends this one decides whether the
 # package installs at all rather than merely what apt suggests alongside it.
 #
 # The consequence, stated rather than discovered: on a distribution whose
 # podman is below the floor, `apt install podup` now FAILS instead of leaving
-# a podup that cannot reach an engine. Ubuntu 24.04 LTS ships 4.9.3 and is
-# already documented as unsupported, so apt now refuses what the README
-# already said would not work. The cost is the operator driving a REMOTE
+# a podup that cannot reach an engine. A distribution's own podman can be
+# older (the Glyndor apt repository carries 6.2.0 for Debian 13 and Ubuntu
+# 24.04 and 26.04), so apt refuses what the README already said would not work. The cost is the operator driving a REMOTE
 # socket or a `podman machine`, who has no local engine to satisfy this and
 # must now install one; install.sh serves that case with
 # --skip-podman-check, and apt has no equivalent because a package
@@ -66,7 +66,7 @@ Architecture: any
 #
 # The cost, stated rather than discovered: `apt remove unattended-upgrades`
 # now takes podup with it. An operator who schedules upgrades by hand, which
-# the releases standard permits, has to keep the package installed and switch
+# is permitted, has to keep the package installed and switch
 # it off through its own configuration instead.
 #
 # glyndor-archive-keyring is the third, and it is what makes the second mean
@@ -91,7 +91,7 @@ Architecture: any
 # A fork publishing its own archive (which install-template.sh supports through
 # KEYRING_URL and GLYNDOR_APT_FPR) must declare `Provides: glyndor-archive-keyring`
 # on its own keyring package, or this relationship cannot be satisfied by it.
-Depends: ${shlibs:Depends}, ${misc:Depends}, podman (>= 5.0), unattended-upgrades, glyndor-archive-keyring
+Depends: ${shlibs:Depends}, ${misc:Depends}, podman (>= 6.2.0), unattended-upgrades, glyndor-archive-keyring
 Description: run Compose projects on rootless Podman
  podup reads Compose files and drives rootless Podman through its native
  libpod API to create the containers, networks, volumes and secrets they

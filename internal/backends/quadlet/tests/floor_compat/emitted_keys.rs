@@ -1,21 +1,21 @@
-//! Regression guard for the Quadlet export's Podman 5.0 floor.
+//! Regression guard for the keys the Quadlet export writes.
 //!
-//! podup promises Podman 5.0 or newer. Quadlet silently drops a whole unit
-//! at daemon-reload if any of its keys were added after the running Quadlet
-//! release, so a single un-flagged post-5.0 key makes every generated unit
-//! with that key fail to start on a 5.0 host. These tests pin that:
+//! podup requires Podman 6.2.0 or newer. Quadlet drops a whole unit at
+//! daemon-reload if any of its keys is unknown to the running Quadlet
+//! release, so a key newer than the floor must never reach a unit. These tests
+//! pin that:
 //!
-//! - `every_emitted_key_is_in_the_5_0_set` walks a compose fixture that
-//!   exercises every `Key=` the renderer can produce and asserts each one
-//!   is either at the floor (in 5.0 for `[Container]`/`[Pod]`/`[Network]`/
-//!   `[Volume]`, in 5.2 for `[Build]`) or registered in `min_podman.rs`.
-//!   `PodmanArgs=` / `GlobalArgs=` are exempt (they appear on every unit
-//!   type in 5.0).
-//! - `every_emitted_key_is_registered` is the coverage companion: a key
-//!   rendered but missing from the allowlist fails, so the maintainer
-//!   either adds a row or removes the emitter.
-//! - `build_unit_emits_a_warning` pins the one-line warning a project
-//!   gets when any `.build` unit is written.
+//! - `every_emitted_key_is_a_floor_key` walks a compose fixture that exercises
+//!   every `Key=` the renderer can produce and asserts each one is in the
+//!   allowlist of the keys Podman 6.2.0's Quadlet reads (`min_podman.rs`), so a
+//!   key added after the floor names itself. `PodmanArgs=` / `GlobalArgs=` are
+//!   exempt (they exist on every unit type).
+//! - `the_generator_accepts_every_emitted_key` runs the same units through the
+//!   real Quadlet generator of this machine and fails on any unsupported key.
+//! - `pod_mode_writes_host_entries_and_label_as_native_keys` pins the
+//!   `[Pod]` keys.
+//! - `build_unit_carries_no_podman_version_warning` pins that writing a
+//!   `.build` unit does not warn about the Podman release.
 //!
 //! The companion tests for the source-level inventory and empty-value
 //! handling live in `source_inventory.rs` and `empty_values.rs`
@@ -207,86 +207,73 @@ fn render_full_prebuilt() -> Vec<QuadletUnit> {
 	generate_for_autostart(&file, "p", std::path::Path::new("/srv/app")).units
 }
 
-/// Every `Key=` line in every rendered unit must be either at the floor
-/// (in the 5.0 reference for `[Container]`/`[Pod]`/`[Network]`/`[Volume]`,
-/// in the 5.2 reference for `[Build]`) or registered in `min_podman.rs`
-/// with the right release. This is the regression guard: a new key above
-/// the floor must add a row, or this test names it. Both fixtures run, so
-/// pod-mode and non-pod-mode keys are both covered (PublishPort= and
-/// Network= on `.container` only fire outside pod mode; per-container
-/// AddHost= etc. fire only in pod mode).
-#[test]
-fn every_emitted_key_is_in_the_5_0_set() {
-	use crate::quadlet::min_podman::{floor_required, unit_type_from_filename};
-
+/// Every unit the guards below look at: the standard shape in pod and non-pod
+/// mode, plus the prebuilt shape `podup autostart install --mode quadlet`
+/// renders (#1970), which gives container units the build's `ImageTag=` and
+/// adds `Pull=never`.
+fn all_rendered_units() -> Vec<QuadletUnit> {
 	let mut units = render_full();
 	units.extend(render_no_pod());
-	// #1970: the prebuilt shape used by `podup autostart install --mode
-	// quadlet` renders container units with the build's `ImageTag=` and
-	// adds `Pull=never`; it must stay floor-compliant the same way the
-	// standard shape does.
 	units.extend(render_full_prebuilt());
 	assert!(!units.is_empty(), "fixture must render at least one unit");
-	for unit in &units {
-		let unit_type = unit_type_from_filename(&unit.filename);
-		for key in crate::backends::quadlet::min_podman::keys_in_unit(&unit.contents) {
-			match floor_required(unit_type, &key) {
-				// No row, so the key is expected to be at the floor. The
-				// `every_emitted_key_is_registered` companion test below
-				// catches a key we emit that is missing from the table
-				// entirely; this test catches a key whose table row is
-				// wrong (a post-5.0 key still being emitted natively).
-				None => {}
-				Some(v) => panic!(
-					"unit {} emits {key}= on {unit_type:?}, which Podman only added in {}; \
-					 the floor is 5.0; route the value through PodmanArgs= or update \
-					 the table if a recent 5.x release is the new supported floor",
-					unit.filename,
-					v.fmt()
-				),
-			}
-		}
-	}
+	units
 }
 
-/// Every `Key=` line we render must be registered in the allowlist. A key
-/// emitted but missing fails here; the maintainer either adds a row (with
-/// the right release) or removes the emitter. Keys at the floor are
-/// accepted via the in-line 5.0/5.2 reference sets, even without a table
-/// row: the floor covers them implicitly.
+/// Every `Key=` line in every rendered unit must be a key the Quadlet of the
+/// floor (Podman 6.2.0) reads. Both fixtures run, so pod-mode and non-pod-mode
+/// keys are both covered (PublishPort= and Network= on `.container` only fire
+/// outside pod mode; per-container AddHost= etc. fire only in pod mode).
 #[test]
-fn every_emitted_key_is_registered() {
-	use crate::quadlet::min_podman::{is_floor_compliant, unit_type_from_filename, UnitType};
+fn every_emitted_key_is_a_floor_key() {
+	use crate::quadlet::min_podman::{is_at_floor, keys_in_unit, unit_type_from_filename};
 
-	let mut units = render_full();
-	units.extend(render_no_pod());
-	// #1970: cover the prebuilt shape too, see every_emitted_key_is_in_the_5_0_set.
-	units.extend(render_full_prebuilt());
-	for unit in &units {
+	for unit in &all_rendered_units() {
 		let unit_type = unit_type_from_filename(&unit.filename);
-		for key in crate::backends::quadlet::min_podman::keys_in_unit(&unit.contents) {
+		for key in keys_in_unit(&unit.contents) {
 			assert!(
-				is_floor_compliant(unit_type, &key),
-				"unit {} emits {key}= on {unit_type:?}, which is not in the Podman {} reference \
-				 for that unit type and which the table does not cover; add a row in \
-				 min_podman.rs or remove the emitter",
+				is_at_floor(unit_type, &key),
+				"unit {} emits {key}= on {unit_type:?}, which Podman 6.2.0's Quadlet does not \
+				 read; add it to the allowlist in min_podman.rs only after the generator \
+				 accepts it, or write the value as a PodmanArgs= flag",
 				unit.filename,
-				if matches!(unit_type, UnitType::Build) {
-					"5.2"
-				} else {
-					"5.0"
-				}
 			);
 		}
 	}
 }
 
-/// The pod-mode pod unit covers the keys that only fire on `.pod`
-/// (`AddHost`/`Label`), which the main fixture exercises through the
-/// web/db pair but only as `PodmanArgs=`. This pins the conversion
-/// explicitly so a regression to the native keys would surface here.
+/// The allowlist is a claim about the Quadlet of the floor; this checks it
+/// against the Quadlet of this machine. The generator reports each key it
+/// does not know as `unsupported key`. The test returns early where the
+/// generator is not installed or is older than the floor.
 #[test]
-fn pod_mode_routes_host_entries_and_label_through_podman_args() {
+fn the_generator_accepts_every_emitted_key() {
+	let Some(generator) = crate::backends::quadlet::tests::generator::generator() else {
+		return;
+	};
+	for (shape, units) in [
+		("standard", render_full()),
+		("no pod", render_no_pod()),
+		("prebuilt", render_full_prebuilt()),
+	] {
+		let dir = tempfile::tempdir().unwrap();
+		crate::quadlet::write_units(dir.path(), &units).unwrap();
+		let run = std::process::Command::new(&generator)
+			.args(["-dryrun", "-user"])
+			.env("QUADLET_UNIT_DIRS", dir.path())
+			.output()
+			.unwrap();
+		let stderr = String::from_utf8_lossy(&run.stderr);
+		assert!(
+			!stderr.contains("unsupported key"),
+			"the Quadlet generator rejects a key of the {shape} shape:\n{stderr}"
+		);
+	}
+}
+
+/// The pod unit carries the host entries and the ownership label as native
+/// keys, and the exit policy as `ExitPolicy=`.
+#[test]
+fn pod_mode_writes_host_entries_and_label_as_native_keys() {
 	let yaml = r#"
 x-podman-pod: true
 services:
@@ -300,39 +287,33 @@ services:
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "demo", std::path::Path::new("/srv/app"));
 	let pod = unit_named(&out, "demo.pod");
-	for forbidden in ["AddHost=", "Label=podup.project="] {
+	for wanted in [
+		"AddHost=web:127.0.0.1\n",
+		"AddHost=db:127.0.0.1\n",
+		"Label=podup.project=demo\n",
+		"ExitPolicy=continue\n",
+		"PodmanArgs=--share=net\n",
+	] {
 		assert!(
-			!pod.contents.contains(forbidden),
-			"pod unit must not emit native `{forbidden}`; got:\n{}",
+			pod.contents.contains(wanted),
+			"pod unit must carry `{wanted}`; got:\n{}",
 			pod.contents
 		);
 	}
-	assert!(
-		pod.contents
-			.contains("PodmanArgs=--add-host=\"web:127.0.0.1\""),
-		"missing web add-host flag in:\n{}",
-		pod.contents
-	);
-	assert!(
-		pod.contents
-			.contains("PodmanArgs=--add-host=\"db:127.0.0.1\""),
-		"missing db add-host flag in:\n{}",
-		pod.contents
-	);
-	assert!(
-		pod.contents
-			.contains("PodmanArgs=--label=\"podup.project=demo\""),
-		"missing project ownership label flag in:\n{}",
-		pod.contents
-	);
+	for forbidden in ["--add-host", "--label", "--exit-policy"] {
+		assert!(
+			!pod.contents.contains(forbidden),
+			"pod unit must not route `{forbidden}` through PodmanArgs=; got:\n{}",
+			pod.contents
+		);
+	}
 }
 
-/// A project that emits at least one `.build` unit produces a single
-/// per-project warning naming the Podman 5.2.0 floor. The warning goes
-/// through `out.warnings`, the same channel every other field-mismatch
-/// warning uses.
+/// Writing a `.build` unit adds no warning about the Podman release: the
+/// unit type arrived in 5.2.0 and the floor is 6.2.0, so every supported
+/// Podman reads it. The project below does write one.
 #[test]
-fn build_unit_emits_a_warning() {
+fn build_unit_carries_no_podman_version_warning() {
 	let yaml = r#"
 services:
   app:
@@ -342,52 +323,14 @@ services:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
-	let joined = out.warnings.join("\n");
 	assert!(
-		joined.contains(".build") && joined.contains("5.2"),
-		"expected a warning mentioning both `.build` and `5.2`; got:\n{joined}"
+		out.units.iter().any(|u| u.filename.ends_with(".build")),
+		"the fixture must write a `.build` unit; got {:?}",
+		out.units.iter().map(|u| &u.filename).collect::<Vec<_>>()
 	);
-}
-
-/// A project that does not emit a `.build` unit must not emit the
-/// warning. The warning is keyed on the actual rendering, not on the
-/// presence of a `build:` field: an inline Dockerfile rejects the unit
-/// (and is itself warned) so no `.build` is written and no extra
-/// 5.2 warning should fire.
-#[test]
-fn no_build_unit_means_no_build_floor_warning() {
-	let yaml = r#"
-services:
-  app:
-    image: x
-"#;
-	let file = parse_str(yaml).unwrap();
-	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let joined = out.warnings.join("\n");
 	assert!(
-		!joined.contains("5.2"),
-		"no .build unit was written; the 5.2 warning must not fire; got:\n{joined}"
-	);
-}
-
-/// An inline-Dockerfile build rejects the `.build` unit (the existing
-/// path) and therefore does not trigger the 5.2 warning either: the
-/// warning is gated on actually writing the unit.
-#[test]
-fn inline_dockerfile_does_not_trigger_build_floor_warning() {
-	let yaml = r#"
-services:
-  app:
-    build:
-      dockerfile_inline: |
-        FROM alpine
-"#;
-	let file = parse_str(yaml).unwrap();
-	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
-	let joined = out.warnings.join("\n");
-	assert!(
-		!joined.contains("5.2"),
-		"an inline-Dockerfile build does not emit a `.build` unit; the 5.2 \
-		 warning must not fire; got:\n{joined}"
+		!joined.contains("5.2") && !joined.contains("Podman"),
+		"a `.build` unit needs no Podman release warning; got:\n{joined}"
 	);
 }

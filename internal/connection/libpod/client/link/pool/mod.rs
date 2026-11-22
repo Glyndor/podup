@@ -495,6 +495,7 @@ impl Client {
 			socket_path,
 			pool,
 			init_cleanups: Default::default(),
+			dry_run: false,
 		}
 	}
 

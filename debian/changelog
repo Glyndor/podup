@@ -1,3 +1,28 @@
+podup (6.0.0) unstable; urgency=medium
+
+  * Podman 6.2.0 or newer is required, and no upper bound is set. Podman 5 is no longer
+    supported: podup refuses an older engine and names the version it found. The version
+    is compared as major, minor and patch. Debian and Ubuntu get Podman 6.2.0 from
+    apt.glyndor.net.
+  * A global `--dry-run` refuses whatever would change something. The client sends only
+    reads under it, and the commands that read without side effects are the ones that
+    run; `top` and `export` are refused too, since Podman does work for both.
+  * `generate quadlet` writes the keys Quadlet 6.2 reads instead of raw Podman arguments:
+    `GroupAdd`, `StopSignal`, `LogOpt`, `NetworkAlias`, `AddHost`, `Memory`, `AppArmor`,
+    `Umask` and `BuildArg` on a container, `ImageTag` on a build, and `AddHost`, `Label`,
+    `ExitPolicy`, the DNS keys, `UserNS`, `ShmSize`, the addresses and `NetworkAlias` on a
+    pod. A value Quadlet would change, one that is empty or starts or ends with a blank,
+    stays a Podman argument, so it reaches Podman as written. An exec healthcheck keeps
+    its vector.
+  * `generate quadlet` writes the start limits of a restart policy in `[Unit]`, where
+    systemd reads them; in `[Service]` the window of `max_attempts` was ignored.
+  * `generate quadlet` refuses a comma, an equals sign or a control character in a secret
+    name, target, uid or gid, and an image whose name ends in `.build` or `.image` on a
+    service with no `build:`. Both were written as something `up` does not do.
+  * A compose healthcheck that sets only timings keeps the probe of the image.
+
+ -- Glyndor <packages@glyndor.net>  Sun, 22 Nov 2026 16:40:00 -0500
+
 podup (5.20.0) unstable; urgency=medium
 
   * `up` and a whole-project `down` warn when the project's networks were created from
@@ -220,7 +245,7 @@ podup (5.15.1) unstable; urgency=medium
 
 podup (5.15.0) unstable; urgency=medium
 
-  * Twelve review rounds closed gaps in how podup reads, copies and tears down.
+  * Closed gaps in how podup reads, copies and tears down.
     `cp` and the `watch` sync pack and extract through descriptors the walk
     opened, so a directory swapped for a link during the copy is not followed,
     and they bound sparse sizes, hard links and the bytes an alias expands to.
@@ -1173,7 +1198,7 @@ podup (3.8.0) unstable; urgency=medium
     of the public API. `ComposeError::Podman` already carried the type, so a
     caller could hold the error but not ask it anything: telling a timeout
     apart from a state conflict meant matching on the `Display` string, which
-    is not a contract I want anyone depending on. A compile-time test now
+    is not a stable contract. A compile-time test now
     pins the surface so it cannot narrow again by accident.
 
   Fixed
@@ -1415,7 +1440,7 @@ podup (3.5.0) unstable; urgency=medium
   Known limitation
 
   * The `events` TIME column is UTC and does not say so, while `podman events`
-    prints local time with its offset. Tracked; the fix is a later release.
+    prints local time with its offset.
 
  -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Mon, 03 Aug 2026 04:43:42 -0500
 
@@ -1731,9 +1756,8 @@ podup (3.0.1) unstable; urgency=medium
     the fairness policy keeps that row.
   * The man page, frozen at 1.2.0, now documents `autostart`, `version`, the
     interactive run/exec path, exit codes 126/127, and the flags added since.
-  * Removed a stale reference to the release signing secret's old name and two
-    links to closed issues; reworded doc comments anchored to "1.0" and to the
-    author's writing session.
+  * Removed two links to closed issues and reworded doc comments anchored to
+    "1.0".
 
  -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Thu, 23 Jul 2026 13:40:00 -0500
 

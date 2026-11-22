@@ -1,6 +1,6 @@
 //! Docker-compatible reference normalisation, the same shape the
 //! docker-compat build handler applied through `NormalizeToDockerHub`
-//! (Podman v5.7.0, `pkg/api/handlers/utils/images.go`).
+//! (`pkg/api/handlers/utils/images.go` upstream).
 //!
 //! When podup talked to the docker compat layer every `t=` and
 //! `/images/{}/tag?repo=&tag=` argument went through that helper. On
@@ -9,7 +9,8 @@
 //! used to get - a docker.io prefix on every unqualified name - is
 //! gone, and a `podup build` that used to land `proj-app` as
 //! `docker.io/library/proj-app:latest` now lands it as
-//! `localhost/proj-app:latest`. Two copies of every image, and a
+//! `localhost/proj-app:latest` (measured on Podman 6.2.0, 2026-11-22: a
+//! libpod build with `t=name` still lands as `localhost/name:latest`). Two copies of every image, and a
 //! second copy of every `ps`/`images`/`events` row.
 //!
 //! Reproducing the helper here keeps the wire shape stable. Pure, so
@@ -19,7 +20,7 @@
 
 /// Normalise `name` to its docker-compatible canonical form, the
 /// way the docker compat handler did through
-/// `NormalizeToDockerHub`. The rules, measured against Podman 5.7.0:
+/// `NormalizeToDockerHub`. The rules:
 ///
 /// 1. A digest (`sha256:...`) is left alone. The upstream helper
 ///    rejected a digest from `reference.ParseNormalizedNamed` and

@@ -31,7 +31,7 @@ fn fake_session(frames: Vec<Vec<u8>>) -> (FakePodman, Arc<Mutex<Vec<u8>>>) {
 async fn hijack(fake: &FakePodman) -> crate::libpod::client::Hijacked {
 	fake.client()
 		.post_hijack(
-			"/v5.0.0/libpod/exec/test/start",
+			"/v6.2.0/libpod/exec/test/start",
 			br#"{"Detach":false,"Tty":false}"#,
 		)
 		.await

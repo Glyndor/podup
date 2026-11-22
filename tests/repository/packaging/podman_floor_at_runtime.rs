@@ -3,8 +3,8 @@
 //! `podman_floor.rs` pins that the floor is the same number everywhere it is
 //! written. This file pins that the binary uses it: every command that talks
 //! to Podman sends one `GET /libpod/_ping` first and stops, with the message
-//! written for the case, when the engine reports a libpod API major below
-//! the floor. Until 5.10.2 nothing called that check, so on Podman 4.9 a
+//! written for the case, when the engine reports a libpod API version below
+//! the floor (6.2.0, compared as major, minor and patch). Until 5.10.2 nothing called that check, so on Podman 4.9 a
 //! command failed on its first real request with whatever that request
 //! returned (#1924).
 //!
@@ -108,28 +108,46 @@ fn serve_one(
 	let _ = stream.shutdown(std::net::Shutdown::Both);
 }
 
+/// Refused: the message names the floor and the version the engine reported,
+/// and the ping is the only request sent.
 #[cfg(unix)]
-#[test]
-fn an_engine_below_the_floor_is_refused_before_any_other_request() {
-	let fake = FakePodman::start(Some("4.9.3"));
+fn assert_refused_at_the_ping(reported: &'static str) {
+	let fake = FakePodman::start(Some(reported));
 	let out = fake.podup(&["ls"]);
 	let stderr = String::from_utf8_lossy(&out.stderr);
-	assert_eq!(out.status.code(), Some(1), "stderr: {stderr}");
+	assert_eq!(out.status.code(), Some(1), "{reported}: stderr: {stderr}");
+	let expected = format!(
+		"podup requires Podman >= 6.2.0; this server reports libpod API version {reported}."
+	);
 	assert!(
-		stderr
-			.contains("podup requires Podman >= 5.0; this server reports libpod API version 4.9.3"),
+		stderr.contains(&expected),
 		"the message written for an unsupported Podman must be the one shown: {stderr}"
 	);
 	let requests = fake.requests();
 	assert_eq!(
 		requests.len(),
 		1,
-		"the check must be the only request sent to an engine below the floor: {requests:?}"
+		"{reported}: the check must be the only request sent to an engine below the floor: {requests:?}"
 	);
 	assert!(
 		requests[0].starts_with("GET ") && requests[0].contains("/libpod/_ping"),
 		"the one request must be the ping: {requests:?}"
 	);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_engine_below_the_floor_is_refused_before_any_other_request() {
+	assert_refused_at_the_ping("4.9.3");
+}
+
+/// Podman 5 is no longer supported, and neither is the release just under the
+/// floor: the minor decides when the major is the floor's own.
+#[cfg(unix)]
+#[test]
+fn podman_5_and_6_1_are_refused() {
+	assert_refused_at_the_ping("5.8.5");
+	assert_refused_at_the_ping("6.1.4");
 }
 
 /// No `Libpod-API-Version` header at all fails closed: a socket that does not
@@ -148,15 +166,15 @@ fn an_engine_that_reports_no_version_is_refused() {
 	assert_eq!(fake.requests().len(), 1, "{:?}", fake.requests());
 }
 
+/// The ping is answered, then the command goes on to its own request.
 #[cfg(unix)]
-#[test]
-fn an_engine_at_the_floor_is_checked_first_and_then_used() {
-	let fake = FakePodman::start(Some("5.0.0"));
+fn assert_checked_first_and_then_used(reported: &'static str) {
+	let fake = FakePodman::start(Some(reported));
 	let out = fake.podup(&["ls"]);
 	let stderr = String::from_utf8_lossy(&out.stderr);
 	assert!(
 		out.status.success(),
-		"status {:?}, stderr: {stderr}",
+		"{reported}: status {:?}, stderr: {stderr}",
 		out.status
 	);
 	let requests = fake.requests();
@@ -173,6 +191,23 @@ fn an_engine_at_the_floor_is_checked_first_and_then_used() {
 			.any(|r| r.contains("/libpod/containers/json")),
 		"after the check the command must go on to its own request: {requests:?}"
 	);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_engine_at_the_floor_is_checked_first_and_then_used() {
+	assert_checked_first_and_then_used("6.2.0");
+}
+
+/// No ceiling: a newer minor of the same major, a minor that is a longer
+/// number than the floor's, and a newer major are all used.
+#[cfg(unix)]
+#[test]
+fn an_engine_above_the_floor_is_used() {
+	assert_checked_first_and_then_used("6.2.1");
+	assert_checked_first_and_then_used("6.10.0");
+	assert_checked_first_and_then_used("7.0.0");
+	assert_checked_first_and_then_used("v6.2.0");
 }
 
 /// Every `.rs` file under `dir`, subfolders included, as one text. The command

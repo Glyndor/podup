@@ -5,7 +5,9 @@
 //! and on Podman 6 under concurrency that happens on exactly the state-changing
 //! calls (`exec`, `restart`, `stop`, container `DELETE`) after a slow one
 //! (#1339). It is not a client deadline and not a pooled-connection race; both
-//! were ruled out by measurement.
+//! were ruled out by measurement. The drops were measured on Podman 6.0.x and
+//! 6.1.x; they only show under concurrency and were not measured again on
+//! 6.2.0, so the re-check stays.
 //!
 //! So it is answered the way `cp` and `stats` already answer theirs: by asking
 //! the observable the transport cannot see.

@@ -42,7 +42,8 @@
 #
 # Format fields: containers use `{{.Names}}` (plural), pods and networks
 # use `{{.Name}}` (singular). The plural form is a runtime error on Podman
-# 5.7 for pod/network listing and on dockerd's network listing; the real
+# 6.2.0 for network listing (measured 2026-11-22) and on dockerd's network
+# listing; the real
 # CLI returns rc=125 and the harness must treat an engine error as a hard
 # failure (stderr message, non-zero exit), not as a clean engine.
 #
@@ -147,7 +148,7 @@ bench_leftovers() { # tool project
 #
 # Stdout from the removal commands is captured and discarded. `podman rm`,
 # `podman pod rm -f` and `podman network rm` all echo the ID of what they
-# removed on Podman 5.7, which would leak into the harness's stdout if not
+# removed on Podman 6.2.0 (measured 2026-11-22), which would leak into the harness's stdout if not
 # captured. Stderr is kept on the harness: a real failure (container
 # running, network in use, etc.) is information the operator needs to see.
 #
@@ -160,8 +161,8 @@ bench_leftovers_purge() { # tool project
 
 	# Containers. `--format '{{.ID}}'` is used instead of `-q` because
 	# `podman ps -a -q` works for IDs but `podman network ls -q` returns
-	# the network NAME on Podman 5.7 (a regression from older versions
-	# where it returned the ID); the explicit format keeps both queries
+	# the network NAME on Podman 6.2.0 (measured 2026-11-22; older
+	# versions returned the ID); the explicit format keeps both queries
 	# consistent.
 	cids=$($cmd ps -a --filter "label=$label_key=$proj" --format '{{.ID}}') || {
 		printf 'bench_leftovers_purge: %s containers query failed\n' "$tool" >&2

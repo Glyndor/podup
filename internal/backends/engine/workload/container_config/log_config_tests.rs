@@ -160,7 +160,7 @@ fn log_config_max_size_malformed_returns_field_error() {
 fn log_config_unsupported_options_pass_through() {
 	// `path` reaches the wire unchanged. `tag` does too, but not for json-file:
 	// this test used to pin `tag` there on the strength of `man podman-run`, and
-	// Podman 5.7.0 refuses it for that driver at start (see `log_tag_tests`),
+	// Podman refuses it for that driver (see `log_tag_tests`),
 	// so it travels with `journald`, where it is a real option.
 	let mut opts = std::collections::HashMap::new();
 	opts.insert("path".into(), "/var/log/app.log".into());

@@ -49,7 +49,7 @@ async fn events_renames_died_to_die_and_container_exit_code_to_exit_code() {
 	// we run out of attempts. The CI lane (a nested-virt runner with
 	// the journald event backend) sometimes takes several seconds for
 	// the first event to land; the original 1.5 s sleep was measured
-	// on the local 5.7.0 socket and races the journal write. The
+	// on a local socket (5.7.0 at the time) and races the journal write. The
 	// container exits 3 synchronously inside `up`, so the `die` event
 	// exists by the time `up` returns; the poll only papers over the
 	// journal-to-HTTP event bridge on the libpod handler.
@@ -153,7 +153,8 @@ async fn events_renames_died_to_die_and_container_exit_code_to_exit_code() {
 	};
 	down(&socket, &dir, &name);
 	// On the CI lane on 2026-09-25 `podman events` itself returned nothing for a
-	// container that had exited 3 (Podman 5.8.1 and 6.1.2, journald backend), so
+	// container that had exited 3 (Podman 5.8.1 and 6.1.2, journald backend; not
+	// seen on 6.2.0 locally), so
 	// there was no event for podup to rewrite. That host cannot exercise this test:
 	// say so in the output rather than fail or pass silently. The rewrite itself is
 	// pinned by the unit tests in `internal/backends/engine/observe/events/tests/`.

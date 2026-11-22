@@ -16,18 +16,18 @@
 # 30225458799) took it from 31 failures to zero, with the
 # `rootless netns: mount resolv.conf … stub-resolv.conf: no such file or
 # directory` signature, four occurrences in the previous run, absent from the
-# log entirely. Podman 5 stayed at two threads as the control and produced its
-# usual timing, so the change was not in the harness. Concurrent container
-# creation against the shared rootless netns was the cause; nested virtualisation,
-# the image, and boot ordering were not, and each had been proposed and falsified
+# log entirely. A control leg that stayed at two threads kept its usual timing, so
+# the change was not in the harness. Concurrent container creation against the
+# shared rootless netns was the cause; nested virtualisation, the image, and boot
+# ordering were not, and each had been proposed and falsified
 # in turn.
 #
 # WHAT THIS LIST RESTS ON: exactly one clean run. That is thin, and it is the
-# same thin evidence this file's Podman 5 counterpart warns about in the other
+# same thin evidence an earlier list of known failures warned about in the other
 # direction. If a failure appears here, the first question is whether the tail is
 # genuinely gone or whether one run was luck.
 #
-# When that happens: classify it with a run, the way every Podman 5 entry was, and
+# When that happens: classify it with a run, the way earlier entries were, and
 # add it here with the evidence. Do NOT delete this file to make the red go away:
 # an empty list is what makes a regression loud, and going back to a count gate is
 # how #1072 shipped a bug with the pass count sitting comfortably above the floor.
@@ -40,6 +40,3 @@
 # describes resisted classification for as long as it did. The gate now prints the
 # image alongside the counts (#1222); read it before deciding a failure is
 # environmental, and say which image you saw it on when you add a line here.
-#
-# The same caveat does not apply to Podman 5: that leg boots a released Fedora 44
-# image, which changes only when Fedora respins it.

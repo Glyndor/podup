@@ -2,10 +2,8 @@ name: Dependabot security watch
 
 # Dependabot security updates ignore `target-branch` and open against `main`,
 # where `main-guard` refuses any pull request whose source is not `develop`.
-# The bump then sits open with one red check and nothing reports it. Keep
-# `target-branch: develop` and `main-guard` as they are, re-land each security
-# bump by hand off `develop`,
-# and make the stuck state loud. This workflow is the loud part: it lists the
+# The bump then sits open with one red check and nothing reports it. This
+# workflow makes the stuck state loud instead of silent: it lists the
 # open pull requests into `main` and fails when Dependabot authored one whose
 # head is not `develop`. The selection and the report live in
 # `.github/scripts/checks/dependabot_security_watch.py`, which has its own tests
@@ -25,8 +23,7 @@ name: Dependabot security watch
 #   workflow whose path list omits itself never runs on the pull request
 #   that changes it, so a broken edit merges without having been executed.
 #   The `gh pr list` call is real on that event too, and read-only.
-# - `workflow_dispatch`: rerun by hand after re-landing a bump, to confirm
-#   the report went quiet.
+# - `workflow_dispatch`: rerun by hand, to confirm the report went quiet.
 #
 # The check this emits is `dependabot security watch`, composed from the job
 # id `dependabot-security-watch` and its `name:`. Written here so a ruleset

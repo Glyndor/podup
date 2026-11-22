@@ -3,10 +3,13 @@ use crate::quadlet::{QuadletOutput, QuadletUnit};
 mod exec;
 mod fields;
 mod floor_compat;
+pub(in crate::backends::quadlet) mod generator;
 mod health;
+mod image_unit_suffix;
 mod mount_colon;
 mod network;
 mod pull_policy;
+mod secret_separators;
 mod units;
 
 pub(super) use exec::podman_argv::assert_argv_has_no_token;

@@ -26,7 +26,7 @@ REPO="Glyndor/podup"
 INSTALL_DIR="${PODUP_INSTALL_DIR:-/usr/local/bin}"
 VERSION="${PODUP_VERSION:-latest}"
 MODE="binary"
-PODMAN_MIN_MAJOR=5
+PODMAN_MIN_VERSION=6.2.0
 SKIP_PODMAN_CHECK=""
 
 log_info()  { printf '\033[1;34m[info]\033[0m %s\n' "$1"; }
@@ -151,7 +151,7 @@ download() {
 }
 
 # Baked-in base64 (unpadded) raw Ed25519 public keys (32 bytes each) matching the
-# release signing keys (GLYNDOR_RELEASE_ED25519_KEY / _2). Both are populated so a
+# two release signing keys. Both are populated so a
 # release signed by either key verifies during a make-before-break rotation; the
 # signature passes if any key validates. Retire a key by clearing its slot here.
 # Override for a fork via the PODUP_RELEASE_PUBKEY_B64 / _PUBKEY2_B64 env vars.
@@ -567,12 +567,14 @@ or python3 with the 'cryptography' package, or set PODUP_RELEASE_PUBKEY_B64, the
 # Verify the local Podman engine meets podup's floor. Local podman is NOT
 # required: podup can drive a remote socket, and on macOS it talks to a
 # `podman machine` VM. So absence is a WARN, not a failure. A present local
-# podman whose major version is below PODMAN_MIN_MAJOR is the Ubuntu 24.04
-# case and is refused, since installing podup against it would leave the user
-# with a binary that cannot talk to their engine.
+# podman older than PODMAN_MIN_VERSION is refused (the distribution's own
+# podman can be older; the Glyndor apt repository carries 6.2.0 for Debian 13
+# and Ubuntu 24.04 and 26.04), since installing podup against it would leave the
+# user with a binary that cannot talk to their engine. The comparison covers
+# major, minor and patch; there is no upper bound.
 check_podman() {
 	if ! command -v podman >/dev/null 2>&1; then
-		log_info "No local 'podman' binary found. podup needs Podman >= 5.0 to run; \
+		log_info "No local 'podman' binary found. podup needs Podman >= ${PODMAN_MIN_VERSION} to run; \
 this is fine if the engine podup will use is remote or a 'podman machine' VM."
 		return 0
 	fi
@@ -583,34 +585,35 @@ this is fine if the engine podup will use is remote or a 'podman machine' VM."
 	# unparseable version, not a hard failure.
 	if ! version_output="$(podman --version 2>/dev/null)"; then
 		log_info "Local 'podman --version' could not be read; skipping the Podman \
-precheck. podup needs Podman >= 5.0 to run."
+precheck. podup needs Podman >= ${PODMAN_MIN_VERSION} to run."
 		return 0
 	fi
 
-	# Output is `podman version 5.7.0`; field 3 is the version, then
-	# everything before the first '.' is the major.
-	local raw_version major
+	# Output is `podman version 6.2.0`; field 3 is the version. A pre-release
+	# or build suffix (`6.3.0-dev`) is dropped so the release it leads up to is
+	# what gets compared, the same as the binary does.
+	local raw_version version comparison
 	read -r _ _ raw_version _ <<< "$version_output" || raw_version=""
-	major="${raw_version%%.*}"
+	version="${raw_version%%[-+]*}"
 
-	if [[ -z "$major" || ! "$major" =~ ^[0-9]+$ ]]; then
+	if ! comparison="$(compare_versions "$version" "$PODMAN_MIN_VERSION")"; then
 		log_info "Could not parse the local Podman version ('${version_output}'); \
-skipping the Podman precheck. podup needs Podman >= 5.0 to run."
+skipping the Podman precheck. podup needs Podman >= ${PODMAN_MIN_VERSION} to run."
 		return 0
 	fi
 
-	if [[ "$major" -lt "$PODMAN_MIN_MAJOR" ]]; then
+	if [[ "$comparison" == -1 ]]; then
 		if [[ -n "$SKIP_PODMAN_CHECK" ]]; then
 			log_info "Podman precheck skipped by request (--skip-podman-check)"
 			return 0
 		fi
-		fail "Local Podman ${raw_version} is below the >= 5.0 floor podup requires. \
+		fail "Local Podman ${raw_version} is below the >= ${PODMAN_MIN_VERSION} floor podup requires. \
 podup will install, but will not be able to talk to this engine. Upgrade Podman \
 or point podup at a different, newer host (see https://podman.io/docs/installation). \
 If the engine podup will use is on a different host, re-run with --skip-podman-check."
 	fi
 
-	log_ok "Local Podman version meets the >= 5.0 requirement"
+	log_ok "Local Podman version meets the >= ${PODMAN_MIN_VERSION} requirement"
 }
 
 # --- Dispatch ----------------------------------------------------------------

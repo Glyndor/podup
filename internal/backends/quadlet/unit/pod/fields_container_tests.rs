@@ -45,7 +45,7 @@ fn pod_container_drops_extra_hosts() {
 	let container =
 		container_contents(&two_services("    extra_hosts:\n      - \"db:10.0.0.2\"\n"));
 	assert!(
-		!container.contains("--add-host=\"db:10.0.0.2\""),
+		!container.contains("AddHost=db:10.0.0.2"),
 		"container repeated pod host entry in:\n{container}"
 	);
 }

@@ -302,7 +302,7 @@ impl Engine {
 		//
 		// `GET {API_PREFIX}/containers/{name}/healthcheck` *runs* the check and
 		// returns the resulting status, so polling it works with or without
-		// systemd, on Podman 4.9.3 and 5.x alike. Extra on-demand runs on a
+		// systemd. Extra on-demand runs on a
 		// systemd host are harmless.
 		let path = format!(
 			"{API_PREFIX}/containers/{}/healthcheck",

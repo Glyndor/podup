@@ -147,7 +147,7 @@ async fn a_post_with_a_streamed_body_writes_origin_form() {
 
 	let server = CapturingServer::start().await;
 	let client = crate::libpod::Client::new(server.sock_str());
-	let path = "/v5.0.0/libpod/build?t=probe";
+	let path = "/v6.2.0/libpod/build?t=probe";
 	let chunks = stream::iter(vec![Ok::<_, std::io::Error>(Frame::data(
 		Bytes::from_static(b"hello"),
 	))]);
@@ -158,7 +158,7 @@ async fn a_post_with_a_streamed_body_writes_origin_form() {
 
 	let first = server.first_request().await;
 	assert!(
-		first.starts_with("POST /v5.0.0/libpod/build?t=probe HTTP/1.1"),
+		first.starts_with("POST /v6.2.0/libpod/build?t=probe HTTP/1.1"),
 		"POST must be written in origin form with the query intact; got: {first:?}"
 	);
 	assert!(

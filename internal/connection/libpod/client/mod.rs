@@ -7,7 +7,7 @@
 //! connection for the lifetime of the stream and release it when the body
 //! drops. See [`Client`] for the full contract.
 //!
-//! This file owns the [`Client`] struct, the [`MIN_LIBPOD_API_MAJOR`] floor
+//! This file owns the [`Client`] struct, the [`MIN_PODMAN_VERSION`] floor
 //! (read off the source by `tests/repository/packaging/podman_floor.rs`), the crate-internal
 //! [`Result`] alias, and the `mod` declarations that wire the rest of the
 //! client together. The supporting code is grouped one concern per folder:
@@ -30,6 +30,7 @@ use std::sync::Arc;
 
 use super::error::PodmanError;
 
+mod dry_run;
 mod exchange;
 mod init_cleanup;
 mod link;
@@ -80,16 +81,20 @@ pub struct Client {
 	/// The removals of init containers whose owner was cancelled, still running
 	/// in the background; see [`Client::drain_init_cleanups`].
 	init_cleanups: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+	/// `--dry-run`: every request that is not a read is refused before it is
+	/// sent; see [`Client::with_dry_run`].
+	dry_run: bool,
 }
 
-/// Lowest libpod API major version podup supports. Podman 5.x reports `5.x.y`;
-/// anything below `5.0` lacks SpecGenerator fields podup relies on.
+/// Lowest Podman release podup accepts, as `(major, minor, patch)`, compared
+/// against the `Libpod-API-Version` the server reports. There is no upper
+/// bound: a newer release is accepted as it ships.
 ///
 /// `tests/repository/packaging/podman_floor.rs` reads this declaration out of `mod.rs` as text and
 /// asserts the value stays in lockstep with `install.sh` and
 /// `debian/control`, so the constant stays in this file even though most of
 /// the rest of the module split out.
-const MIN_LIBPOD_API_MAJOR: u64 = 5;
+pub(crate) const MIN_PODMAN_VERSION: (u64, u64, u64) = (6, 2, 0);
 
 impl Drop for Client {
 	/// Close every held connection. Idle pooled connections are dropped via

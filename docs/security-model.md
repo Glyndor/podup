@@ -16,7 +16,7 @@ Runtime privileges, trust boundaries and validation. The [threat model](threat-m
 | Compose file and its referenced files | **Trusted input** | Treated like a Makefile (see below). |
 | Release artifacts (`podup update`, installer) | Untrusted transport | Binary installs verify a signed manifest and the selected digest against an embedded Ed25519 key; release CI also checks per-asset `.sig` files. The apt bootstrap verifies the keyring package's signature; apt then verifies the signed archive metadata and package hashes. Provenance attestation in the shell installers is defence-in-depth and only runs when a `gh` capable of verifying is present. |
 | Container filesystem (e.g. `cp` archives) | Untrusted | Tar extraction refuses path-traversal (zip-slip) entries; the host-side `cp` destination is also walked component by component and any symlink at any component of the path is refused. |
-| Network/TLS to GitHub/crates.io | Untrusted | Integrity comes from signatures, not transport. |
+| Network/TLS to GitHub | Untrusted | Integrity comes from signatures, not transport. |
 
 ## Compose files are trusted input
 
@@ -106,7 +106,7 @@ podup is not a sandbox. The points below are documented limits an operator or au
 
 ## What the live integration lane validates
 
-The `podman-lane` workflow boots Fedora qemu VMs in the runner with full systemd, once per supported Podman major (Fedora 44 for Podman 5, rawhide for Podman 6). Each VM runs the integration suite as a rootless user. The lane is a **required status check** on every pull request; runtime-irrelevant PRs skip VM boot. Per-major `.github/podman_lane/known-failures-<major>` files classify the failures the lane still sees; any test that fails without appearing on its major's list is reported as an unexpected regression.
+The `podman-lane` workflow boots a Fedora rawhide qemu VM in the runner with full systemd; rawhide carries the newest Podman. The VM runs the integration suite as a rootless user. The lane is a **required status check** on every pull request; runtime-irrelevant PRs skip VM boot. The `.github/podman_lane/known-failures-<major>` file for the Podman major the VM booted classifies the failures the lane still sees; any test that fails without appearing on that list is reported as an unexpected regression.
 
 Unit/mocked tests cannot establish every libpod behavior; live tests and fuzzing add evidence, not exhaustive coverage.
 

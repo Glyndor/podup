@@ -260,11 +260,9 @@ fn healthcheck_honors_explicit_interval_and_timeout() {
 
 #[test]
 fn healthcheck_with_nothing_set_sends_no_config() {
-	// A default `healthcheck:` block has no test and no timings. Podman 5.4.2
-	// (still supported) inherits the image HEALTHCHECK only when the whole
-	// `healthconfig` is absent from the request, while 5.7+ merges
-	// field-by-field and would inherit anyway; sending 30s/30s/3 would
-	// overwrite the image's values on the supported floor (#1893).
+	// A default `healthcheck:` block has no test and no timings. Sending
+	// 30s/30s/3 would overwrite the image's values, so the field is left out
+	// of the request (#1893).
 	let hc = HealthCheck::default();
 	assert!(build_healthcheck(&hc).is_none());
 }
@@ -275,10 +273,8 @@ fn healthcheck_with_an_empty_exec_test_inherits_like_no_test() {
 	// an empty Test as absent and inherits the image's HEALTHCHECK; sending
 	// the 30s/30s/3 compose defaults here would overwrite the image's values
 	// (#1893). Because the user set a timing, we still build a config (with
-	// `test == None`) so that override survives. On Podman 5.7+ libpod
-	// merges field-by-field and fills the rest from the image; on Podman
-	// 5.4.2 (still supported) a non-nil `healthconfig` without a `test`
-	// REPLACES the image probe, which is the documented divergence (#1893).
+	// `test == None`) so that override survives; libpod merges field by field
+	// and fills the rest from the image (Podman 6.2.0).
 	let hc = HealthCheck {
 		test: Some(ComposeCommand::Exec(vec![])),
 		interval: Some("5s".into()),
@@ -313,11 +309,9 @@ fn healthcheck_with_an_empty_shell_test_keeps_the_explicit_probe() {
 
 #[test]
 fn healthcheck_without_test_keeps_only_the_timings_the_user_set() {
-	// Without a `test`, fields the user did not set must stay `None`. On
-	// Podman 5.7+ libpod merges field-by-field and inherits the unset fields
-	// from the image; on Podman 5.4.2 a non-nil `healthconfig` without a
-	// `test` REPLACES the image probe rather than inheriting it, which is
-	// the documented divergence. Fields the user did set are passed through,
+	// Without a `test`, fields the user did not set must stay `None`: libpod
+	// merges field by field and inherits the unset fields from the image
+	// (Podman 6.2.0). Fields the user did set are passed through,
 	// with retries widened to i64 like the rest of the API (#1893).
 	let hc = HealthCheck {
 		interval: Some("5s".into()),

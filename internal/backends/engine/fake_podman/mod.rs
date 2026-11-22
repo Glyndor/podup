@@ -92,7 +92,7 @@ pub(super) enum FakeReply {
 
 /// A test's routing rule: `(method, target) -> reply`, where `target` is the
 /// request path plus its raw query string (e.g.
-/// `/v5.0.0/libpod/containers/proj-web-1/start`).
+/// `/v6.2.0/libpod/containers/proj-web-1/start`).
 pub(super) type Responder = dyn Fn(&str, &str) -> FakeReply + Send + Sync;
 
 /// A fake libpod socket driven by a routing closure; see [`Responder`].

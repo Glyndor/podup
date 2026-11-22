@@ -1,4 +1,4 @@
-.TH PODUP 1 "July 2026" "podup 3.3.0" "User Commands"
+.TH PODUP 1 "November 2026" "podup" "User Commands"
 .SH NAME
 podup \- run Compose projects on rootless Podman
 .SH SYNOPSIS
@@ -17,10 +17,10 @@ library.
 .PP
 .B podup
 requires
-.B Podman 5.0
-or newer: it targets the
-.B /v5.0.0/libpod
-API surface. The socket must be local \(em a
+.B Podman 6.2.0
+or newer, with no upper bound: it talks to the libpod API under the
+.B /v6.2.0/libpod
+path, which Podman 6 serves. The socket must be local \(em a
 .B unix://
 path (or an
 .B npipe://

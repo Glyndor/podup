@@ -93,8 +93,8 @@ pub struct PsDisplayOptions {
 	/// column, `-s/--size`.
 	///
 	/// Off by default because it is not free: libpod walks each container's
-	/// writable layer to answer, measured at 21 ms → 109 ms over 59 containers
-	/// on Podman 5.7.0. `docker ps -s` is opt-in for the same reason.
+	/// writable layer to answer, measured at 6 to 27 ms → 62 to 155 ms over 40
+	/// containers on Podman 6.2.0 (2026-11-22). `docker ps -s` is opt-in for the same reason.
 	pub size: bool,
 }
 

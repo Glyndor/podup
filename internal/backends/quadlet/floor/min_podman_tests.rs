@@ -1,25 +1,70 @@
-//! Tests for the `floor_required` / `contains_key` helpers and the table
-//! itself. The table is what guards every Quadlet export against landing on
-//! a Podman older than the unit's keys, so these tests pin both the
-//! expected floor per key (no silent regressions) and the table's coverage
-//! (no key registered without a row).
+//! Tests for the Quadlet key allowlists and the helpers the floor guards use.
+//! The allowlists are what stops a key newer than the floor's Quadlet from
+//! reaching a unit, so these tests pin what they accept and what they refuse.
 
-use super::{
-	floor, floor_required, is_floor_compliant, keys_in_unit, unit_type_from_filename, UnitType,
-};
+use super::{is_at_floor, keys_in_unit, unit_type_from_filename, UnitType};
 
+/// The keys that had to go through `PodmanArgs=` while Podman 5.0 was
+/// supported are native keys of the floor's Quadlet now.
 #[test]
-fn floor_is_5_0() {
-	assert_eq!(floor().major, 5);
-	assert_eq!(floor().minor, 0);
+fn keys_that_used_to_need_podman_args_are_floor_keys() {
+	let cases: &[(UnitType, &str)] = &[
+		(UnitType::Container, "GroupAdd"),
+		(UnitType::Container, "LogOpt"),
+		(UnitType::Container, "StopSignal"),
+		(UnitType::Container, "NetworkAlias"),
+		(UnitType::Container, "AddHost"),
+		(UnitType::Container, "Memory"),
+		(UnitType::Container, "AppArmor"),
+		(UnitType::Container, "Umask"),
+		(UnitType::Pod, "AddHost"),
+		(UnitType::Pod, "Label"),
+		(UnitType::Pod, "ExitPolicy"),
+		(UnitType::Pod, "DNS"),
+		(UnitType::Pod, "DNSOption"),
+		(UnitType::Pod, "DNSSearch"),
+		(UnitType::Pod, "UserNS"),
+		(UnitType::Pod, "ShmSize"),
+		(UnitType::Pod, "IP"),
+		(UnitType::Pod, "IP6"),
+		(UnitType::Pod, "NetworkAlias"),
+		(UnitType::Pod, "StopTimeout"),
+		(UnitType::Build, "BuildArg"),
+		(UnitType::Build, "IgnoreFile"),
+		(UnitType::Build, "ImageTag"),
+	];
+	for (unit_type, key) in cases {
+		assert!(
+			is_at_floor(*unit_type, key),
+			"{key} on {unit_type:?} must be a key of the floor's Quadlet"
+		);
+	}
+}
+
+/// Measured on Podman 6.2.0 (2026-11-22): the generator rejects these as
+/// unsupported keys, which is why the renderer still writes them as
+/// `PodmanArgs=` flags.
+#[test]
+fn flags_without_a_quadlet_key_are_not_floor_keys() {
+	let cases: &[(UnitType, &str)] = &[
+		(UnitType::Container, "Privileged"),
+		(UnitType::Container, "CPUs"),
+		(UnitType::Container, "OomScoreAdj"),
+		(UnitType::Pod, "Share"),
+		(UnitType::Build, "NoCache"),
+		(UnitType::Build, "Layers"),
+		(UnitType::Build, "AddHost"),
+	];
+	for (unit_type, key) in cases {
+		assert!(
+			!is_at_floor(*unit_type, key),
+			"{key} on {unit_type:?} is not a key of the floor's Quadlet"
+		);
+	}
 }
 
 #[test]
-fn table_covers_every_post_5_0_key_we_emit() {
-	// A smoke-check on the `is_floor_compliant` shape: every unit type
-	// should at least accept its own exemption (PodmanArgs) and the
-	// `.build` exemption. The real coverage check is in the floor /
-	// coverage integration tests in `quadlet/tests/floor_compat/emitted_keys.rs`.
+fn podman_args_and_global_args_exist_on_every_unit_type() {
 	for unit_type in [
 		UnitType::Container,
 		UnitType::Pod,
@@ -27,123 +72,9 @@ fn table_covers_every_post_5_0_key_we_emit() {
 		UnitType::Volume,
 		UnitType::Build,
 	] {
-		assert!(
-			is_floor_compliant(unit_type, "PodmanArgs"),
-			"PodmanArgs= must be exempt on {unit_type:?}"
-		);
-	}
-}
-
-/// Every documented above-floor key resolves to the right release.
-#[test]
-fn each_registered_key_resolves_to_its_release() {
-	let cases: &[(UnitType, &str, u16, u16)] = &[
-		(UnitType::Container, "GroupAdd", 5, 1),
-		(UnitType::Container, "LogOpt", 5, 2),
-		(UnitType::Container, "StopSignal", 5, 2),
-		(UnitType::Container, "NetworkAlias", 5, 2),
-		(UnitType::Container, "AddHost", 5, 3),
-		(UnitType::Build, "Retry", 5, 5),
-		(UnitType::Build, "RetryDelay", 5, 5),
-		(UnitType::Build, "BuildArg", 5, 7),
-		(UnitType::Build, "IgnoreFile", 5, 7),
-	];
-	for (unit_type, key, major, minor) in cases {
-		let v = floor_required(*unit_type, key)
-			.unwrap_or_else(|| panic!("table must cover {key} on {unit_type:?}"));
-		assert_eq!(
-			(v.major, v.minor),
-			(*major, *minor),
-			"{key} on {unit_type:?} must be {major}.{minor}"
-		);
-	}
-}
-
-/// Every post-5.0 `[Pod]` key resolves to the release that introduced it.
-#[test]
-fn pod_keys_resolve_to_release() {
-	let cases: &[(UnitType, &str, u16, u16)] = &[
-		(UnitType::Pod, "NetworkAlias", 5, 2),
-		(UnitType::Pod, "AddHost", 5, 3),
-		(UnitType::Pod, "DNS", 5, 3),
-		(UnitType::Pod, "DNSOption", 5, 3),
-		(UnitType::Pod, "DNSSearch", 5, 3),
-		(UnitType::Pod, "IP", 5, 3),
-		(UnitType::Pod, "IP6", 5, 3),
-		(UnitType::Pod, "UserNS", 5, 3),
-		(UnitType::Pod, "ShmSize", 5, 4),
-		(UnitType::Pod, "HostName", 5, 5),
-		(UnitType::Pod, "Label", 5, 6),
-		(UnitType::Pod, "ExitPolicy", 5, 6),
-		(UnitType::Pod, "StopTimeout", 5, 7),
-	];
-	for (unit_type, key, major, minor) in cases {
-		let version = floor_required(*unit_type, key)
-			.unwrap_or_else(|| panic!("table must cover {key} on {unit_type:?}"));
-		assert_eq!(
-			(version.major, version.minor),
-			(*major, *minor),
-			"{key} on {unit_type:?} must be {major}.{minor}"
-		);
-	}
-}
-
-/// The `.build` unit type landed in 5.2.0 with the keys listed in
-/// `is_5_2_build_key`. Every key the renderer emits on `[Build]` must be
-/// in that set, in the post-5.2 table, or be a floor-exempt passthrough.
-/// `Retry=` (5.5.0) and a hypothetical `MadeUpKey=` (never landed) both
-/// fail; `ImageTag=` (5.2.0) and `PodmanArgs=` (exempt) both pass.
-#[test]
-fn build_unit_type_allowlist() {
-	let allowed: &[&str] = &[
-		"ImageTag",
-		"SetWorkingDirectory",
-		"File",
-		"Target",
-		"Network",
-		"Label",
-		"PodmanArgs",
-	];
-	for key in allowed {
-		assert!(
-			is_floor_compliant(UnitType::Build, key),
-			"{key}= must be floor-compliant on Build (5.2 set or exempt)"
-		);
-	}
-	// Post-5.2 keys must be in the table.
-	assert!(
-		is_floor_compliant(UnitType::Build, "Retry"),
-		"Retry= on Build must be floor-compliant (5.5.0 row)"
-	);
-	assert!(
-		is_floor_compliant(UnitType::Build, "BuildArg"),
-		"BuildArg= on Build must be floor-compliant (5.7.0 row)"
-	);
-	// A key that has never landed fails.
-	assert!(
-		!is_floor_compliant(UnitType::Build, "MadeUpKey"),
-		"MadeUpKey= on Build must fail the guard"
-	);
-}
-
-/// `PodmanArgs=` and `GlobalArgs=` are exempt: they appear on every unit
-/// type in 5.0, so neither gating them nor naming them in the table helps.
-#[test]
-fn podman_args_and_global_args_are_exempt() {
-	for unit_type in [
-		UnitType::Container,
-		UnitType::Pod,
-		UnitType::Network,
-		UnitType::Volume,
-	] {
-		assert!(
-			floor_required(unit_type, "PodmanArgs").is_none(),
-			"PodmanArgs= must be exempt on {unit_type:?}"
-		);
-		assert!(
-			floor_required(unit_type, "GlobalArgs").is_none(),
-			"GlobalArgs= must be exempt on {unit_type:?}"
-		);
+		for key in ["PodmanArgs", "GlobalArgs"] {
+			assert!(is_at_floor(unit_type, key), "{key}= on {unit_type:?}");
+		}
 	}
 }
 

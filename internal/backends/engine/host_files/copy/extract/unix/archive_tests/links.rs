@@ -33,7 +33,8 @@ fn ordinary_entries_keep_contents_links_and_sanitized_modes() {
 		std::fs::metadata(tmp.path().join("sub"))
 			.unwrap()
 			.permissions()
-			.mode() & 0o7777,
+			.mode()
+			& 0o7777,
 		0o755
 	);
 }

@@ -31,17 +31,17 @@ fn assert_control_dns_fallback(field: &str, key: &str, flag: &str, value: &str) 
 
 #[test]
 fn dns_control_only_entry_stays_on_containers() {
-	assert_control_dns_fallback("dns", "DNS", "--dns=", "1.1.1.1");
+	assert_control_dns_fallback("dns", "DNS", "DNS=", "1.1.1.1");
 }
 
 #[test]
 fn dns_option_control_only_entry_stays_on_containers() {
-	assert_control_dns_fallback("dns_opt", "DNSOption", "--dns-option=", "ndots:1");
+	assert_control_dns_fallback("dns_opt", "DNSOption", "DNSOption=", "ndots:1");
 }
 
 #[test]
 fn dns_search_control_only_entry_stays_on_containers() {
-	assert_control_dns_fallback("dns_search", "DNSSearch", "--dns-search=", "example.com");
+	assert_control_dns_fallback("dns_search", "DNSSearch", "DNSSearch=", "example.com");
 }
 
 #[test]
@@ -55,15 +55,15 @@ fn container_hostname_trims_native_boundary_spaces() {
 
 #[test]
 fn promoted_dns_trims_native_boundary_spaces() {
-	for (field, key, flag, value) in [
-		("dns", "DNS", "--dns", "1.1.1.1"),
-		("dns_opt", "DNSOption", "--dns-option", "ndots:1"),
-		("dns_search", "DNSSearch", "--dns-search", "example.com"),
+	for (field, key, value) in [
+		("dns", "DNS", "1.1.1.1"),
+		("dns_opt", "DNSOption", "ndots:1"),
+		("dns_search", "DNSSearch", "example.com"),
 	] {
 		let out = render(&two_services(&format!("    {field}: [' {value} ']\n")));
 		assert!(unit(&out, "demo.pod")
 			.contents
-			.contains(&format!("PodmanArgs={flag}=\"{value}\"\n")));
+			.contains(&format!("{key}={value}\n")));
 		for name in ["demo-web.container", "demo-db.container"] {
 			assert!(!unit(&out, name).contents.contains(&format!("{key}=")));
 		}
@@ -89,11 +89,17 @@ fn assert_native_quoted_boundary_spaces(yaml: &str, flag: &str, value: &str) {
 	}
 }
 
+/// Quadlet trims the value of a native key, so a host entry with a space at
+/// either end would reach Podman as another entry. It stays on `PodmanArgs=`,
+/// which keeps the bytes, on the pod and on the container alike.
 #[test]
 fn promoted_add_host_keeps_container_quoted_boundary_spaces() {
 	let yaml = two_services("    extra_hosts: [' cache:10.0.0.2 ']\n");
 	assert_quoted_boundary_spaces(&yaml, "--add-host", "cache:10.0.0.2");
 	assert_native_quoted_boundary_spaces(&yaml, "--add-host", "cache:10.0.0.2");
+	assert!(!unit(&render(&yaml), "demo.pod")
+		.contents
+		.contains("AddHost= "));
 }
 
 #[test]

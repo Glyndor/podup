@@ -25,10 +25,14 @@ pub(crate) fn resolve_socket(cli_socket: Option<&str>) -> Option<String> {
 pub(crate) async fn connect_podman(
 	socket: Option<&str>,
 	pool_size: Option<usize>,
+	dry_run: bool,
 ) -> podup::Result<podup::Client> {
-	podup::podman::connect_checked(
+	let client = podup::podman::connect_checked(
 		resolve_socket(socket).as_deref(),
 		pool_size.unwrap_or(podup::Client::DEFAULT_POOL_SIZE),
 	)
-	.await
+	.await?;
+	// Under `--dry-run` the client itself refuses any request that is not a
+	// read, so a path that nobody guarded still cannot change anything.
+	Ok(client.with_dry_run(dry_run))
 }

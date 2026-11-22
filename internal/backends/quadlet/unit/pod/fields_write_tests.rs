@@ -15,17 +15,14 @@ fn hostname_stays_on_each_container() {
 #[test]
 fn pod_writes_dns() {
 	let pod = pod_contents(&two_services("    dns:\n      - 1.1.1.1\n"));
-	assert!(
-		pod.contains("PodmanArgs=--dns=\"1.1.1.1\""),
-		"missing DNS flag in:\n{pod}"
-	);
+	assert!(pod.contains("DNS=1.1.1.1\n"), "missing DNS flag in:\n{pod}");
 }
 
 #[test]
 fn pod_writes_dns_option() {
 	let pod = pod_contents(&two_services("    dns_opt:\n      - ndots:1\n"));
 	assert!(
-		pod.contains("PodmanArgs=--dns-option=\"ndots:1\""),
+		pod.contains("DNSOption=ndots:1\n"),
 		"missing DNS option flag in:\n{pod}"
 	);
 }
@@ -34,7 +31,7 @@ fn pod_writes_dns_option() {
 fn pod_writes_dns_search() {
 	let pod = pod_contents(&two_services("    dns_search:\n      - example.com\n"));
 	assert!(
-		pod.contains("PodmanArgs=--dns-search=\"example.com\""),
+		pod.contains("DNSSearch=example.com\n"),
 		"missing DNS search flag in:\n{pod}"
 	);
 }
@@ -43,7 +40,7 @@ fn pod_writes_dns_search() {
 fn pod_writes_extra_hosts() {
 	let pod = pod_contents(&two_services("    extra_hosts:\n      - \"db:10.0.0.2\"\n"));
 	assert!(
-		pod.contains("PodmanArgs=--add-host=\"db:10.0.0.2\""),
+		pod.contains("AddHost=db:10.0.0.2\n"),
 		"missing add-host flag in:\n{pod}"
 	);
 }
@@ -62,7 +59,7 @@ fn pod_keeps_volumes_off_infra() {
 fn pod_writes_userns() {
 	let pod = pod_contents(&two_services("    userns_mode: keep-id\n"));
 	assert!(
-		pod.contains("PodmanArgs=--userns=\"keep-id\""),
+		pod.contains("UserNS=keep-id\n"),
 		"missing user namespace flag in:\n{pod}"
 	);
 }
@@ -71,7 +68,7 @@ fn pod_writes_userns() {
 fn pod_writes_shm_size_in_bytes() {
 	let pod = pod_contents(&two_services("    shm_size: 64m\n"));
 	assert!(
-		pod.contains("PodmanArgs=--shm-size=\"67108864\""),
+		pod.contains("ShmSize=67108864\n"),
 		"missing shared-memory flag in:\n{pod}"
 	);
 }
@@ -82,7 +79,7 @@ fn pod_writes_static_ipv4() {
 	let pod = pod_contents(&two_services_on_front(field));
 	assert!(pod.contains("Network=demo-front.network\n"), "{pod}");
 	assert!(
-		pod.contains("PodmanArgs=--ip=\"10.5.0.7\""),
+		pod.contains("IP=10.5.0.7\n"),
 		"missing IPv4 flag in:\n{pod}"
 	);
 }
@@ -93,7 +90,7 @@ fn pod_writes_static_ipv6() {
 	let pod = pod_contents(&two_services_on_front(field));
 	assert!(pod.contains("Network=demo-front.network\n"), "{pod}");
 	assert!(
-		pod.contains("PodmanArgs=--ip6=\"2001:db8::7\""),
+		pod.contains("IP6=2001:db8::7\n"),
 		"missing IPv6 flag in:\n{pod}"
 	);
 }
@@ -104,7 +101,7 @@ fn pod_writes_network_alias() {
 	let pod = pod_contents(&two_services_on_front(field));
 	assert!(pod.contains("Network=demo-front.network\n"), "{pod}");
 	assert!(
-		pod.contains("PodmanArgs=--network-alias=\"shared-alias\""),
+		pod.contains("NetworkAlias=shared-alias\n"),
 		"missing network alias flag in:\n{pod}"
 	);
 }
@@ -113,7 +110,7 @@ fn pod_writes_network_alias() {
 fn pod_keeps_service_labels_off_pod() {
 	let pod = pod_contents(&two_services("    labels:\n      team: core\n"));
 	assert!(
-		!pod.contains("PodmanArgs=--label=\"team=core\""),
+		!pod.contains("Label=team=core"),
 		"pod took container metadata:\n{pod}"
 	);
 }

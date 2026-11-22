@@ -60,8 +60,8 @@ pub(crate) fn proj(tag: &str) -> String {
 /// this lock before it calls `up` and holds it through teardown, so two lanes
 /// never race on the host's subordinate UID range.
 ///
-/// Measured on Podman 5.7.0 against a 65536-ID subuid range on
-/// 2026-09-22: `--userns=auto` hands out 1024-block ranges from the tail of
+/// Measured on Podman 5.7.0 (not repeated on 6.2.0) against a 65536-ID subuid
+/// range on 2026-09-22: `--userns=auto` hands out 1024-block ranges from the tail of
 /// the subuid pool, and the tail is only ~4261 IDs. One `--userns=auto`
 /// container takes one of those blocks; `--userns=auto:size=2048` takes two
 /// blocks by itself. Without this lock two lanes could easily drive the live
@@ -77,8 +77,8 @@ pub(crate) static USERNS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new
 /// overlap. Tests that do not build an image do not take it, and builders in
 /// other test files do not take it.
 ///
-/// Measured on the real store (Podman 5.7.0, eight test threads,
-/// 2026-09-28):
+/// Measured on the real store (Podman 5.7.0, not repeated on 6.2.0, eight test
+/// threads, 2026-09-28):
 ///
 /// - `build_images` only, five runs: 13/13 each.
 /// - Lock disabled: two of three runs failed four tests with

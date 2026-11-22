@@ -4,7 +4,7 @@ Contributions are invitation-only. Bug reports and ideas through issues are welc
 
 ## What this repository is
 
-The internal Rust library supports tests; it is unpublished and has no stable API promise. Release CI uploads artifacts without committing. Dependabot changes require review.
+The internal Rust library supports tests; it is unpublished and has no stable API promise.
 
 ## Building from source
 
@@ -20,14 +20,13 @@ The binary is `target/release/podup`. The default build enables watch, completio
 
 - Branch from `develop` and target `develop`; `main` accepts the release PR from `develop`.
 - Squash into `develop`; use a Conventional Commit PR title.
-- Merge the release PR into `main` with a merge commit. Release tags must be reachable from `main`.
 
 Mention the issue in the PR and mark its status done. It closes when the release PR merges into `main`.
 
 ## Before you open a pull request
 
 - Open an issue and apply its `type:`, `prio:`, `effort:`, `status:` and `area:` labels.
-- Sign commits and add DCO sign-off with `git commit -s`.
+- Sign commits and add DCO sign-off with `git commit -s`, using your GitHub noreply address (`git config user.email`). `commit hygiene` rejects any other address in the author, `Signed-off-by` or `Co-authored-by`, and a line that looks like a credential.
 - Use a Conventional Commit PR title.
 
 ## Tests
@@ -65,16 +64,14 @@ CI is split by responsibility rather than gathered in one file:
 | `lint-powershell.yml` | PSScriptAnalyzer on `install.ps1` |
 | `debian-build.yml` | the `.deb` builds under `debian/rules`' narrower feature set, on every change that can shift it |
 | `binary-budget.yml` | the release binary fits `bench/budgets/binary-budget-mib` |
-| `asset-contract.yml` | the release asset names, signing-key rotation, install self-test, and shell/PowerShell signing fixtures |
-| `podman-lane.yml` | the integration suite against live Podman 5 and Podman 6 in a Fedora qemu VM, with VM boot skipped for changes that cannot affect runtime behaviour (prose, templates) |
+| `asset-contract.yml` | the release asset names, install self-test, and shell/PowerShell signing fixtures |
+| `podman-lane.yml` | the integration suite against live Podman 6 in a Fedora rawhide qemu VM, with VM boot skipped for changes that cannot affect runtime behaviour (prose, templates) |
 | `podman-lane-develop-nightly.yml` | the coverage lane against Podman 6, fired nightly from `develop` |
 | `dco.yml`, `line-limit.yml`, `workflow-lint.yml` | one rule each |
 | `main-guard.yml` | `develop-only`: only the release pull request can target `main` |
-| `release.yml` | tag validity, Cargo.toml / debian/changelog / Cargo.lock agreement, `cargo audit`, signed binaries, GitHub Release |
+| `release.yml` | the release checks, signed binaries, GitHub Release |
 
 Package and semver checks are disabled in `ci.yml`. Reusable workflows are local files under `.github/workflows/`.
-
-Renaming a job changes its required-check name. Update the ruleset when renaming jobs.
 
 ## Security
 

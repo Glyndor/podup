@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use tempfile::TempDir;
 
-/// What the client asked for: `GET /v5.0.0/libpod/events?...`.
+/// What the client asked for: `GET /v6.2.0/libpod/events?...`.
 pub struct Request {
 	pub target: String,
 }
@@ -94,7 +94,7 @@ pub fn reply(stream: &mut UnixStream, status: u16, headers: &str, body: &[u8]) {
 
 /// The answer to `_ping` that lets the command carry on.
 pub fn ping_ok(stream: &mut UnixStream) {
-	reply(stream, 200, "Libpod-API-Version: 5.0.0\r\n", b"OK");
+	reply(stream, 200, "Libpod-API-Version: 6.2.0\r\n", b"OK");
 }
 
 /// Write `chunk` until the client hangs up or `limit` bytes have gone out.

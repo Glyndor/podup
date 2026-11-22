@@ -197,6 +197,15 @@ pub(crate) struct Cli {
 	#[arg(long, global = true)]
 	pub(crate) no_warn: bool,
 
+	/// Show what a command would do and change nothing: no request that is not
+	/// a read reaches Podman, and nothing is written on the host. Commands that
+	/// only read (`ps`, `config`, `ls`, `images`, `volumes`, `audit`, `version`,
+	/// `port`, `logs`, `events`, `stats`) run as usual; a command
+	/// that would change something refuses with an error instead of ignoring the
+	/// flag. `autostart install` prints the unit and the actions it would run.
+	#[arg(long, global = true)]
+	pub(crate) dry_run: bool,
+
 	#[command(subcommand)]
 	pub(crate) command: Commands,
 }

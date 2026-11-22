@@ -104,7 +104,7 @@ concurrency:
 jobs:
   debian:
     # v1.17.0 added rust-toolchain and rust-target. It was pinned here at the
-    # untagged commit first, because the CI standard asks for a reusable to be
+    # untagged commit first, because a reusable should be
     # proven on a real consumer before its tag is cut - .github's own CI never
     # exercises a caller. This repository's dpkg-buildpackage job was that
     # proof, going from red to green in 6m36s on #1525.
@@ -117,5 +117,5 @@ jobs:
       # Debian's toolchain ships no musl standard library. Keep this in step
       # with rust-ci.yml's default: the whole point is that the packaged binary
       # comes from the compiler CI validates with.
-      rust-toolchain: "1.99"
+      rust-toolchain: "1.100"
       rust-target: x86_64-unknown-linux-musl

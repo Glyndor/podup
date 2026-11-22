@@ -4,8 +4,10 @@ use crate::compose::types::Service;
 
 use super::{container_name, quote_podman_arg_value, Section, UnitContext};
 
-/// Use CLI flags available at the Quadlet floor; PodmanArgs does not resolve
-/// sibling unit references, so IPC/PID must name the exported container itself.
+/// Quadlet 6.2.0 has no key for these namespaces (measured 2026-11-22: the
+/// generator rejects `IPC=`, `PID=` and `UTS=`), so they are CLI flags;
+/// PodmanArgs does not resolve sibling unit references, so IPC/PID must name
+/// the exported container itself.
 pub(super) fn emit_namespaces(service: &Service, ctx: &UnitContext<'_>, container: &mut Section) {
 	for (flag, mode, service_reference) in [
 		("ipc", &service.ipc, true),

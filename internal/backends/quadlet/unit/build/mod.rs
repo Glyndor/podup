@@ -11,8 +11,7 @@ use indexmap::IndexMap;
 use crate::compose::types::{BuildConfig, SecretConfig, Service};
 
 use super::{
-	collect_build_warnings, owner_marker, quote_podman_arg_value, sorted_label_pairs, unit_stem,
-	QuadletUnit, Section,
+	collect_build_warnings, owner_marker, sorted_label_pairs, unit_stem, QuadletUnit, Section,
 };
 
 mod fields;
@@ -160,22 +159,18 @@ pub(crate) fn build_unit(
 			let mut build_args: Vec<(String, Option<String>)> = args.to_map().into_iter().collect();
 			build_args.sort_by(|a, b| a.0.cmp(&b.0));
 			for (key, val) in build_args {
-				// `BuildArg=` is not a recognised [Build] Quadlet key (Quadlet would
-				// drop the whole unit at daemon-reload), so route build args through
-				// PodmanArgs= as `--build-arg`, like the container CPU/memory limits.
+				// An empty key would render as a bare `BuildArg=`, which resets the
+				// list instead of adding an argument. A key with no value is
+				// forwarded as `--build-arg KEY`, which takes the value from the
+				// environment of the build.
+				if key.is_empty() {
+					continue;
+				}
 				match val {
-					Some(v) => section.add(
-						"PodmanArgs",
-						format!(
-							"--build-arg {}={}",
-							quote_podman_arg_value(&key),
-							quote_podman_arg_value(&v)
-						),
-					),
-					None => section.add(
-						"PodmanArgs",
-						format!("--build-arg {}", quote_podman_arg_value(&key)),
-					),
+					Some(v) => {
+						section.add_native("BuildArg", "--build-arg ", &format!("{key}={v}"))
+					}
+					None => section.add_native("BuildArg", "--build-arg ", &key),
 				}
 			}
 			for (key, val) in sorted_label_pairs(labels.to_map()) {

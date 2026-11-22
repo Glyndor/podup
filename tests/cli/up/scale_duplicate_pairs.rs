@@ -102,7 +102,7 @@ fn run(handler: fake_engine::Handler, args: &[&str]) -> Vec<String> {
 #[test]
 fn scale_with_a_service_twice_creates_the_last_count() {
 	let lines = run(no_replicas, &["scale", "web=1", "web=3"]);
-	assert_eq!(count(&lines, "POST /v5.0.0/libpod/containers/create"), 3);
+	assert_eq!(count(&lines, "POST /v6.2.0/libpod/containers/create"), 3);
 	assert_eq!(started(&lines), ["demo-web-1", "demo-web-2", "demo-web-3"]);
 	assert!(deleted(&lines).is_empty(), "{lines:?}");
 }
@@ -111,14 +111,14 @@ fn scale_with_a_service_twice_creates_the_last_count() {
 fn scale_with_a_service_twice_removes_down_to_the_last_count() {
 	let lines = run(three_replicas, &["scale", "web=3", "web=1"]);
 	assert_eq!(deleted(&lines), ["demo-web-2", "demo-web-3"]);
-	assert_eq!(count(&lines, "POST /v5.0.0/libpod/containers/create"), 0);
+	assert_eq!(count(&lines, "POST /v6.2.0/libpod/containers/create"), 0);
 }
 
 #[test]
 fn scale_with_a_service_twice_keeps_every_replica_when_the_last_count_is_three() {
 	let lines = run(three_replicas, &["scale", "web=1", "web=3"]);
 	assert!(deleted(&lines).is_empty(), "{lines:?}");
-	assert_eq!(count(&lines, "POST /v5.0.0/libpod/containers/create"), 0);
+	assert_eq!(count(&lines, "POST /v6.2.0/libpod/containers/create"), 0);
 }
 
 #[test]
@@ -127,7 +127,7 @@ fn a_repeated_up_scale_creates_the_last_count() {
 		no_replicas,
 		&["up", "-d", "--scale", "web=1", "--scale", "web=3"],
 	);
-	assert_eq!(count(&lines, "POST /v5.0.0/libpod/containers/create"), 3);
+	assert_eq!(count(&lines, "POST /v6.2.0/libpod/containers/create"), 3);
 	assert_eq!(started(&lines), ["demo-web-1", "demo-web-2", "demo-web-3"]);
 	assert!(deleted(&lines).is_empty(), "{lines:?}");
 }

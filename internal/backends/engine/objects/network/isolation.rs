@@ -8,33 +8,35 @@ const ISOLATE_OPT: &str = "isolate";
 /// Ask netavark to isolate a bridge network unless the compose file said
 /// otherwise.
 ///
-/// Docker isolates its bridge networks from each other and podman does not, so
-/// without this a service reaches ports on a neighbouring network that were
-/// never published. Measured on 2026-08-20 with the same experiment on both
-/// engines: a listener on an unpublished port in network B, and a container in
-/// network A dialling its address:
+/// Docker isolates its bridge networks from each other, and podman used to
+/// leave them reachable, so a service could reach ports on a neighbouring
+/// network that were never published. Measured on 2026-08-20 with the same
+/// experiment on both engines (a listener on an unpublished port in network B,
+/// and a container in network A dialling its address):
 ///
 /// | engine | result |
 /// |---|---|
 /// | docker 29.6.2 | refused |
 /// | podman 5.7.0 | connected |
 ///
-/// The control matters: inside the *same* network docker connects, so the
-/// refusal is isolation rather than a broken dial.
+/// Measured again on podman 6.2.0 with netavark 2.1.0 on 2026-11-22: a plain
+/// network created with no options now refuses the dial as well, and
+/// `isolate=false` connects. In that setup the default is already isolated and
+/// this function only makes it explicit; it is kept so the result does not
+/// depend on the host's netavark default, and so `isolate: false` in the
+/// compose file stays the way to opt out. Inside the *same* network the dial
+/// connects, so the refusal is isolation rather than a broken dial.
 ///
-/// Also measured on podman 5.7.0 with the option set: traffic within one
-/// network still flows (compose keeps working) and outbound internet still
+/// Measured on podman 5.7.0 with the option set (not repeated): traffic within
+/// one network still flows (compose keeps working) and outbound internet still
 /// works.
 ///
-/// **The option only bites when both networks carry it.** Measured three ways:
-/// isolated → isolated is refused, isolated → plain connects, and plain →
-/// isolated connects. So this does not harden a network against the world; it
-/// makes networks that share the default stop seeing each other. Since podup
-/// now sets it on every bridge network it creates, the effect is that two
-/// podup projects no longer reach each other's unpublished ports, verified
-/// end to end with two projects, while a network created outside podup
-/// without the option still can. Being a default rather than opt-in is the
-/// whole point: one project opting in would protect nobody.
+/// **The option only bites when both networks carry it** (measured three ways
+/// on 5.7.0, not repeated): isolated → isolated is refused, isolated → plain
+/// connects, and plain → isolated connects. So this does not harden a network
+/// against the world; it makes networks that share the default stop seeing
+/// each other. Being a default rather than opt-in is the whole point: one
+/// project opting in would protect nobody.
 ///
 /// A compose file that sets `isolate` in `driver_opts` wins, including setting
 /// it to `false`, which is the escape hatch for a project that deliberately

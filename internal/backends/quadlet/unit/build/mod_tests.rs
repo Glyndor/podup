@@ -19,7 +19,7 @@ fn abs_context_makes_relative_build_contexts_absolute() {
 /// always names the image the build step stored.
 ///
 /// Each input/output pair was checked against `podman build -t <input>`
-/// on Podman 5.x: `podman images --format '{{.Repository}}:{{.Tag}}'`
+/// on Podman 6.2.0 (2026-11-22): `podman images --format '{{.Repository}}:{{.Tag}}'`
 /// after the build shows `localhost/<input>:latest`, and
 /// `podman run --pull never <output>` resolves to that exact entry.
 #[test]

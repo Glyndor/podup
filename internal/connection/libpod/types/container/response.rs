@@ -37,7 +37,7 @@ pub struct ContainerListEntry {
 	/// later pull, build or `podman tag` can point at a different image without
 	/// touching the container. `up` compares it against what the service's tag
 	/// resolves to now, which is how a container built from an older image gets
-	/// recreated (#1620). Measured on Podman 5.7.0: `ImageID` on the list
+	/// recreated (#1620). Measured on Podman 6.2.0 (2026-11-22): `ImageID` on the list
 	/// endpoint equals `Id` on `GET /libpod/images/{name}/json`.
 	#[serde(rename = "ImageID", default)]
 	pub image_id: String,
@@ -80,7 +80,7 @@ pub struct ContainerListEntry {
 	/// When the container was created, as an RFC 3339 string.
 	///
 	/// Not the docker-compatible `CreatedAt`, which libpod also sends and leaves
-	/// **empty**, measured on Podman 5.7.0. Reading the familiar name gets a
+	/// **empty**, measured on Podman 6.2.0 (2026-11-22). Reading the familiar name gets a
 	/// blank column, the same trap as `Status` versus `State` above.
 	#[serde(rename = "Created", default)]
 	pub created: String,
@@ -179,7 +179,7 @@ pub struct ContainerMount {
 
 	/// Whether the mount is read-write.
 	///
-	/// libpod always sends the field. An older server that left it out is
+	/// libpod always sends the field. An answer that leaves it out is
 	/// read as read-write, the ordinary case: reading it as read-only would
 	/// turn the replacement's mount into a `ro` one the operator never asked
 	/// for.

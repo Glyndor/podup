@@ -63,7 +63,7 @@ An `env_file` entry is read as dotenv by default. Unquoted and double-quoted val
 
 Interpolation follows `docker compose config`. A form Docker refuses is an error that names the key, such as `${A:foo}`, `${A:=foo}` or an unclosed `${A`. A `{` inside a default is text (`${A:-{}` gives `{`), and the message of `${A:?msg}` is interpolated too. Mapping keys are not interpolated: `${NAME}` as a key stays as written, with a warning. The project `.env` is read as strictly as `--env-file`, so a required variable with no value or an invalid form in it is an error naming the file and the key.
 
-`umask` sets the initial process permission mask. Use a string of one to four octal digits, such as `"0022"`, `"022"` or `"22"` (range `0000` to `7777`). Only integer `0` is accepted; quote every other numeric value to avoid YAML radix ambiguity. Validation follows normal interpolation and refuses leftover variables with the service name and a quote hint before container or pod replacement. Normal interpolation can turn numeric text into a YAML integer, so use a leading-zero value such as `0022`. With `config --no-interpolate`, a placeholder in `umask` is refused because the typed field still requires a valid mask. Valid output is padded to four digits. Omitted or null leaves the runtime default; explicit zero sends `"0000"` and masks no permission bits. The quadlet export uses `PodmanArgs=--umask=<value>`, compatible with Podman 5.0. Scalar inheritance, `!reset` and `!override` apply. Explicit `umask: null` changes the configuration hash once on upgrade because the previously unknown null key is now omitted. Tagged payloads use normal interpolation before merge tags are stripped; unresolved masks still fail validation.
+`umask` sets the initial process permission mask. Use a string of one to four octal digits, such as `"0022"`, `"022"` or `"22"` (range `0000` to `7777`). Only integer `0` is accepted; quote every other numeric value to avoid YAML radix ambiguity. Validation follows normal interpolation and refuses leftover variables with the service name and a quote hint before container or pod replacement. Normal interpolation can turn numeric text into a YAML integer, so use a leading-zero value such as `0022`. With `config --no-interpolate`, a placeholder in `umask` is refused because the typed field still requires a valid mask. Valid output is padded to four digits. Omitted or null leaves the runtime default; explicit zero sends `"0000"` and masks no permission bits. The quadlet export writes it as `Umask=<value>`. Scalar inheritance, `!reset` and `!override` apply. Explicit `umask: null` changes the configuration hash once on upgrade because the previously unknown null key is now omitted. Tagged payloads use normal interpolation before merge tags are stripped; unresolved masks still fail validation.
 
 `command:` and `entrypoint:` given as a string are split into words the way Docker Compose splits them, and run without a shell: `entrypoint: echo got` with `command: [x, y]` runs `echo got x y`. Whitespace separates words, single and double quotes group, and a backslash keeps the next character (`\n` and `\t` are a newline and a tab). Shell syntax is not interpreted. An unquoted `;`, `&`, `|`, `<` or `>` ends the string and the rest is dropped, as Compose does (`command: make && make install` runs `make`; podup names the dropped part in a warning), and an unquoted parenthesis or a quote that never closes fails the load. For a shell, write the list form (`["sh", "-c", "make && make install"]`) or `sh -c '...'` with the script in quotes. The same rules apply to `run --entrypoint`. A healthcheck `test:` string still runs through `sh -c`.
 
@@ -85,13 +85,13 @@ Pod mode writes one `.pod` unit for the project. Fields that every service decla
 
 Each service's `hostname` stays on its `.container` unit as `HostName=` and is never promoted to the pod. Service labels stay on every container and never become pod labels. All volumes stay on their containers, including named, bind, anonymous and long-form tmpfs mounts. The `tmpfs` field also stays container-level. Mounting a named volume on the infra container could change which image initializes its contents.
 
-If services disagree, or only some services declare the field, podup emits a warning and keeps the value on each container. DNS lists move only when every entry is nonempty and nonblank after control characters are stripped; otherwise they remain on the containers with a warning, preserving native list-reset behavior. Static IPv4 and IPv6 addresses move only when the pod attaches to exactly one declared network. With multiple networks, including unused top-level declarations, addresses remain on the containers with a warning. The native Quadlet keys added after 5.0 travel through `PodmanArgs=`, so the unit still loads on Podman 5.0.
+If services disagree, or only some services declare the field, podup emits a warning and keeps the value on each container. DNS lists move only when every entry is nonempty and nonblank after control characters are stripped; otherwise they remain on the containers with a warning, preserving native list-reset behavior. Static IPv4 and IPv6 addresses move only when the pod attaches to exactly one declared network. With multiple networks, including unused top-level declarations, addresses remain on the containers with a warning.
 
 `shm_size` is the exception. Podman ignores a member's own shared-memory size and mounts the pod's size in every member, so podup puts the largest declared size on the pod and warns when the declaring services disagree. The warning names those services and the selected size. A service that does not declare `shm_size` does not count as a disagreement.
 
 Promoted native container values, including DNS, discard boundary whitespace after control characters are stripped. Extra hosts and network aliases keep the same quoted argument values as their container emitters, including boundary spaces.
 
-The pod keeps `PodmanArgs=--share=net` and `PodmanArgs=--exit-policy=continue`. Only the network namespace is shared, so every member keeps its own hostname and UTS namespace; the exit policy keeps the infra container running when the last service exits. Pod-level stop timeout has no Compose source and stays unset. A service's `stop_grace_period` remains a container-level timeout.
+The pod keeps `PodmanArgs=--share=net` and `ExitPolicy=continue`. Only the network namespace is shared, so every member keeps its own hostname and UTS namespace; the exit policy keeps the infra container running when the last service exits. Pod-level stop timeout has no Compose source and stays unset. A service's `stop_grace_period` remains a container-level timeout.
 
 ### Bridge network isolation
 
@@ -239,7 +239,7 @@ services:
     userns_mode: auto
 ```
 
-`auto` needs available subuid/subgid ranges; request `auto:size=65536` only if it fits. Existing `keep-id`/`nomap` allocations may exhaust them. `keep-id` creates are serialized per command after observed Podman 5.7.0 mapping failures (2026-09-27); separate commands may overlap. Mount permissions must allow mapped IDs. `:U` recursively changes host ownership; separate ranges need compatible permissions for shared volumes.
+`auto` needs available subuid/subgid ranges; request `auto:size=65536` only if it fits. Existing `keep-id`/`nomap` allocations may exhaust them. `keep-id` creates are serialized per command after mapping failures observed on Podman 5.7.0 (2026-09-27); 60 concurrent creates on Podman 6.2.0 did not reproduce them (2026-11-22), which does not show they are gone, so the serialization stays. Separate commands may overlap. Mount permissions must allow mapped IDs. `:U` recursively changes host ownership; separate ranges need compatible permissions for shared volumes.
 
 ### Volume SELinux labels
 
@@ -453,7 +453,7 @@ The `[Build]` keys `Annotation=`, `Volume=` and `DNS=` have no compose `build:` 
 | `provider:` / model-runner services (`provider`, top-level `models`) | Modeled and parsed, but not honored; a not-honored warning is emitted |
 | Top-level `jobs:` `schedule` trigger | The structure is validated and each job with a schedule is reported once. podup does not fire schedules; `generate quadlet` exports them as systemd timers where it can, see [Jobs and schedules](#jobs-and-schedules). `podup run` starts a job by hand (a `manual: false` job is refused, also as a dependency), `podup up` never does. `!reset`/`!override` work on triggers, a job never activates a service behind an inactive profile, and `down` removes job containers; see [Jobs](commands-reference.md#jobs) |
 | Configurable pod exit policy and stop timeout | The pod exit policy stays fixed at `continue`; no pod-level Compose source maps to stop timeout |
-| Real-hardware smoke tests on macOS | Pending; the code paths exist but are untested on physical Apple hardware. Windows was validated end-to-end on real hardware (Windows 11, Podman 5.8.3), including the interactive `exec`/`run` path added in 3.0.0. |
+| Real-hardware smoke tests on macOS | Pending; the code paths exist but are untested on physical Apple hardware. Windows was validated end-to-end on real hardware (Windows 11, Podman 5.8.3, before the 6.2.0 floor; not repeated on 6.2.0), including the interactive `exec`/`run` path added in 3.0.0. |
 
 Unknown keys warn rather than abort, including in modeled nested objects. Modeled unsupported fields also warn. `extra_hosts` accepts list and mapping forms.
 
@@ -465,7 +465,7 @@ podup ships for Linux, macOS and Windows, each x86_64/arm64. Install paths are i
 
 ### Engine and transport
 
-podup needs a Podman 5.0 or newer engine. The supported majors are 5.x and 6.x; the libpod client requires the engine's reported major to be at or above `MIN_LIBPOD_API_MAJOR` (5), and the engine version is checked on the first request that contacts Podman. Commands that contact Podman check the version. `config --resolve-image-digests` and `autostart uninstall --purge` also contact it.
+podup needs a Podman 6.2.0 or newer engine and sets no upper bound: a newer release is accepted. The libpod client compares the engine's reported version (major, minor and patch) with `MIN_PODMAN_VERSION` (6.2.0), and the engine version is checked on the first request that contacts Podman. Commands that contact Podman check the version. `config --resolve-image-digests` and `autostart uninstall --purge` also contact it.
 
 The transport is local-only. Only `unix://` (or `npipe://` on Windows) is accepted, from `--socket`, `PODMAN_SOCKET`, `DOCKER_HOST`, or auto-detection; remote `tcp://`/`ssh://`/`http(s)://`/`fd://` schemes are rejected before any connection. This applies to `podman machine` as well. Driving a remote engine over TCP or SSH is not supported; run podup beside the engine.
 
@@ -473,18 +473,21 @@ The transport is local-only. Only `unix://` (or `npipe://` on Windows) is accept
 
 The Linux release binaries are statically linked with musl. The package build is described in [Debian packaging](debian-packaging.md).
 
-Recorded distribution package versions (2026-08-24, with later Ubuntu observations noted):
+Recorded distribution package versions (2026-08-24, with later Ubuntu observations noted and Fedora 45 recorded on 2026-11-20):
 
-| distribution        | Podman | podup runs |
-|---------------------|--------|------------|
-| Debian 12 bookworm  | 4.3.1  | no         |
-| Debian 13 trixie    | 5.4.2  | yes        |
-| Ubuntu 22.04 LTS    | 3.4.4  | no         |
-| Ubuntu 24.04 LTS    | 4.9.3  | no         |
-| Ubuntu 26.04 LTS    | 5.7.0  | yes        |
-| Fedora 42 and newer | 5.x+   | yes        |
+| distribution         | its own Podman | podup runs on it |
+|----------------------|--------|------------|
+| Debian 12 bookworm   | 4.3.1  | no         |
+| Debian 13 trixie     | 5.4.2  | no         |
+| Ubuntu 22.04 LTS     | 3.4.4  | no         |
+| Ubuntu 24.04 LTS     | 4.9.3  | no         |
+| Ubuntu 26.04 LTS     | 5.7.0  | no         |
+| Fedora 42 to 44      | 5.x    | no         |
+| Fedora 45 and newer  | 6.2.0  | yes        |
 
-apt requires an installable Podman >=5 package; it does not guarantee a running socket. Tested majors are 5 and 6. Distributions below Podman 5 need another engine source.
+The table is about the Podman each distribution packages. The Glyndor apt repository carries Podman 6.2.0 for Debian 13, Ubuntu 24.04 and Ubuntu 26.04, and the podup package depends on it, so installing podup from that repository installs that Podman on those three. Any other distribution whose Podman is older than 6.2.0 needs another engine source.
+
+apt requires an installable Podman >= 6.2.0 package; it does not guarantee a running socket.
 
 ### macOS
 

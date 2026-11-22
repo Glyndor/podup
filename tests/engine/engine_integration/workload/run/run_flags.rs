@@ -65,8 +65,8 @@ async fn engine_run_applies_volume_publish_and_interactive() {
 	let dir = tempfile::tempdir().unwrap();
 	fs::write(dir.path().join("marker.txt"), b"present").unwrap();
 	// `z` relabels the host directory so a confined container can read it. Without
-	// it this test fails on every SELinux-enforcing host, measured on Fedora 44 +
-	// Podman 5.8.1, where a `user_tmp_t` file bound read-only gives the container
+	// it this test fails on every SELinux-enforcing host, measured on the CI lane (Fedora 44 +
+	// Podman 5.8.1, not repeated on 6.2.0, where this host has no SELinux), where a `user_tmp_t` file bound read-only gives the container
 	// `cat: can't open '/mnt/in/marker.txt': Permission denied`. Plain `podman run`
 	// behaves identically, so the denial was never podup's; the mount just needed
 	// the relabel a user on such a host writes too. Where SELinux is off the option

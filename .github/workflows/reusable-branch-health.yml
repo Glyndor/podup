@@ -9,15 +9,9 @@ name: Branch health (reusable)
 # broken" into a red check on ordinary work, because nobody watches a
 # quiet log.
 #
-# The defect that prompted this file: the freshness watchers cannot catch
-# it. They read the newest SUCCESSFUL scheduled run, so a failing run is
-# missing from their answer by construction. On 2026-09-06 three
-# distribution channels sat with `main` red for twenty minutes after a
-# pull request merged while its suite was still reporting, and the only
-# reason anybody knew is that somebody went looking. The fix the
-# other three shipped was `scripts/check-suite-on-main.sh`; this file
-# mirrors its shape, not its spelling, because those repos are
-# shell-only and this one runs on GitHub Actions.
+# The gap the freshness watchers cannot close: they read the newest
+# SUCCESSFUL scheduled run, so a failing run is missing from their answer
+# by construction.
 #
 # Three states that are NOT failures and must not be reported as one:
 #
@@ -29,15 +23,10 @@ name: Branch health (reusable)
 #    for the commit this branch points at. The script reports the head
 #    SHA so the operator can match against the API rather than reading
 #    "no run on record" and looking for a cron that is not the cause.
-# 3. A conclusion of `cancelled` for the branch's head. The script used
-#    to pass over cancelled runs on the theory that a newer push had
-#    superseded them, but the same logic answered for a commit nobody
-#    had tested: measured 2026-09-20, let A pass, push B, cancel B's
-#    run by hand with nothing replacing it, and the script reported A's
-#    success as the branch's health. The pass-over disappeared with
-#    the newest-run logic it belonged to. A `cancelled` run for the
-#    head is now RED; the message names the commit so the right run is
-#    found.
+# 3. A conclusion of `cancelled` for the branch's head. The verdict is the
+#    run for the head, so nothing newer can supersede a cancelled run for
+#    it: a `cancelled` run for the head is RED, and the message names the
+#    commit so the right run is found.
 #
 # Permissions: same as the freshness reusable. A called workflow cannot
 # elevate beyond the permissions of the workflow that calls it, and

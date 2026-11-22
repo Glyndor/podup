@@ -9,7 +9,7 @@
 # 41 services in level 0 (2.5 batches) and one dependent behind exactly one of
 # them. The gap is the time the dependent spends waiting for the other 40.
 #
-# Measured on real Podman 5.4.2, anchor -> dependent:
+# Measured on real Podman 5.4.2 (not measured again since), anchor -> dependent:
 #   podup            809 ms
 #   docker compose   129 ms
 #

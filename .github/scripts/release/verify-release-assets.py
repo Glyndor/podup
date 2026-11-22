@@ -9,30 +9,6 @@ declarations, and reading YAML is the right way to answer it. It cannot answer
 "does the release actually produce these files", because nothing in a workflow
 file is evidence that a step ran.
 
-That distinction was not academic. Between v1.14.1 and this change the gate
-carried a third check that tried to answer the substance question from the same
-parsed set:
-
-    published = set(re.findall(r"^\\s*-?\\s*asset:\\s*(\\S+)\\s*$", release_yml, re.M))
-    if "SHA256SUMS" not in published: fail
-
-`published` is the build matrix. `SHA256SUMS` is a manifest computed *from* the
-matrix outputs in a later step and passed to `gh release create` as an argument,
-so it can never appear as a matrix entry. The check was therefore unpassable by
-construction: failing it was the normal state of a correct release workflow, and
-the only way to pass was to declare a matrix entry named `SHA256SUMS` without
-producing one, the exact lie the check existed to prevent. Measured on
-2026-08-17: no repository in the org declared that asset, podup was the gate's
-only consumer and was still pinned to a tag from before the clause, so the check
-had never run green anywhere. Its first contact with a real repository (the pin
-bump in podup#1425) failed a workflow that does produce and sign the manifest.
-
-The fix is not a better regex over the same file. It is to ask the question at
-the only moment it can be answered honestly: after the assets are built, signed
-and checksummed, while they are sitting in the runner's working directory, and
-before `gh release create` makes them immutable. At that point existence is a
-stat call, not an inference.
-
 What it checks is derived from the install script rather than hardcoded. A
 release-fetching line looks like
 

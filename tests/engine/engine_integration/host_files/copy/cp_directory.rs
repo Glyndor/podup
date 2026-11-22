@@ -3,11 +3,10 @@
 use std::fs;
 
 use super::*;
-/// I added this test because before #1777 was fixed a directory copy against
+/// This test exists because before #1777 was fixed a directory copy against
 /// Podman 6 was reported as failed even when it landed on disk, which is why
-/// the neighbour below could not assert on `cp`'s return value. I hold `cp`
-/// to both halves here: the bytes arrive, and `cp` says so, on Podman 6 as on
-/// Podman 5.
+/// the neighbour below could not assert on `cp`'s return value. It holds `cp`
+/// to both halves: the bytes arrive, and `cp` says so, on Podman 6.2.0.
 ///
 /// The payload holds a relative symlink (`link -> a.txt`) and a dangling one
 /// (`dangling -> nowhere`), so the live proof that the link confirmation works
@@ -95,7 +94,7 @@ async fn engine_cp_reports_a_directory_copy_as_landed() {
 	assert!(
 		result.is_ok(),
 		"a directory copy that landed (the bytes above prove it) must report \
-		 Ok on Podman 6 as on Podman 5; got {result:?}"
+		 Ok on Podman 6.2.0; got {result:?}"
 	);
 }
 
@@ -151,7 +150,7 @@ async fn engine_cp_with_dot_contents_copies_contents_into_destination() {
 
 	assert!(
 		result.is_ok(),
-		"`cp payload/. svc:/tmp` must report Ok on Podman 6 as on Podman 5; got {result:?}"
+		"`cp payload/. svc:/tmp` must report Ok on Podman 6.2.0; got {result:?}"
 	);
 	let out = out.unwrap_or_default();
 	assert!(
@@ -207,7 +206,7 @@ async fn engine_cp_without_dot_contents_wraps_under_source_basename() {
 
 	assert!(
 		result.is_ok(),
-		"`cp payload svc:/tmp` must report Ok on Podman 6 as on Podman 5; got {result:?}"
+		"`cp payload svc:/tmp` must report Ok on Podman 6.2.0; got {result:?}"
 	);
 	let out = out.unwrap_or_default();
 	assert!(

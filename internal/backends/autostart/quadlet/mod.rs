@@ -131,8 +131,8 @@ fn retire_obsolete_units<S: SystemCtl>(
 /// the boot path from re-running `podman build`: in the standard
 /// `podup generate quadlet` output a buildable service has `Image=<stem>.build`,
 /// which makes Quadlet add `Requires=`/`After=` on the sibling build service,
-/// and since Podman 5.3 a `.build` service is not `RemainAfterExit=yes`, so
-/// every container start (and every boot) re-runs `podman build` and a failed
+/// and a `.build` service is a plain `Type=oneshot` without `RemainAfterExit=yes`,
+/// so every container start (and every boot) re-runs `podman build` and a failed
 /// build keeps the container down. Prebuilt mode gives it `Image=<tag>` and
 /// `Pull=never` instead, so the dependency is gone and Quadlet never tries to
 /// refresh the image; the build runs once here, and only on `autostart rebuild`.
@@ -179,7 +179,7 @@ pub fn install_quadlet<S: SystemCtl>(
 	// services here (the same `result.units` we just validated against), in the
 	// order the generator wrote them: the install path restarts them all on one
 	// `systemctl --user restart ...` argv (so a re-install rebuilds a stale
-	// image; `start` on an active RemainAfterExit=yes unit would no-op) and
+	// image) and
 	// `checked` propagates any non-zero exit, which is what stops the container
 	// start from running after a failed build.
 	let build_services: Vec<String> = result
@@ -223,12 +223,13 @@ pub fn install_quadlet<S: SystemCtl>(
 	// first boot (which `--no-start` leaves to happen unattended) would fail
 	// with "image not found". A stack with no `.build` units skips this call.
 	//
-	// `restart`, not `start`: on Podman 5.2 a `.build` service is
-	// `RemainAfterExit=yes`, so on a re-install an active build service would
-	// short-circuit `start` and the freshly written unit would never rebuild.
-	// `restart` on an inactive unit starts it; on an active one re-runs the
-	// build, which is exactly what `podup autostart rebuild` does and what a
-	// re-install wants.
+	// `restart`, not `start`. Measured on Podman 6.2.0 (2026-11-22): a `.build`
+	// service is `Type=oneshot` without `RemainAfterExit=yes`, so `start` on it
+	// would also build again today. `restart` stays because it is what a
+	// re-install needs whatever the unit type is: on an inactive unit it
+	// starts it, on an active one (a `RemainAfterExit=yes` oneshot, which an
+	// older or later Quadlet may write) it re-runs the build instead of
+	// short-circuiting, and it is what `podup autostart rebuild` does.
 	if !build_services.is_empty() {
 		let mut build_args: Vec<&str> = Vec::with_capacity(build_services.len() + 1);
 		build_args.push("restart");

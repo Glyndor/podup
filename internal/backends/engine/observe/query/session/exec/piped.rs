@@ -6,7 +6,7 @@
 //! open in both directions, because the caller's input goes up the same
 //! connection the command's output comes down.
 //!
-//! Measured against Podman 5.7.0: `POST /libpod/exec/{id}/start` with
+//! Measured against Podman 5.7.0 and again on 6.2.0 (2026-11-22): `POST /libpod/exec/{id}/start` with
 //! `{"Detach":false,"Tty":false}` on a session created with
 //! `AttachStdin: true` hijacks the connection. What the client writes after
 //! the response head is the command's stdin, and what the server writes back

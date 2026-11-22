@@ -1,8 +1,8 @@
 //! #1970: quadlet-mode autostart must build at install, not at every container
 //! start. The standard `podup generate quadlet` output renders
 //! `Image=<stem>.build` for a buildable service, which makes Quadlet add
-//! `Requires=`/`After=` on the sibling build service; since Podman 5.3 a
-//! `.build` service is not `RemainAfterExit=yes`, so every container start
+//! `Requires=`/`After=` on the sibling build service; a `.build` service is
+//! not `RemainAfterExit=yes`, so every container start
 //! (and every boot) re-runs `podman build`, and a failed build keeps the
 //! container down. The autostart install path renders a different
 //! (`prebuilt`) shape, builds the images once via `systemctl start

@@ -7,6 +7,14 @@ use std::fmt;
 pub enum PodmanError {
 	/// I/O or socket connection error.
 	Connect(std::io::Error),
+	/// `--dry-run` refused a request that would change something. Carries the
+	/// method and the path so the message names what was not sent.
+	DryRun {
+		/// The HTTP method of the refused request.
+		method: String,
+		/// The request path.
+		path: String,
+	},
 	/// Hyper HTTP error.
 	Hyper(hyper::Error),
 	/// JSON serialization or deserialization error.
@@ -67,6 +75,10 @@ impl fmt::Display for PodmanError {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
 			Self::Connect(e) => write!(f, "podman socket connection error: {e}"),
+			Self::DryRun { method, path } => write!(
+				f,
+				"--dry-run: refused to send {method} {path}; nothing was changed"
+			),
 			Self::Hyper(e) => write!(f, "http error: {e}"),
 			Self::Json(e) => write!(f, "json error: {e}"),
 			Self::StreamTooLarge => write!(f, "stream exceeds the 1048576 byte limit"),
@@ -102,10 +114,11 @@ impl fmt::Display for PodmanError {
 				} else {
 					reported.as_str()
 				};
+				let (major, minor, patch) = crate::libpod::client::MIN_PODMAN_VERSION;
 				write!(
 					f,
-					"podup requires Podman >= 5.0; this server reports libpod API version {reported}. \
-					 Upgrade Podman, or point podup at a host running 5.0 or newer: \
+					"podup requires Podman >= {major}.{minor}.{patch}; this server reports libpod API version {reported}. \
+					 Upgrade Podman, or point podup at a host running {major}.{minor}.{patch} or newer: \
 					 https://podman.io/docs/installation"
 				)
 			}
@@ -160,7 +173,8 @@ impl std::error::Error for PodmanError {
 			Self::Connect(e) => Some(e),
 			Self::Hyper(e) => Some(e),
 			Self::Json(e) => Some(e),
-			Self::StreamTooLarge
+			Self::DryRun { .. }
+			| Self::StreamTooLarge
 			| Self::StreamEndedEarly
 			| Self::Api { .. }
 			| Self::Field { .. }
@@ -248,6 +262,7 @@ impl PodmanError {
 				std::io::ErrorKind::BrokenPipe => "io-broken-pipe",
 				_ => "io-other",
 			},
+			Self::DryRun { .. } => "dry-run-refused",
 			Self::Json(_) => "malformed-frame",
 			Self::StreamTooLarge => "stream-too-large",
 			Self::StreamEndedEarly => "stream-ended-early",

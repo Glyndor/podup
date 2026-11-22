@@ -18,7 +18,7 @@ use crate::engine::Engine;
 /// How `volumes` renders a size: decimal units at three significant digits.
 ///
 /// Three rather than the four `podman system df -v` prints (`193.2MB`,
-/// `67.33MB`, measured on Podman 5.7.0). podman is not self-consistent here
+/// `67.33MB`; `196.7MB` on Podman 6.2.0, 2026-11-22). podman is not self-consistent here
 /// (`podman images` and `podman ps -s` both use three) and matching podup's own
 /// other size columns is worth more than reproducing that split.
 const SIZE_FORMAT: SizeFormat = SizeFormat::decimal().with_significant(3);
@@ -236,7 +236,8 @@ impl Engine {
 	/// at all.
 	async fn volume_disk_usage(
 		&self,
-	) -> Result<std::collections::HashMap<String, crate::libpod::types::volume::VolumeDiskUsage>> {
+	) -> Result<std::collections::HashMap<String, crate::libpod::types::volume::VolumeDiskUsage>>
+	{
 		let df: SystemDf = self
 			.client
 			.get_json(&format!("{API_PREFIX}/system/df"))

@@ -164,10 +164,12 @@ impl Engine {
 	/// `podup.project=<proj>` so it can be cleaned up on `down`. The payload size
 	/// is checked up front to turn Podman's opaque 500 into a clear message.
 	///
-	/// Idempotent across re-`up`s: rather than `replace=true` (which some Podman
-	/// 5.x builds reject when the secret does not yet exist: the internal delete
-	/// fails with "no secret data with ID"), the existing secret of this name is
-	/// removed first (a 404 is fine) and then created fresh.
+	/// Idempotent across re-`up`s: the existing secret of this name is removed
+	/// first (a 404 is fine) and then created fresh. Podman 6.2.0 accepts
+	/// `replace=true` whether or not the name exists (measured 2026-11-22), so
+	/// that is no longer why this is not one request. The delete goes by the ID
+	/// that was inspected, which `replace=true` cannot do: a name handed to
+	/// someone else after the inspect is left alone instead of overwritten.
 	///
 	/// # Concurrency contract: read before touching the inspect → delete → create sequence
 	///

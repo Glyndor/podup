@@ -5,13 +5,6 @@ name: Repository health
 # newest run of `ci.yml` on `main` and on `develop` was green, and whether
 # Dependabot has spoken recently.
 #
-# None of that says anything about the patch a pull request proposes. These
-# four jobs used to run on every pull request update, so concurrent pull
-# requests polled the same branch heads and the same scheduler history four
-# times each, and the branch-health poll can take eight minutes. A check that
-# costs eight minutes and learns nothing about the change is a check nobody
-# should pay for on every keystroke of a review.
-#
 # They live in their own workflow so that:
 #
 # - the pull request lane does not carry them at all;
@@ -23,22 +16,13 @@ name: Repository health
 #
 # The schedule is the primary trigger and the push to a protected branch is
 # the fallback. A cron that stops firing emits nothing, and "no alert" is
-# indistinguishable from "all clear": every scheduled workflow in this
-# organisation went dark on 2026-06-29, four repos stayed dark for another
-# four weeks while reporting `active` the whole time, and it cost a real
-# finding. The push lane is what turns a dead cron back into a red check.
+# indistinguishable from "all clear". The push lane is what turns a dead cron
+# back into a red check.
 #
 # The jobs that test the MONITORING LOGIC stay on pull requests. The shell
 # suite in `lint-shell.yml` and the Rust repository-contract suite run
 # whenever the scripts and workflows below change, so a regression in the
 # observer is still caught by the change that introduces it.
-#
-# These observations are ADVISORY and must never be promoted to required
-# status checks. Each one fails because a cron or a branch somewhere else
-# stopped being green, which has nothing to do with the change under review,
-# so requiring one would block every pull request for the length of an
-# unrelated outage. The rule lives in the organisation standard, and it is
-# repeated here because this file is what somebody wiring a ruleset has open.
 
 on:
   # The fallback for a dead schedule: every push to a protected branch
@@ -78,9 +62,8 @@ jobs:
   # status checks. Each one fails because a cron somewhere else stopped
   # firing, which has nothing to do with the change under review, so
   # requiring one would block every pull request for the length of an
-  # unrelated outage. The rule lives in the organisation standard, and it is
-  # repeated here because this file is what somebody wiring a ruleset has
-  # open.
+  # unrelated outage. The rule is stated here because this file is what somebody
+  # wiring a ruleset has open.
   #
   # A newly added scheduled workflow cannot be registered here in the same
   # pull request that adds it. The guard passes only on a run with

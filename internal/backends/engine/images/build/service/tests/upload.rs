@@ -53,7 +53,7 @@ async fn early_response(status: u16, finish_upload: bool) {
 				let byte = io.read_u8().await.unwrap();
 				head.push(byte);
 			}
-			if !String::from_utf8_lossy(&head).starts_with("POST /v5.0.0/libpod/build?") {
+			if !String::from_utf8_lossy(&head).starts_with("POST /v6.2.0/libpod/build?") {
 				io.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
 					.await
 					.unwrap();

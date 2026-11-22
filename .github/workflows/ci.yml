@@ -34,69 +34,20 @@ jobs:
       # Each entry here becomes its own check name: `rust / Test (macos-latest)`
       # and `rust / Test (windows-latest)`. Editing this list changes the names
       # emitted while the ruleset still requires the old ones, so the PR
-      # carrying the edit blocks itself. A ruleset should require the stable
-      # gate `rust / Extra platforms` instead, which names no platform. #1552.
+      # carrying the edit blocks itself.
       extra-test-os: "[\"macos-latest\", \"windows-latest\"]"
-      # Measured against the WHOLE crate, deliberately. The gate used to read 90%
-      # while a `coverage-ignore-regex` hid 36% of the code (14,432 of 39,681
-      # regions) so it protected 58% of podup at 90% and said nothing about the
-      # rest. The exclusion was justified when those modules ran under a live
-      # Podman in this job; `a5cd4b4` removed that in June 2026 and the
-      # justification expired with it. Since then the only thing exercising them
-      # was `podman-lane`, which counts passing tests and compares failing
-      # identities but measures no coverage at all.
-      #
-      # 79 is lower than 90 and stricter than it was: 100% of the crate at 79
-      # leaves nothing invisible, where 90 of 63% left a third of podup
-      # unmeasured. It is a ratchet, not a target: raise it when real coverage
-      # rises, never lower it to make a red build green.
-      #
-      # It is deliberately NOT the measured 78.96%: a floor set exactly at
-      # today's number turns any unrelated refactor that moves one region into a
-      # failed build.
-      # 79, not the org standard's 90, and not because podup is short of it.
-      #
-      # Measured 2026-08-03: the full suite covers **91.52%** of lines. This job
-      # cannot run it (the integration tests need a live Podman and skip
-      # themselves on a runner without one) so what it measures is `--lib
-      # --bins` alone, which is **79.39%**. The two numbers describe different
-      # things and only one of them is checkable here.
-      #
-      # 75 left four points of silent slack on a figure that is already a
-      # subset: coverage could fall from 79 to 75 with nothing saying so. This
-      # locks in what holds today rather than demanding new work, which is what
-      # the testing standard asks for when adopting a floor.
-      #
-      # The 90 gate belongs where the tests can actually run, in the `podman-vm`
-      # lane, and that is tracked separately rather than papered over here.
-      # 72 is lower than 79 and the gate got stricter, not looser. Measured
-      # 2026-09-02 with the CI command (cargo llvm-cov --workspace
-      # --all-features, no Podman reachable) on the same commit before and
-      # after the 124 inline test modules moved to sibling files: 82.08%
-      # (24402 of 29728 lines) became 73.12% (14309 of 19570) on the owner's
-      # machine, and the Coverage job on the pull request that carried the
-      # move (#1634) read 73.09%. The 10158 lines that left the denominator
-      # were test bodies that cargo-llvm-cov had counted as covered production
-      # lines of the files they sat in, so the old number measured test volume
-      # as well as reach. One point under what CI measured is the honest floor
-      # that holds today. It is a ratchet, not a target: raise it when real
-      # coverage rises, never lower it to make a red build green. An
-      # inline test module counts as covered production code, so moving tests
-      # out of the production file changes the denominator.
-      #
-      # 76 from 72 on 2026-09-04: the Coverage job on develop at a57e846 (run
-      # 33916825387) read 76.44%, after the board, pull, build and rm work of
-      # 2026-09-03/04 landed with their tests. The same command on a machine
-      # with Podman reachable reads 86.99%, since the integration tests then
-      # cover the engine; the number that gates is the job's, so the floor is
-      # the integer under the job's. Same rule as above: raise when real
-      # coverage rises, never lower to make a red build green. #1696.
+      # Measured against the WHOLE crate, deliberately: an exclusion list would leave
+      # part of the code with no gate at all. This job runs `--lib --bins` with no
+      # Podman reachable, so it measures less than the full suite does, and the floor
+      # is the integer under what this job reads (76.44% at the last measurement),
+      # not under the full suite's figure. It is a ratchet, not a target: raise it
+      # when real coverage rises, never lower it to make a red build green. An inline
+      # test module counts as covered production code, so moving tests out of the
+      # production file changes the denominator. #1696.
       coverage-threshold: 76
       # This number is inside the check name `rust / MSRV (1.88)`. Bumping it
       # emits `rust / MSRV (<new>)` while the ruleset still requires the old
-      # string, so the PR carrying the bump blocks itself. A ruleset should
-      # require the stable gate `rust / MSRV` instead, which carries no
-      # version. See #1552.
+      # string, so the PR carrying the bump blocks itself.
       msrv: "1.88"
       # `cargo publish --dry-run`, and podup is no longer published (#1606).
       package-check: false

@@ -84,9 +84,9 @@ pub(in crate::backends::engine) fn build_restart_policy(
 // ---------------------------------------------------------------------------
 
 /// Default log rotation applied when a compose file does not carry a
-/// `logging:` block. `k8s-file` is the libpod default since Podman 4; pinning
-/// it explicitly here stops the answer from drifting between podman versions
-/// and distros. The 10 MB cap is enough for a week of typical service output
+/// `logging:` block. The libpod default depends on the host (`journald` on the
+/// Podman 6.2.0 host this was measured on, 2026-11-22); pinning `k8s-file`
+/// explicitly here stops the answer from drifting between versions and distros. The 10 MB cap is enough for a week of typical service output
 /// and small enough that a runaway loop will not exhaust the host. libpod
 /// does not honour `max-file` on any path (see `man podman-run`), so it is
 /// not part of the default; the user can override by writing their own
@@ -182,9 +182,10 @@ fn translate_user_logging(
 		);
 	}
 	// `json-file` is the name Docker gives the driver, and Podman maps it to its
-	// `k8s-file` logger, which refuses a `tag` when the container starts
-	// (`k8s-file doesn't support --log-tag`, then `conmon failed`, measured on
-	// Podman 5.7.0 with its own CLI too). Docker accepts and applies the tag.
+	// `k8s-file` logger, which refuses a `tag` (Podman 6.2.0 CLI, 2026-11-22: `log tags
+	// can only be used with the journald log driver`, for both json-file and
+	// k8s-file; the API path at start was last measured on 5.7.0 as
+	// `k8s-file doesn't support --log-tag`). Docker accepts and applies the tag.
 	// Forwarding it would keep a working compose file from starting, so, like
 	// `max-file`, it is dropped with a warning. Other drivers keep theirs.
 	if matches!(driver.as_deref(), Some("json-file" | "k8s-file"))
@@ -222,9 +223,9 @@ pub(in crate::backends::engine) fn build_healthcheck(hc: &HealthCheck) -> Option
 /// `Healthcheck` of the image inspect. Only what neither the compose file nor the
 /// image gives falls back to the specification's 30s / 30s / 3.
 ///
-/// A compose file that gives timings and no `test` also takes the image's test,
-/// so the probe survives on a libpod that replaces the image healthcheck with
-/// any non-empty request (Podman 5.4.2).
+/// A compose file that gives timings and no `test` sends no test: libpod merges
+/// field by field in that case and keeps the image's probe (measured on Podman
+/// 6.2.0, 2026-11-22).
 pub(in crate::backends::engine) fn build_healthcheck_inheriting(
 	hc: &HealthCheck,
 	image: Option<&ImageHealthcheck>,
@@ -239,7 +240,7 @@ pub(in crate::backends::engine) fn build_healthcheck_inheriting(
 	// empty Test as absent and inherits the image probe. An empty shell string
 	// stays an explicit `["CMD-SHELL", ""]` probe, as it always was, because
 	// Podman runs it (#1893).
-	let mut test = hc.test.as_ref().and_then(|cmd| match cmd {
+	let test = hc.test.as_ref().and_then(|cmd| match cmd {
 		ComposeCommand::Shell(s) => Some(vec!["CMD-SHELL".to_string(), s.clone()]),
 		ComposeCommand::Exec(v) if !v.is_empty() => Some(v.clone()),
 		_ => None,
@@ -249,20 +250,22 @@ pub(in crate::backends::engine) fn build_healthcheck_inheriting(
 		|| hc.retries.is_some()
 		|| hc.start_period.is_some()
 		|| hc.start_interval.is_some();
-	// Podman 5.4.2 (still supported) inherits the image HEALTHCHECK only when
-	// the whole `healthconfig` is absent from the request, so we must omit the
-	// field entirely, not just leave every value `None`, when there is no
-	// test and the user set no timing (#1893).
+	// With no test and no timing there is nothing to say: the field is left out
+	// of the request so the image HEALTHCHECK applies untouched (#1893).
 	if test.is_none() && !has_timings {
 		return None;
 	}
+	// Without a test of its own the request only merges into an image that has a
+	// probe; an image that has none (or turns it off) lends nothing.
+	let lender = image.filter(|i| {
+		test.is_some()
+			|| i.test
+				.as_ref()
+				.and_then(|t| t.first())
+				.is_some_and(|mode| mode != "NONE")
+	});
 	let from_image =
-		|pick: fn(&ImageHealthcheck) -> Option<i64>| image.and_then(pick).filter(|v| *v > 0);
-	if test.is_none() {
-		test = image
-			.and_then(|i| i.test.clone())
-			.filter(|t| t.first().is_some_and(|mode| mode != "NONE"));
-	}
+		|pick: fn(&ImageHealthcheck) -> Option<i64>| lender.and_then(pick).filter(|v| *v > 0);
 	let nanos = |value: &Option<String>| value.as_deref().and_then(size::parse_duration_nanos);
 	let mut interval = nanos(&hc.interval).or_else(|| from_image(|i| i.interval));
 	let mut timeout = nanos(&hc.timeout).or_else(|| from_image(|i| i.timeout));

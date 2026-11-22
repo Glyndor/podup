@@ -7,7 +7,7 @@
 //! for the container's filesystem. What is asserted is the caller's view, `Ok`
 //! or which error, for a payload that arrived and for one that did not.
 //!
-//! The stat header is built in the shape Podman 5.7.0 sent on 2026-09-18:
+//! The stat header is built in the shape Podman sent on 2026-09-18 (the fields are unchanged on 6.2.0):
 //! `{"name":"a.txt","size":6,"mode":420,"mtime":"…","isDir":false,"linkTarget":"/tmp/t/a.txt"}`
 //! for a file and `"mode":2147484141` for a directory.
 
@@ -30,7 +30,7 @@ pub(super) enum OnDisk {
 	Dir,
 	/// A symbolic link with its target as written in the tar; the stat
 	/// header's `linkTarget` is the target normalised against the
-	/// directory the link lives in (the way Podman 5.7.0 reports it).
+	/// directory the link lives in (the way Podman reports it).
 	Link {
 		size: u64,
 		target: String,
@@ -45,13 +45,13 @@ pub(super) enum OnDisk {
 /// How the fake answers the archive PUT.
 #[derive(Clone, Copy)]
 pub(super) enum Put {
-	/// Accept the body and close without a response: Podman 6.
+	/// Accept the body and close without a response (#1097).
 	HangsUp,
-	/// A normal response with this status: Podman 5.
+	/// A normal response with this status.
 	Answers(u16),
 }
 
-/// Podman 5.7.0 normalises `linkTarget` lexically against the directory
+/// Podman normalises `linkTarget` lexically against the directory
 /// the link lives in: a relative target is joined to the parent of the
 /// link's path and `.` / `..` are collapsed; an absolute target is left
 /// alone. The fake mirrors that so the link confirmation can compare the
@@ -97,7 +97,7 @@ pub(super) fn stat_header(path: &str, entry: &OnDisk) -> String {
 /// "landed" is decided by the table the test passes in.
 ///
 /// `link_stat_on_404` controls how the fake answers a `HEAD` for a `Link`
-/// entry: Podman 5.7.0 returns 404 with the stat header still on it (the
+/// entry: Podman 6.2.0 returns 404 with the stat header still on it (the
 /// default for `tree_landed`'s link confirmation); a runtime that does not
 /// (older, or a stub) drops the header and the link cannot be confirmed.
 pub(super) fn runtime_full(
@@ -133,7 +133,7 @@ pub(super) fn runtime_full(
 	})
 }
 
-/// As [`runtime_full`], with the Podman 5.7.0 link-stat-on-404 behaviour
+/// As [`runtime_full`], with the Podman 6.2.0 link-stat-on-404 behaviour
 /// (the default for every pre-existing test, which carries no links).
 pub(super) fn runtime(put: Put, disk: &[(&str, OnDisk)]) -> FakePodman {
 	runtime_full(put, disk, true)

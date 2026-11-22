@@ -37,41 +37,6 @@
 #      branch-health one; otherwise it exits 1 and names the failing
 #      jobs. `cancelled`, `skipped`, and anything else exit 1 with a
 #      message that names the run.
-#
-# Why a `cancelled` run for the head is RED here (and was passed over
-# before): the old logic took the newest completed run on the branch,
-# which could answer for a commit nobody tested. The new logic takes
-# the run for the head, and nothing newer can supersede a cancelled
-# run for the head, so the only honest verdict is the one the run
-# reached. Measured 2026-09-19: let A pass, push B, cancel B's run by
-# hand with nothing replacing it, and the old script reported A's
-# success as the branch's health.
-#
-# Why the runs call also filters by `event=push`: a `pull_request` run
-# on a PR whose source branch is ${BRANCH} carries `head_sha=${branch}
-# head` and shows up under `?branch=${BRANCH}` next to the `push` run
-# for the same commit. The two are sorted by `created_at`, so whichever
-# the API handed back newest wins. A release pull request from
-# `develop` into `main` is a real case: its `pull_request` run is newer
-# than the `push` run on `develop` for the same commit, and the gate
-# used to read that `pull_request` run for `branch health (develop)`.
-# That run is the release PR itself, and on a release that fails any
-# gate inside the suite, its `ci.yml` concluded `failure` inside that
-# very run. The gate then read its own run, made that run red, and
-# every later reader saw a red the gate created (measured on the 5.9.5
-# release push for commit 83315af). The fix is `event=push` in the
-# query and `.event == "push"` in the jq filter: the verdict is the
-# run the branch triggered, which is the `push` run. A `pull_request`
-# run that merely carries the branch as its head is a different
-# question and must not shadow it.
-#
-# Why the script owns the polling: the previous design asked the API
-# for completed runs on the push path and the API filtered out a run
-# that was still in flight for the head. The next push then read its
-# own run and saw the previous, red one. Same shape happened between
-# the two health callers when a real failure on one branch tripped the
-# other. The fix is the same shape the channels shipped for their
-# suite-on-main check on 2026-09-19.
 
 set -euo pipefail
 

@@ -4,7 +4,7 @@
 use crate::compose::types::Service;
 use crate::engine::build_log_config;
 
-use super::super::{quote_podman_arg_value, sorted_label_pairs, Section};
+use super::super::{sorted_label_pairs, Section};
 
 /// Emit the `LogDriver=` line and the rotation/driver options for the service.
 pub(in super::super) fn emit_logging(
@@ -18,8 +18,7 @@ pub(in super::super) fn emit_logging(
 	// `LogDriver=` set and `--log-opt` rotation policy on the generated
 	// unit (#1354). The render path is the same as the live engine's, so
 	// `up` and `generate quadlet` produce equivalent rotation. The
-	// options are emitted through `PodmanArgs=` because `LogOpt=` is a
-	// Podman 5.2.0 key and the floor is 5.0; see `emit_log_config`.
+	// options are written as `LogOpt=` lines; see `emit_log_config`.
 	match build_log_config(name, service.logging.as_ref()) {
 		Ok(Some(logging)) => emit_log_config(container, logging),
 		Ok(None) => {}
@@ -46,13 +45,11 @@ pub(in super::super) fn emit_logging(
 /// emitted `LogDriver=k8s-file` and no `LogOpt` at all, where it used to
 /// carry `LogOpt=max-size=10m`.
 ///
-/// The byte count is emitted verbatim; `podman run --log-opt
-/// max-size=10485760` was measured to produce the same `10.49MB` cap as
-/// `max-size=10m` on Podman 5.7.0, so no suffix has to be reconstructed.
+/// The byte count is emitted verbatim: measured on Podman 6.2.0 (2026-11-22),
+/// `max-size=10485760` stores the 10 MiB cap (`10.49MB`) that `up` sets, so no
+/// suffix has to be reconstructed.
 ///
-/// Each entry is emitted through `PodmanArgs=` (`--log-opt=`) rather than
-/// as the native `LogOpt=` Quadlet key, because `LogOpt=` is a Podman 5.2.0
-/// addition; the supported floor is 5.0.
+/// Each entry is one `LogOpt=` line.
 pub(in super::super) fn emit_log_config(
 	container: &mut Section,
 	logging: crate::libpod::types::container::LogConfig,
@@ -60,34 +57,19 @@ pub(in super::super) fn emit_log_config(
 	if let Some(driver) = &logging.driver {
 		container.add("LogDriver", driver.clone());
 	}
-	// `LogOpt=` was added to Quadlet in Podman 5.2.0. The supported floor
-	// is 5.0, so route the rotation cap and each user option through
-	// `PodmanArgs=` as `--log-opt`, like the other escape-hatch flags. Both
-	// the key and the value are quoted (#1734): a hostile value carrying
-	// whitespace must not become two argv elements, and the key half has
-	// the same hole on the other side of the `=`.
+	// `Section::add` quotes a `LogOpt=` value that carries whitespace or a
+	// quote, so a hostile value cannot become two `--log-opt` arguments, and the
+	// key half has the same protection on the other side of the `=`.
 	if let Some(size) = logging.size {
-		container.add(
-			"PodmanArgs",
-			format!(
-				"--log-opt={}",
-				quote_podman_arg_value(&format!("max-size={size}"))
-			),
-		);
+		container.add_native("LogOpt", "--log-opt=", &format!("max-size={size}"));
 	}
 	for (key, val) in sorted_label_pairs(logging.options) {
-		// An empty value (`options: { tag: "" }`) would render as
-		// `--log-opt=tag=`, which podman rejects. The native `LogOpt=`
-		// key omits empty values, so the podman-args route has to skip
-		// them too. An empty key would render as `--log-opt==value`,
-		// equally malformed; skip it for the same reason.
+		// An empty value (`options: { tag: "" }`) would render as `tag=`, which
+		// podman rejects. An empty key would render as `=value`, equally
+		// malformed; skip both.
 		if key.is_empty() || val.is_empty() {
 			continue;
 		}
-		let line = format!("{key}={val}");
-		container.add(
-			"PodmanArgs",
-			format!("--log-opt={}", quote_podman_arg_value(&line)),
-		);
+		container.add_native("LogOpt", "--log-opt=", &format!("{key}={val}"));
 	}
 }

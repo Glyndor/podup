@@ -54,7 +54,8 @@ pub(crate) async fn run_config(
 	// `--resolve-image-digests` pins each image to its registry digest, which
 	// needs a Podman connection to inspect images.
 	let mut resolved = if *resolve_image_digests {
-		let client = connect_podman(cli.socket.as_deref(), cli.connection_pool_size).await?;
+		let client =
+			connect_podman(cli.socket.as_deref(), cli.connection_pool_size, cli.dry_run).await?;
 		podup::resolve_image_digests(&client, &parsed).await?
 	} else {
 		parsed
@@ -187,6 +188,7 @@ pub(crate) async fn run_autostart(
 		socket: resolve_socket(cli.socket.as_deref()),
 		connection_pool_size: cli.connection_pool_size,
 		project_directory: cli.project_directory.clone(),
+		dry_run: cli.dry_run,
 	};
 	crate::main_runner::autostart::dispatch(&env, compose_files, project, base_dir, file, kind)
 		.await
@@ -202,7 +204,8 @@ pub(crate) async fn run_engine_command(
 	project: String,
 	base_dir: PathBuf,
 ) -> podup::Result<()> {
-	let client = connect_podman(cli.socket.as_deref(), cli.connection_pool_size).await?;
+	let client =
+		connect_podman(cli.socket.as_deref(), cli.connection_pool_size, cli.dry_run).await?;
 	// The `-t/--timeout` shutdown-grace override applies to every command that
 	// stops containers (up recreate, down, stop, restart).
 	let stop_timeout = match &cli.command {

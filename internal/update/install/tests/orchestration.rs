@@ -89,7 +89,8 @@ fn the_swap_keeps_a_restrictive_target_mode() {
 			std::fs::metadata(&target)
 				.expect("metadata target")
 				.permissions()
-				.mode() & 0o7777,
+				.mode()
+				& 0o7777,
 			mode,
 			"the operator's mode {mode:o} must survive the update"
 		);

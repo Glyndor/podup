@@ -1,11 +1,14 @@
 //! Round-trip env_file paths through the installed Quadlet generator.
 
-use std::{fs, io::Write, path::Path, process::Command};
+use std::{fs, process::Command};
 
 use super::quadlet_cases::ENV_FILE_PATHS;
 
 #[path = "quadlet_argv.rs"]
 mod quadlet_argv;
+#[path = "quadlet_generator.rs"]
+mod quadlet_generator;
+use quadlet_generator::generator;
 
 // Decode the generated ExecStart, independently of podup's input serializer.
 // Unknown escapes fail rather than silently changing the expected path.
@@ -61,18 +64,9 @@ fn literal_path(value: &str) -> String {
 
 #[test]
 fn env_file_paths_survive_the_real_quadlet_generator() {
-	let quadlet = Path::new("/usr/libexec/podman/quadlet");
-	match fs::metadata(quadlet) {
-		Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-			writeln!(
-				std::io::stderr(),
-				"SKIP: /usr/libexec/podman/quadlet is absent; env_file round-trip was not executed"
-			)
-			.unwrap();
-			return;
-		}
-		result => assert!(result.expect("inspect Quadlet binary").is_file()),
-	}
+	let Some(quadlet) = generator() else {
+		return;
+	};
 	for name in ENV_FILE_PATHS {
 		let dir = tempfile::tempdir().unwrap();
 		let path = dir.path().join(name);
@@ -98,7 +92,7 @@ fn env_file_paths_survive_the_real_quadlet_generator() {
 			"generate {name:?}: {}",
 			String::from_utf8_lossy(&generated.stderr)
 		);
-		let output = Command::new(quadlet)
+		let output = Command::new(&quadlet)
 			.args(["-user", "-dryrun", "-no-kmsg-log"])
 			.env("QUADLET_UNIT_DIRS", &units)
 			.output()

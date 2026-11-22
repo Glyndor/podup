@@ -16,11 +16,10 @@ use crate::quadlet::tests::assert_argv_has_no_token;
 use crate::quadlet::tests::unit_named;
 
 #[test]
-fn memory_and_apparmor_render_as_podman_args() {
-	// `Memory=` and `AppArmor=` are not recognised [Container] keys in
-	// podman-systemd.unit(5) (Quadlet drops the whole unit at daemon-reload), so
-	// they must route through `PodmanArgs=` like the CPU limits, not be emitted as
-	// native keys.
+fn memory_and_apparmor_render_as_native_keys() {
+	// `Memory=` and `AppArmor=` are native [Container] keys in Podman 6.2.0, so
+	// they are written as keys and not as `--memory` / `--security-opt` flags.
+	// The hostile values of both keys are in `exec/hostile_native_values.rs`.
 	let yaml = r#"
 services:
   s:
@@ -33,17 +32,17 @@ services:
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
-		c.contains("PodmanArgs=--memory=\"512m\""),
-		"mem_limit must route through PodmanArgs in:\n{c}"
+		c.contains("Memory=512m\n"),
+		"mem_limit must be written as Memory= in:\n{c}"
 	);
 	assert!(
-		c.contains("PodmanArgs=--security-opt apparmor=\"my-profile\""),
-		"apparmor must route through PodmanArgs in:\n{c}"
+		c.contains("AppArmor=my-profile\n"),
+		"apparmor must be written as AppArmor= in:\n{c}"
 	);
-	for forbidden in ["Memory=512m", "AppArmor=my-profile"] {
+	for forbidden in ["--memory", "--security-opt"] {
 		assert!(
 			!c.contains(forbidden),
-			"memory/apparmor must not use an unrecognised native key `{forbidden}` in:\n{c}"
+			"memory/apparmor must not travel as a podman flag `{forbidden}` in:\n{c}"
 		);
 	}
 }
@@ -152,7 +151,10 @@ fn deploy_restart_condition_none_maps_to_no() {
 }
 
 // ---------------------------------------------------------------------------
-// #1734: PodmanArgs= argv safety at the seven interpolation sites
+// #1734: PodmanArgs= argv safety at the interpolation sites that still use it
+// (CPU limits, volume driver options). The keys that moved to native Quadlet
+// keys are checked in `exec/hostile_native_values.rs`, because the unit text
+// alone does not show the argument the generator builds from them.
 //
 // `escape_unit_value` returns early for `PodmanArgs` (treating it like
 // `Exec`/`Entrypoint`), so the seven `format!()` sites that interpolate a
@@ -163,25 +165,6 @@ fn deploy_restart_condition_none_maps_to_no() {
 // argv elements. The only assertion worth pinning is the argv podman would
 // actually build, not the line that produced it.
 // ---------------------------------------------------------------------------
-
-#[test]
-fn mem_limit_cannot_smuggle_extra_flags() {
-	// `mem_limit: "512m --privileged -v /:/hostfs"` is the canonical case
-	// from the issue. The smuggled `--privileged` and `-v /:/hostfs` must
-	// land inside ONE argv element via quoting, not become separate podman
-	// arguments.
-	let yaml = r#"
-services:
-  web:
-    image: alpine:3.20
-    mem_limit: "512m --privileged -v /:/hostfs"
-"#;
-	let file = parse_str(yaml).unwrap();
-	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
-	let c = &unit_named(&out, "p-web.container").contents;
-	assert_argv_has_no_token(c, "--privileged");
-	assert_argv_has_no_token(c, "-v");
-}
 
 #[test]
 fn cpus_cannot_smuggle_extra_flags() {
@@ -210,25 +193,6 @@ services:
 	let c = &unit_named(&out, "p-web.container").contents;
 	assert_argv_has_no_token(c, "--privileged");
 	assert_argv_has_no_token(c, "-v");
-}
-
-#[test]
-fn deploy_memory_cannot_smuggle_extra_flags() {
-	// `deploy.resources.limits.memory` is the modern equivalent of
-	// `mem_limit`; both interpolation sites need the same protection.
-	let yaml = r#"
-services:
-  web:
-    image: alpine:3.20
-    deploy:
-      resources:
-        limits:
-          memory: "256m --privileged"
-"#;
-	let file = parse_str(yaml).unwrap();
-	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
-	let c = &unit_named(&out, "p-web.container").contents;
-	assert_argv_has_no_token(c, "--privileged");
 }
 
 #[test]
@@ -303,91 +267,6 @@ volumes:
 	);
 }
 
-#[test]
-fn apparmor_profile_cannot_smuggle_extra_flags() {
-	// The apparmor arm routes through PodmanArgs too (`AppArmor=` would be
-	// dropped by Quadlet). A hostile profile like
-	// "my-profile --privileged -v /:/hostfs" must stay one argv element.
-	let yaml = r#"
-services:
-  web:
-    image: alpine:3.20
-    security_opt:
-      - "apparmor=my-profile --privileged"
-"#;
-	let file = parse_str(yaml).unwrap();
-	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
-	let c = &unit_named(&out, "p-web.container").contents;
-	assert_argv_has_no_token(c, "--privileged");
-}
-
-#[test]
-fn build_arg_value_cannot_smuggle_extra_flags() {
-	// The smoke-test from the issue: a build service with a `build:` block
-	// emits a `.build` unit that carries `--build-arg` through PodmanArgs.
-	// A value with whitespace must not become two podman args.
-	let yaml = r#"
-services:
-  app:
-    build:
-      context: .
-      args:
-        EVIL: "v --privileged -v /:/hostfs"
-    image: app:1.0
-"#;
-	let file = parse_str(yaml).unwrap();
-	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
-	let b = &unit_named(&out, "p-app.build").contents;
-	assert_argv_has_no_token(b, "--privileged");
-	assert_argv_has_no_token(b, "-v");
-}
-
-#[test]
-fn build_arg_bare_key_cannot_smuggle_extra_flags() {
-	// A `--build-arg` with no value is just the key. Smuggling still has to
-	// be impossible: a hostile key like `BAD --privileged` must end up as
-	// one argv element, not the literal "--privileged" plus the key.
-	let yaml = r#"
-services:
-  app:
-    build:
-      context: .
-      args:
-        - "BAD --privileged"
-    image: app:1.0
-"#;
-	let file = parse_str(yaml).unwrap();
-	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
-	let b = &unit_named(&out, "p-app.build").contents;
-	assert_argv_has_no_token(b, "--privileged");
-}
-
-#[test]
-fn podman_args_doubles_percent_specifiers() {
-	// systemd specifiers like `%h` would otherwise be expanded at unit
-	// activation time (the same behaviour `Environment=` already escapes).
-	// After the fix a value carrying `%h` is doubled to `%%h` in the
-	// interpolated podman arg, so podman receives `%h` literally and systemd
-	// does not substitute it for the unit's hostname.
-	let yaml = r#"
-services:
-  web:
-    image: alpine:3.20
-    mem_limit: "%h/mem"
-"#;
-	let file = parse_str(yaml).unwrap();
-	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
-	let c = &unit_named(&out, "p-web.container").contents;
-	// After systemd unescapes `%%` to `%`, podman would receive the
-	// literal `%h/mem` from the quoted value, which is harmless; before
-	// the fix, podman would receive `mem` with `%h` expanded to the host's
-	// hostname.
-	assert!(
-		c.contains("PodmanArgs=--memory=\"%%h/mem\""),
-		"`%%h` must be doubled on the PodmanArgs path; got:\n{c}"
-	);
-}
-
 /// With only `cpu_period` set, `cpus` goes out as the quota `up` derives from it.
 #[test]
 fn cpus_with_a_period_become_a_quota() {
@@ -398,4 +277,25 @@ fn cpus_with_a_period_become_a_quota() {
 	assert!(!c.contains("--cpus="), "{c}");
 	assert!(c.contains("PodmanArgs=--cpu-quota=150000\n"), "{c}");
 	assert!(c.contains("PodmanArgs=--cpu-period=50000\n"), "{c}");
+}
+
+#[test]
+fn the_start_limits_sit_in_the_unit_section_where_systemd_reads_them() {
+	// In `[Service]` systemd ignores `StartLimitIntervalSec=`, so the window of a
+	// `max_attempts` was lost; both limits belong between `[Unit]` and `[Container]`.
+	let yaml = "services:\n  web:\n    image: x\n    deploy:\n      restart_policy:\n        condition: on-failure\n        max_attempts: 3\n        window: 60s\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "p-web.container").contents;
+	let unit = c.find("[Unit]").expect("a [Unit] section");
+	let container = c.find("[Container]").expect("a [Container] section");
+	for key in ["StartLimitBurst=3", "StartLimitIntervalSec=60"] {
+		let at = c
+			.find(key)
+			.unwrap_or_else(|| panic!("{key} missing in:\n{c}"));
+		assert!(
+			unit < at && at < container,
+			"{key} is outside [Unit] in:\n{c}"
+		);
+	}
 }
