@@ -23,8 +23,8 @@ set -u
 # appended on top of it. $ROOT is set by setup() below, so the
 # per-host absolute path is computed inside each case rather than
 # at the top of the file.
-STABLE_IMAGES_DIR="pub/fedora/linux/releases/44/Cloud/x86_64/images/"
-STABLE_IMAGES_PATH="/${STABLE_IMAGES_DIR}"
+LANE_IMAGES_DIR="pub/fedora/linux/development/rawhide/Cloud/x86_64/images/"
+LANE_IMAGES_PATH="/${LANE_IMAGES_DIR}"
 
 # Helper: write a CHECKSUM body containing exactly the lines the
 # caller passed, in order. The PGP armour wraps the body the way
@@ -53,10 +53,10 @@ plant_release_without_checksum() { # <root> [body]
 	local body="${2:-$IMG_BODY}"
 	mkdir -p "$root"
 	cat > "$root/index.html" <<EOF
-<a href="$IMG_44">$IMG_44</a>
-<a href="$CS_44">$CS_44</a>
+<a href="$IMG_RAWHIDE">$IMG_RAWHIDE</a>
+<a href="$CS_RAWHIDE">$CS_RAWHIDE</a>
 EOF
-	printf '%s' "$body" > "$root/$IMG_44"
+	printf '%s' "$body" > "$root/$IMG_RAWHIDE"
 }
 
 # ---------------------------------------------------------------------------
@@ -71,18 +71,18 @@ EOF
 # image and exits 0.
 # ---------------------------------------------------------------------------
 setup
-STABLE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${STABLE_IMAGES_PATH}"
+LANE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${LANE_IMAGES_PATH}"
 STUB_404_dl_fedoraproject_org=0
-plant_release_without_checksum "$STABLE_IMAGES_ABS"
+plant_release_without_checksum "$LANE_IMAGES_ABS"
 # Plant a valid CHECKSUM body so the stub has something to print,
 # then mark the path with exit_after=18 to simulate the partial
 # download.
-write_checksum "$STABLE_IMAGES_ABS/$CS_44" \
-	"SHA256 ($IMG_44) = $IMG_HASH"
+write_checksum "$LANE_IMAGES_ABS/$CS_RAWHIDE" \
+	"SHA256 ($IMG_RAWHIDE) = $IMG_HASH"
 plant_exit_after "dl.fedoraproject.org" \
-	"${STABLE_IMAGES_DIR}${CS_44}" 18
+	"${LANE_IMAGES_DIR}${CS_RAWHIDE}" 18
 
-RESULT="$(run_script 5 "$WORK/vm.qcow2")"
+RESULT="$(run_script 6 "$WORK/vm.qcow2")"
 RC="$(printf '%s\n' "$RESULT" | sed -n 1p)"
 STDOUT="$(printf '%s\n' "$RESULT" | sed -n '2,/^---$/p' | sed '$d')"
 
@@ -103,13 +103,13 @@ teardown
 # 2a: only record has the right digest but is for a different file
 # AND has a trailing comment that the whole-line shape rejects.
 setup
-STABLE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${STABLE_IMAGES_PATH}"
+LANE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${LANE_IMAGES_PATH}"
 STUB_404_dl_fedoraproject_org=0
-plant_release_without_checksum "$STABLE_IMAGES_ABS"
-write_checksum "$STABLE_IMAGES_ABS/$CS_44" \
-	"SHA256 (other.qcow2) = $IMG_HASH # ($IMG_44)"
+plant_release_without_checksum "$LANE_IMAGES_ABS"
+write_checksum "$LANE_IMAGES_ABS/$CS_RAWHIDE" \
+	"SHA256 (other.qcow2) = $IMG_HASH # ($IMG_RAWHIDE)"
 
-RESULT="$(run_script 5 "$WORK/vm.qcow2")"
+RESULT="$(run_script 6 "$WORK/vm.qcow2")"
 RC="$(printf '%s\n' "$RESULT" | sed -n 1p)"
 STDERR="$(printf '%s\n' "$RESULT" | awk '/^---$/{f++; next} f==1{print}')"
 
@@ -123,14 +123,14 @@ teardown
 
 # 2b: digest is 65 hex digits, one too many for the whole-line shape.
 setup
-STABLE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${STABLE_IMAGES_PATH}"
+LANE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${LANE_IMAGES_PATH}"
 STUB_404_dl_fedoraproject_org=0
-plant_release_without_checksum "$STABLE_IMAGES_ABS"
+plant_release_without_checksum "$LANE_IMAGES_ABS"
 LONG_DIGEST="${IMG_HASH}f"
-write_checksum "$STABLE_IMAGES_ABS/$CS_44" \
-	"SHA256 ($IMG_44) = $LONG_DIGEST"
+write_checksum "$LANE_IMAGES_ABS/$CS_RAWHIDE" \
+	"SHA256 ($IMG_RAWHIDE) = $LONG_DIGEST"
 
-RESULT="$(run_script 5 "$WORK/vm.qcow2")"
+RESULT="$(run_script 6 "$WORK/vm.qcow2")"
 RC="$(printf '%s\n' "$RESULT" | sed -n 1p)"
 STDERR="$(printf '%s\n' "$RESULT" | awk '/^---$/{f++; next} f==1{print}')"
 
@@ -144,15 +144,15 @@ teardown
 
 # 2c: two records for the image with different digests -- conflict.
 setup
-STABLE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${STABLE_IMAGES_PATH}"
+LANE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${LANE_IMAGES_PATH}"
 STUB_404_dl_fedoraproject_org=0
-plant_release_without_checksum "$STABLE_IMAGES_ABS"
+plant_release_without_checksum "$LANE_IMAGES_ABS"
 ALT_HASH="$(printf 'a%.0s' $(seq 1 64))"
-write_checksum "$STABLE_IMAGES_ABS/$CS_44" \
-	"SHA256 ($IMG_44) = $IMG_HASH" \
-	"SHA256 ($IMG_44) = $ALT_HASH"
+write_checksum "$LANE_IMAGES_ABS/$CS_RAWHIDE" \
+	"SHA256 ($IMG_RAWHIDE) = $IMG_HASH" \
+	"SHA256 ($IMG_RAWHIDE) = $ALT_HASH"
 
-RESULT="$(run_script 5 "$WORK/vm.qcow2")"
+RESULT="$(run_script 6 "$WORK/vm.qcow2")"
 RC="$(printf '%s\n' "$RESULT" | sed -n 1p)"
 STDERR="$(printf '%s\n' "$RESULT" | awk '/^---$/{f++; next} f==1{print}')"
 
@@ -166,19 +166,19 @@ teardown
 
 # 2d: two identical records for the image -- not a conflict, succeeds.
 setup
-STABLE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${STABLE_IMAGES_PATH}"
+LANE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${LANE_IMAGES_PATH}"
 STUB_404_dl_fedoraproject_org=0
-plant_release_without_checksum "$STABLE_IMAGES_ABS"
-write_checksum "$STABLE_IMAGES_ABS/$CS_44" \
-	"SHA256 ($IMG_44) = $IMG_HASH" \
-	"SHA256 ($IMG_44) = $IMG_HASH"
+plant_release_without_checksum "$LANE_IMAGES_ABS"
+write_checksum "$LANE_IMAGES_ABS/$CS_RAWHIDE" \
+	"SHA256 ($IMG_RAWHIDE) = $IMG_HASH" \
+	"SHA256 ($IMG_RAWHIDE) = $IMG_HASH"
 
-RESULT="$(run_script 5 "$WORK/vm.qcow2")"
+RESULT="$(run_script 6 "$WORK/vm.qcow2")"
 RC="$(printf '%s\n' "$RESULT" | sed -n 1p)"
 STDOUT="$(printf '%s\n' "$RESULT" | sed -n '2,/^---$/p' | sed '$d')"
 
 check "item2d: script exits 0" "0" "$RC"
-check "item2d: stdout prints the resolved image name" "$IMG_44" "$STDOUT"
+check "item2d: stdout prints the resolved image name" "$IMG_RAWHIDE" "$STDOUT"
 check "item2d: output image file is non-empty" \
 	"1" "$([ -s "$WORK/vm.qcow2" ] && echo 1 || echo 0)"
 
@@ -187,20 +187,20 @@ teardown
 # 2e: a record for another filename with a different digest plus the
 # correct record for the image -- succeeds.
 setup
-STABLE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${STABLE_IMAGES_PATH}"
+LANE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${LANE_IMAGES_PATH}"
 STUB_404_dl_fedoraproject_org=0
-plant_release_without_checksum "$STABLE_IMAGES_ABS"
+plant_release_without_checksum "$LANE_IMAGES_ABS"
 ALT_HASH="$(printf 'a%.0s' $(seq 1 64))"
-write_checksum "$STABLE_IMAGES_ABS/$CS_44" \
+write_checksum "$LANE_IMAGES_ABS/$CS_RAWHIDE" \
 	"SHA256 (other.qcow2) = $ALT_HASH" \
-	"SHA256 ($IMG_44) = $IMG_HASH"
+	"SHA256 ($IMG_RAWHIDE) = $IMG_HASH"
 
-RESULT="$(run_script 5 "$WORK/vm.qcow2")"
+RESULT="$(run_script 6 "$WORK/vm.qcow2")"
 RC="$(printf '%s\n' "$RESULT" | sed -n 1p)"
 STDOUT="$(printf '%s\n' "$RESULT" | sed -n '2,/^---$/p' | sed '$d')"
 
 check "item2e: script exits 0" "0" "$RC"
-check "item2e: stdout prints the resolved image name" "$IMG_44" "$STDOUT"
+check "item2e: stdout prints the resolved image name" "$IMG_RAWHIDE" "$STDOUT"
 check "item2e: output image file is non-empty" \
 	"1" "$([ -s "$WORK/vm.qcow2" ] && echo 1 || echo 0)"
 
@@ -215,16 +215,16 @@ teardown
 # other than the index request is logged.
 # ---------------------------------------------------------------------------
 setup
-STABLE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${STABLE_IMAGES_PATH}"
+LANE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${LANE_IMAGES_PATH}"
 STUB_404_dl_fedoraproject_org=0
 # Plant the index with the image but no CHECKSUM link.
-mkdir -p "$STABLE_IMAGES_ABS"
-cat > "$STABLE_IMAGES_ABS/index.html" <<EOF
-<a href="$IMG_44">$IMG_44</a>
+mkdir -p "$LANE_IMAGES_ABS"
+cat > "$LANE_IMAGES_ABS/index.html" <<EOF
+<a href="$IMG_RAWHIDE">$IMG_RAWHIDE</a>
 EOF
-printf '%s' "$IMG_BODY" > "$STABLE_IMAGES_ABS/$IMG_44"
+printf '%s' "$IMG_BODY" > "$LANE_IMAGES_ABS/$IMG_RAWHIDE"
 
-RESULT="$(run_script 5 "$WORK/vm.qcow2")"
+RESULT="$(run_script 6 "$WORK/vm.qcow2")"
 RC="$(printf '%s\n' "$RESULT" | sed -n 1p)"
 STDERR="$(printf '%s\n' "$RESULT" | awk '/^---$/{f++; next} f==1{print}')"
 STDOUT="$(printf '%s\n' "$RESULT" | sed -n '2,/^---$/p' | sed '$d')"
@@ -238,7 +238,7 @@ check "item3: stderr mentions CHECKSUM" "1" \
 # images directory are expected. The fix means phase 2 must NOT
 # have fired the bug's "fetch the directory as the CHECKSUM" call
 # -- without it, that would be another 8 calls, totalling 16.
-INDEX_HITS="$(count_args_matching dl.fedoraproject.org "$STABLE_IMAGES_DIR")"
+INDEX_HITS="$(count_args_matching dl.fedoraproject.org "$LANE_IMAGES_DIR")"
 check "item3: stub log shows exactly 8 index calls (no phase-2 leak)" \
 	"8" "$INDEX_HITS"
 check "item3: output image file does not exist" \
@@ -254,13 +254,13 @@ teardown
 # requests.
 # ---------------------------------------------------------------------------
 setup
-STABLE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${STABLE_IMAGES_PATH}"
+LANE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${LANE_IMAGES_PATH}"
 STUB_404_dl_fedoraproject_org=0
-plant_release_without_checksum "$STABLE_IMAGES_ABS"
-write_checksum "$STABLE_IMAGES_ABS/$CS_44" \
-	"SHA256 ($IMG_44) = $IMG_HASH"
+plant_release_without_checksum "$LANE_IMAGES_ABS"
+write_checksum "$LANE_IMAGES_ABS/$CS_RAWHIDE" \
+	"SHA256 ($IMG_RAWHIDE) = $IMG_HASH"
 
-RESULT="$(run_script 5 "$WORK/vm.qcow2")"
+RESULT="$(run_script 6 "$WORK/vm.qcow2")"
 RC="$(printf '%s\n' "$RESULT" | sed -n 1p)"
 
 check "item4: script exits 0" "0" "$RC"
@@ -268,14 +268,14 @@ check "item4: script exits 0" "0" "$RC"
 # must also carry --max-redirs 0. Grep matches the CHECKSUM path
 # first, then filters the same line for the redirect flag.
 ARGS_LOG="$COUNTERS/dl.fedoraproject.org.args"
-CHECKSUM_WITH_FLAG="$(grep -F -- "$CS_44" "$ARGS_LOG" | grep -cF -- '--max-redirs 0')"
-CHECKSUM_TOTAL="$(grep -cF -- "$CS_44" "$ARGS_LOG")"
+CHECKSUM_WITH_FLAG="$(grep -F -- "$CS_RAWHIDE" "$ARGS_LOG" | grep -cF -- '--max-redirs 0')"
+CHECKSUM_TOTAL="$(grep -cF -- "$CS_RAWHIDE" "$ARGS_LOG")"
 check "item4: every CHECKSUM request carries --max-redirs 0" \
 	"$CHECKSUM_TOTAL" "$CHECKSUM_WITH_FLAG"
 # No line that is an index or image request (i.e. the args log
 # line does NOT mention the CHECKSUM filename) may carry
 # --max-redirs 0; the redirect rejection is CHECKSUM-only.
-NON_CHECKSUM_WITH_FLAG="$(grep -vF -- "$CS_44" "$ARGS_LOG" | grep -cF -- '--max-redirs 0' || true)"
+NON_CHECKSUM_WITH_FLAG="$(grep -vF -- "$CS_RAWHIDE" "$ARGS_LOG" | grep -cF -- '--max-redirs 0' || true)"
 check "item4: no index or image request carries --max-redirs 0" \
 	"0" "$NON_CHECKSUM_WITH_FLAG"
 
@@ -289,20 +289,20 @@ teardown
 # iteration's deadline check fires before any attempt, so at most
 # one request per host and the error names the deadline.
 setup
-STABLE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${STABLE_IMAGES_PATH}"
+LANE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${LANE_IMAGES_PATH}"
 export FETCH_DEADLINE=0
 STUB_404_dl_fedoraproject_org=999
 STUB_404_download_fedoraproject_org=999
 # No files planted; every request is a 404.
 
-RESULT="$(run_script 5 "$WORK/vm.qcow2")"
+RESULT="$(run_script 6 "$WORK/vm.qcow2")"
 RC="$(printf '%s\n' "$RESULT" | sed -n 1p)"
 STDERR="$(printf '%s\n' "$RESULT" | awk '/^---$/{f++; next} f==1{print}')"
 
 check "item5a: script exits non-zero" "1" "$RC"
 check "item5a: stderr contains 'fetch deadline'" "1" \
 	"$(printf '%s' "$STDERR" | grep -q 'fetch deadline' && echo 1 || echo 0)"
-PRIMARY_INDEX_HITS="$(count_args_matching dl.fedoraproject.org "$STABLE_IMAGES_DIR")"
+PRIMARY_INDEX_HITS="$(count_args_matching dl.fedoraproject.org "$LANE_IMAGES_DIR")"
 check "item5a: at most one index request to primary" \
 	"1" "$(if [ "$PRIMARY_INDEX_HITS" -le 1 ]; then echo 1; else echo 0; fi)"
 
@@ -313,18 +313,18 @@ unset FETCH_DEADLINE
 # CHECKSUM. Phase 1 succeeds (the index is served), phase 2 makes
 # exactly TRIES=8 CHECKSUM attempts, then fails.
 setup
-STABLE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${STABLE_IMAGES_PATH}"
+LANE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${LANE_IMAGES_PATH}"
 STUB_404_dl_fedoraproject_org=0
-plant_release_without_checksum "$STABLE_IMAGES_ABS"
+plant_release_without_checksum "$LANE_IMAGES_ABS"
 # No CHECKSUM file planted: every primary CHECKSUM request 404s.
-CHECKSUM_PATH="${STABLE_IMAGES_DIR}${CS_44}"
+CHECKSUM_PATH="${LANE_IMAGES_DIR}${CS_RAWHIDE}"
 plant_path_limit "dl.fedoraproject.org" "$CHECKSUM_PATH" 999
 
-RESULT="$(run_script 5 "$WORK/vm.qcow2")"
+RESULT="$(run_script 6 "$WORK/vm.qcow2")"
 RC="$(printf '%s\n' "$RESULT" | sed -n 1p)"
 
 check "item5b: script exits non-zero" "1" "$RC"
-CHECKSUM_HITS="$(count_args_matching dl.fedoraproject.org "$CS_44")"
+CHECKSUM_HITS="$(count_args_matching dl.fedoraproject.org "$CS_RAWHIDE")"
 check "item5b: exactly 8 CHECKSUM requests (pins TRIES=8)" \
 	"8" "$CHECKSUM_HITS"
 
@@ -334,13 +334,13 @@ teardown
 # timeouts (--max-time 60, --connect-timeout 10); the image uses
 # --max-time 600 and -C -.
 setup
-STABLE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${STABLE_IMAGES_PATH}"
+LANE_IMAGES_ABS="$ROOT/dl.fedoraproject.org${LANE_IMAGES_PATH}"
 STUB_404_dl_fedoraproject_org=0
-plant_release_without_checksum "$STABLE_IMAGES_ABS"
-write_checksum "$STABLE_IMAGES_ABS/$CS_44" \
-	"SHA256 ($IMG_44) = $IMG_HASH"
+plant_release_without_checksum "$LANE_IMAGES_ABS"
+write_checksum "$LANE_IMAGES_ABS/$CS_RAWHIDE" \
+	"SHA256 ($IMG_RAWHIDE) = $IMG_HASH"
 
-RESULT="$(run_script 5 "$WORK/vm.qcow2")"
+RESULT="$(run_script 6 "$WORK/vm.qcow2")"
 RC="$(printf '%s\n' "$RESULT" | sed -n 1p)"
 
 check "item5c: script exits 0" "0" "$RC"

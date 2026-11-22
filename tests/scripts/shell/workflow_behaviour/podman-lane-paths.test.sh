@@ -51,7 +51,7 @@ for path in internal/x.rs Cargo.toml Cargo.lock build.rs .cargo/config.toml \
 	rust-toolchain rust-toolchain.toml tests/unknown/x.rs tests/engine/x.rs tests/cli.rs \
 	tests/engine/engine_integration.rs tests/engine/integration_leak_scan.rs \
 	.github/workflows/podman-lane.yml .github/workflows/future.yml \
-	.github/podman_lane/known-failures-5 .github/podman_lane/known-failures-6 \
+	.github/podman_lane/known-failures-6 \
 	.github/podman_lane/baseline-tests .github/podman_lane/baseline .github/podman_lane/notes.md \
 	.github/scripts/checks/podman-lane-paths.sh .github/scripts/checks/is-version-bump.sh \
 	.github/scripts/fedora_image/fetch-fedora-image.sh .github/scripts/release/sign.py \

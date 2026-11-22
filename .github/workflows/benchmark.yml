@@ -8,7 +8,7 @@
 #                shell syntax, Python syntax, and the aggregation stats path run
 #                against inline sample rows. It does NOT install Podman or drive
 #                podup: ubuntu-latest ships Podman 4.9, below podup's floor
-#                (Podman >= 5.0), so a shared-runner engine run would either fail
+#                (Podman >= 6.2.0), so a shared-runner engine run would either fail
 #                or exercise an unsupported configuration. It produces NO
 #                published numbers and proves nothing about podup on real Podman.
 #   benchmark  runs on a self-hosted runner (manual dispatch) over the full suite

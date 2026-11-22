@@ -158,8 +158,8 @@ jobs:
       # A caller-level `if:` on a job that emits a required check name is a
       # switch, not a filter. GitHub reports a SKIPPED required check as
       # SUCCESS, so one `if:` line can switch off coverage, the MSRV floor,
-      # or the validation on both supported Podman majors while the ruleset
-      # reports the gate as satisfied.
+      # or the validation on a live Podman while the ruleset reports the gate
+      # as satisfied.
       #
       # Measured against this repository on 2026-09-06: eleven status checks
       # are required on `main` and ten on `develop`. Every one of them is
