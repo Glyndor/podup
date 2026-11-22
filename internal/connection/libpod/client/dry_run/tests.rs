@@ -5,7 +5,7 @@ use hyper::Method;
 
 use super::super::{Client, PodmanError};
 
-const PATH: &str = "/v5.0.0/libpod/containers/create";
+const PATH: &str = "/v6.2.0/libpod/containers/create";
 
 fn refused(client: &Client, method: Method) -> bool {
 	matches!(
@@ -63,8 +63,8 @@ async fn a_mutating_call_is_refused_without_opening_the_socket() {
 	// The path does not exist: a request that was sent would fail with a
 	// connection error, not with the dry-run refusal.
 	let client = Client::new("/nonexistent/podup-dry-run.sock").with_dry_run(true);
-	let err = client.post_empty_ok("/v5.0.0/libpod/pods/x/start").await;
+	let err = client.post_empty_ok("/v6.2.0/libpod/pods/x/start").await;
 	assert!(matches!(err, Err(PodmanError::DryRun { .. })), "{err:?}");
-	let err = client.delete_ok("/v5.0.0/libpod/containers/x").await;
+	let err = client.delete_ok("/v6.2.0/libpod/containers/x").await;
 	assert!(matches!(err, Err(PodmanError::DryRun { .. })), "{err:?}");
 }

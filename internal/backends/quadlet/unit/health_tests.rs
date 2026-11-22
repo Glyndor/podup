@@ -33,15 +33,14 @@ fn exec_test_strips_cmd_sentinel_and_renders_timing() {
 		"image: x\nhealthcheck:\n  test: [\"CMD\", \"curl\", \"-f\", \"http://localhost\"]\n  \
 		 interval: 30s\n  timeout: 5s\n  retries: 3\n  start_period: 10s\n",
 	);
-	// The CMD sentinel is dropped from the rendered command.
-	assert!(body.contains("HealthCmd=curl -f http://localhost"));
+	// The exec form is written as a JSON array, which Podman keeps as an exec test.
+	assert!(body.contains("HealthCmd=[\"CMD\",\"curl\",\"-f\",\"http://localhost\"]\n"));
 	assert!(body.contains("HealthInterval=30s"));
 	assert!(body.contains("HealthTimeout=5s"));
 	assert!(body.contains("HealthRetries=3"));
 	assert!(body.contains("HealthStartPeriod=10s"));
-	// Podman reads `HealthCmd=` as a shell line, so the exec form is reported.
-	assert_eq!(warnings.len(), 1, "{warnings:?}");
-	assert!(warnings[0].contains("/bin/sh"), "{warnings:?}");
+	// The exec form runs without a shell, so nothing is reported.
+	assert!(warnings.is_empty(), "{warnings:?}");
 }
 
 #[test]
@@ -62,9 +61,8 @@ fn exec_test_without_sentinel_keeps_all_parts() {
 fn start_interval_is_skipped_with_warning() {
 	let (body, warnings) =
 		render("image: x\nhealthcheck:\n  test: [\"CMD\", \"true\"]\n  start_interval: 5s\n");
-	assert!(body.contains("HealthCmd=true"));
-	// No key is emitted for start_interval, but the user is warned (next to
-	// the warning that a `CMD` test runs through a shell).
+	assert!(body.contains("HealthCmd=[\"CMD\",\"true\"]"));
+	// No key is emitted for start_interval, but the user is warned.
 	assert!(
 		warnings.iter().any(|w| w.contains("start_interval")),
 		"{warnings:?}"
@@ -73,8 +71,8 @@ fn start_interval_is_skipped_with_warning() {
 
 /// Without this systemd calls the unit started as soon as the container is
 /// created, so `After=`/`Requires=` order creation rather than readiness.
-/// Measured on podman 5.7.0: a dependant started 10s into a dependency
-/// whose probe took 10s, instead of immediately.
+/// The 6.2.0 generator turns it into `--sdnotify=healthy`, so a dependant
+/// starts once the probe has passed instead of when the container is created.
 #[test]
 fn a_healthcheck_brings_notify_healthy() {
 	let (body, _) = render("image: x\nhealthcheck:\n  test: [\"CMD\", \"true\"]\n");
@@ -103,17 +101,17 @@ fn an_empty_test_means_no_notify() {
 	assert!(!body.contains("Notify"), "{body}");
 }
 
-/// `HealthCmd=` is read by Podman as one shell command line. Joined with plain
-/// spaces, `["CMD", "sh", "-c", "wget -q x || exit 1"]` became
-/// `sh -c wget -q x || exit 1`, which runs `wget` with no argument and then
-/// `exit 1`. Each word of the vector is quoted so the line means what the file said.
+/// A plain string `HealthCmd=` is one shell command line, so joining the
+/// vector `["CMD", "sh", "-c", "wget -q x || exit 1"]` with spaces would run
+/// `wget` with no argument and then `exit 1`. The vector is written as a JSON
+/// array instead, which keeps every word as the file said it.
 #[test]
 fn an_exec_form_healthcheck_keeps_the_words_it_was_given() {
 	let (body, _) = render(
 		"image: x\nhealthcheck:\n  test: [\"CMD\", \"sh\", \"-c\", \"wget -q x || exit 1\"]\n",
 	);
 	assert!(
-		body.contains("HealthCmd=sh -c 'wget -q x || exit 1'"),
+		body.contains("HealthCmd=[\"CMD\",\"sh\",\"-c\",\"wget -q x || exit 1\"]\n"),
 		"{body}"
 	);
 }
@@ -126,9 +124,12 @@ fn a_shell_form_healthcheck_is_written_as_it_is() {
 }
 
 #[test]
-fn a_quote_inside_an_exec_word_is_closed_and_reopened() {
+fn a_quote_inside_an_exec_word_stays_in_its_word() {
 	let (body, _) = render("image: x\nhealthcheck:\n  test: [\"CMD\", \"echo\", \"it's\"]\n");
-	assert!(body.contains("HealthCmd=echo 'it'\\''s'"), "{body}");
+	assert!(
+		body.contains("HealthCmd=[\"CMD\",\"echo\",\"it's\"]\n"),
+		"{body}"
+	);
 }
 
 /// A `CMD-SHELL` or plain string test already runs through a shell, so it is

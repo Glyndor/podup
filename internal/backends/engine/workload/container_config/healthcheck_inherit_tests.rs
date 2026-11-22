@@ -75,29 +75,17 @@ fn an_image_without_a_healthcheck_leaves_the_old_behaviour() {
 }
 
 #[test]
-fn timings_without_a_test_bring_the_image_test_so_the_probe_survives() {
+fn timings_without_a_test_leave_the_test_to_libpod() {
+	// libpod merges field by field when the request has no test (Podman 6.2.0),
+	// so the image's probe is not copied into the request.
 	let hc = HealthCheck {
 		interval: Some("10s".into()),
 		..Default::default()
 	};
 	let cfg = build_healthcheck_inheriting(&hc, Some(&image())).unwrap();
-	assert_eq!(cfg.test.unwrap(), vec!["CMD-SHELL", "/bin/true"]);
+	assert!(cfg.test.is_none());
 	assert_eq!(cfg.interval, Some(10 * S));
 	assert_eq!(cfg.retries, Some(7));
-}
-
-#[test]
-fn an_image_that_disables_its_healthcheck_lends_no_test() {
-	let off = ImageHealthcheck {
-		test: Some(vec!["NONE".into()]),
-		..image()
-	};
-	let hc = HealthCheck {
-		interval: Some("10s".into()),
-		..Default::default()
-	};
-	let cfg = build_healthcheck_inheriting(&hc, Some(&off)).unwrap();
-	assert!(cfg.test.is_none());
 }
 
 #[test]

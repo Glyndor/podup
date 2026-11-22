@@ -210,7 +210,7 @@ Stream Podman events for this project's containers. The default output is one `T
 | `--since <TIME>` | Only stream events at or after this timestamp or relative time. | stream start |
 | `--until <TIME>` | End of the window. Only closes the feed when paired with `--since` and already elapsed. | no end |
 
-**Bounding a feed needs both flags.** A past window such as `--since 2h --until -1h` ends the feed (measured on Podman 5.7.0 on 2026-09-23 with `--since 30s --until -1s`); `--until` alone, `--since` alone, and any `--until` in the future leave it following indefinitely. podup warns when `--until` is given without `--since`. This also decides the exit code; see [Exit status](#exit-status).
+**Bounding a feed needs both flags.** A past window such as `--since 2h --until -1h` ends the feed (measured on Podman 6.2.0 on 2026-11-22 with `--since 30s --until -1s`); `--until` alone, `--since` alone, and any `--until` in the future leave it following indefinitely. podup warns when `--until` is given without `--since`. This also decides the exit code; see [Exit status](#exit-status).
 
 ### `top [SERVICE...]`
 Show the running processes of service containers.

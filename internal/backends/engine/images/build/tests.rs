@@ -167,7 +167,7 @@ fn a_control_character_in_a_build_secret_name_does_not_reach_the_message() {
 }
 
 /// `build.ulimits` was reported as having no libpod mapping. It has one:
-/// measured on podman 5.7.0, a build with `ulimits=["nofile=1234:1234"]` saw
+/// measured on podman 6.2.0 (2026-11-22), a build with `ulimits=["nofile=1234:1234"]` saw
 /// 1234 where the same build without it saw 524288.
 #[test]
 fn a_pair_renders_as_soft_colon_hard() {

@@ -23,10 +23,16 @@
 //! was not confirmed at all, and every directory copy against Podman 6 was
 //! reported as failed whether or not it had landed.
 //!
+//! On Podman 6.2.0 (2026-11-22) this did not show up: the 13 `cp` live tests, run
+//! five times (40 PUTs counted), all got a clean 2xx back. That does not prove
+//! the close is gone, since it was intermittent on 6.0.1, so the confirmation
+//! stays and runs only when the PUT fails with an incomplete message.
+//!
 //! Fails, rather than guessing, when a post-PUT stat cannot be read or when
 //! the archive holds nothing that can be asked about.
 //!
-//! Inert on Podman 5, which returns a normal response.
+//! When the endpoint answers normally there is nothing to confirm and none of
+//! this runs.
 
 use std::pin::Pin;
 
@@ -95,7 +101,7 @@ impl Engine {
 			.put_stream_ok(&path, body_for_put, "application/gzip")
 			.await;
 
-		// If the PUT itself succeeded with a clean 2xx response (Podman 5),
+		// If the PUT itself succeeded with a clean 2xx response,
 		// the runtime accepted the bytes and the copy landed. The producer
 		// may still be flushing the EOF marker when hyper drops the body
 		// stream after the response, in which case `blocking_send` returns
@@ -145,7 +151,8 @@ impl Engine {
 			(Some(p), Some(want)) => {
 				// A symbolic link's destination is read through the 404-with-stat
 				// shape, the same dispatch `tree_landed` uses: a dangling link
-				// on Podman 5.7.0 returns 404 with the link stat in the header,
+				// on Podman 6.2.0 returns 404 with the link stat in the header
+				// (measured 2026-11-22),
 				// and `head_path_stat` would throw that stat away. A regular
 				// file or directory that answers 404 (the link was cut and the
 				// upload failed) returns `None` either way, so the dispatch

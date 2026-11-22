@@ -6,7 +6,7 @@ use crate::compose::types::Service;
 
 use super::super::super::pod::{PodField, PodFields};
 use super::super::super::shared_values::userns;
-use super::super::{map_security_opt, quote_podman_arg_value, Section};
+use super::super::{map_security_opt, Section};
 
 /// Emit one `AddCapability=`/`DropCapability=` line per `cap_add:`/`cap_drop:`
 /// entry.
@@ -33,23 +33,17 @@ pub(in super::super) fn emit_userns(
 	}
 }
 
-/// Emit a `--group-add` podman arg per `group_add:` entry.
+/// Emit a `GroupAdd=` line per `group_add:` entry.
 pub(in super::super) fn emit_group_add(service: &Service, container: &mut Section) {
 	for group in &service.group_add {
-		// An empty entry (`- ""`) would render as `--group-add=`, which
-		// podman rejects. The native `GroupAdd=` key omits empty values,
-		// so the podman-args route has to skip them too.
+		// An empty entry (`- ""`) would render as a bare `GroupAdd=`, which
+		// resets the list instead of adding a group. An entry that is empty
+		// once the control characters are stripped, or that has a space at
+		// either end, stays on `PodmanArgs=` (see `Section::add_native`).
 		if group.is_empty() {
 			continue;
 		}
-		// `GroupAdd=` has been in Quadlet since Podman 5.1.0, but the native
-		// key is not written yet, so route each entry through `PodmanArgs=` as
-		// `--group-add`, like the memory/CPU limits. Quoted per #1734 for
-		// the same reason as `mem_limit`.
-		container.add(
-			"PodmanArgs",
-			format!("--group-add={}", quote_podman_arg_value(group)),
-		);
+		container.add_native("GroupAdd", "--group-add=", group);
 	}
 }
 

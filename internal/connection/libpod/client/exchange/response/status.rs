@@ -38,7 +38,7 @@ fn parse_part(part: &str) -> Option<u64> {
 	part.parse().ok()
 }
 
-/// Whether a `Libpod-API-Version` string (e.g. `"6.2.0"`, `"5.7.0"`) is at or
+/// Whether a `Libpod-API-Version` string (e.g. `"6.2.0"`, `"6.3.1"`) is at or
 /// above [`MIN_PODMAN_VERSION`](crate::libpod::client::MIN_PODMAN_VERSION).
 /// A string that cannot be read is below the floor.
 pub(crate) fn meets_minimum(version: &str) -> bool {

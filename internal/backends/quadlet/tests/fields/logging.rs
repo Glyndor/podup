@@ -15,15 +15,14 @@ use crate::quadlet::tests::unit_named;
 /// unit that runs without rotation, diverging from `up` behaviour.
 ///
 /// The cap is rendered as a byte count rather than `10m` since #1417 moved
-/// it into libpod's typed `size` field; `podman run --log-opt
-/// max-size=10485760` was measured to produce the same cap as `max-size=10m`
-/// on Podman 5.7.0. `max-file` is deliberately absent: it was measured to be
-/// dropped by both the API and the CLI, so emitting it promised a rotation
-/// nothing performed.
+/// it into libpod's typed `size` field. Measured on Podman 6.2.0
+/// (2026-11-22): `--log-opt max-size=10485760` stores a `10.49MB` cap (10 MiB,
+/// what `up` sets), where `max-size=10m` stores `10MB`, so the byte count is
+/// the faithful spelling. `max-file` is deliberately absent: `podman create
+/// --log-opt max-file=3` is accepted and stores no configuration, so emitting
+/// it promised a rotation nothing performed.
 ///
-/// Both the default rotation and the user options are routed through
-/// `PodmanArgs=--log-opt=` rather than `LogOpt=`: the native key (Podman
-/// 5.2.0) is not written yet.
+/// Both the default rotation and the user options are written as `LogOpt=`.
 #[test]
 fn logging_default_is_emitted_when_logging_block_is_absent() {
 	let yaml = r#"
@@ -39,8 +38,8 @@ services:
 		"missing default LogDriver in:\n{c}"
 	);
 	assert!(
-		c.contains("PodmanArgs=--log-opt=\"max-size=10485760\""),
-		"missing default max-size PodmanArgs in:\n{c}"
+		c.contains("LogOpt=max-size=10485760\n"),
+		"missing default max-size LogOpt in:\n{c}"
 	);
 	assert!(
 		!c.contains("max-file"),
@@ -70,12 +69,11 @@ services:
 		"user override not applied:\n{c}"
 	);
 	assert!(
-		c.contains("PodmanArgs=--log-opt=\"tag=mytag\""),
+		c.contains("LogOpt=tag=mytag\n"),
 		"user options not applied:\n{c}"
 	);
-	// The default `max-size` rotation travels through the same
-	// `--log-opt=` flag; the user override replaces the whole `options:`
-	// set, so no `max-size` PodmanArgs survives.
+	// The user override replaces the whole `options:` set, so no default
+	// `max-size` survives.
 	assert!(
 		!c.contains("max-size"),
 		"default leaked through override:\n{c}"

@@ -65,7 +65,7 @@ GHSA-2cvf-wqm6-wr9g (CVE-2026-94603, critical, CVSS 10.0) says that Podman treat
 
 | Threat | Control | Evidence |
 |---|---|---|
-| A hostile image carrying the checkpoint annotation overrides the sandbox options a compose file asked for | none in podup. podup sends `cap_drop` and `security_opt` to Podman unchanged and does not read image annotations, so it inherits the behaviour of the engine it talks to: the issue applies to a rootful Podman older than 5.8.8 (v5) or 6.1.3 (v6) running an untrusted image. Update Podman to a patched version, or scan pulled images for the annotation and reject them, as the advisory says | no test; residual risk, stated here |
+| A hostile image carrying the checkpoint annotation overrides the sandbox options a compose file asked for | none in podup. podup sends `cap_drop` and `security_opt` to Podman unchanged and does not read image annotations, so it inherits the behaviour of the engine it talks to. podup requires Podman 6.2.0 or newer, which is past the 6.1.3 fix, so the issue does not apply to a supported engine; an unpatched Podman is refused at startup by the version floor | the floor check, `tests/repository/packaging/podman_floor_at_runtime.rs`; no test of the annotation itself |
 
 ### Secrets and configs
 

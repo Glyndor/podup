@@ -10,7 +10,7 @@ use crate::compose::types::ComposeFile;
 use super::super::super::render::sanitize_value;
 
 use super::super::shared_values::{host_values, network_values, userns};
-use super::super::{quote_podman_arg_value, Section};
+use super::super::Section;
 
 /// A compose field that can move from a container unit to its pod unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -216,39 +216,39 @@ impl PodFields {
 	pub(crate) fn emit(&self, pod: &mut Section) {
 		if let Agreement::Agreed(values) = &self.dns {
 			for value in values {
-				add_podman_arg(pod, "--dns", value);
+				add_trimmed(pod, "DNS", "--dns=", value);
 			}
 		}
 		if let Agreement::Agreed(values) = &self.dns_option {
 			for value in values {
-				add_podman_arg(pod, "--dns-option", value);
+				add_trimmed(pod, "DNSOption", "--dns-option=", value);
 			}
 		}
 		if let Agreement::Agreed(values) = &self.dns_search {
 			for value in values {
-				add_podman_arg(pod, "--dns-search", value);
+				add_trimmed(pod, "DNSSearch", "--dns-search=", value);
 			}
 		}
 		if let Agreement::Agreed(values) = &self.extra_hosts {
 			for value in values {
-				add_podman_arg(pod, "--add-host", value);
+				pod.add_native("AddHost", "--add-host=", &sanitize_value(value));
 			}
 		}
 		if let Agreement::Agreed(value) = &self.userns {
-			add_podman_arg(pod, "--userns", value);
+			add_trimmed(pod, "UserNS", "--userns=", value);
 		}
 		if let Some(bytes) = self.shm_size.bytes {
-			add_podman_arg(pod, "--shm-size", &bytes.to_string());
+			pod.add("ShmSize", bytes.to_string());
 		}
 		if let Agreement::Agreed(value) = &self.ipv4 {
-			add_podman_arg(pod, "--ip", value);
+			add_trimmed(pod, "IP", "--ip=", value);
 		}
 		if let Agreement::Agreed(value) = &self.ipv6 {
-			add_podman_arg(pod, "--ip6", value);
+			add_trimmed(pod, "IP6", "--ip6=", value);
 		}
 		if let Agreement::Agreed(values) = &self.aliases {
 			for value in values {
-				add_podman_arg(pod, "--network-alias", value);
+				pod.add_native("NetworkAlias", "--network-alias=", &sanitize_value(value));
 			}
 		}
 	}
@@ -265,17 +265,10 @@ impl<T> Agreement<T> {
 	}
 }
 
-/// Append one quoted Podman argument to a pod unit.
-fn add_podman_arg(pod: &mut Section, flag: &str, value: &str) {
-	let sanitized = sanitize_value(value);
-	// Native container directives lose boundary whitespace during unit parsing.
-	// Host entries and aliases already use quoted arguments on the container.
-	let value = match flag {
-		"--add-host" | "--network-alias" => sanitized.as_str(),
-		_ => sanitized.trim(),
-	};
-	pod.add(
-		"PodmanArgs",
-		format!("{flag}={}", quote_podman_arg_value(value)),
-	);
+/// Append a pod value that was always written trimmed: these fields went
+/// through `PodmanArgs=` with the boundary whitespace removed, which is also
+/// what the native key does on the container side. Host entries and aliases
+/// are not trimmed (they keep their spaces, see `Section::add_native`).
+fn add_trimmed(pod: &mut Section, key: &str, arg: &str, value: &str) {
+	pod.add_native(key, arg, sanitize_value(value).trim());
 }

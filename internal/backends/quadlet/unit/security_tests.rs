@@ -121,14 +121,13 @@ fn maps_seccomp_and_apparmor() {
 	assert!(map_one("seccomp=/etc/seccomp.json")
 		.0
 		.contains("SeccompProfile=/etc/seccomp.json"));
-	// `AppArmor=` is not a recognised Quadlet key, so both `apparmor=` and
-	// `apparmor:` route through PodmanArgs= as a `--security-opt` flag.
+	// Both `apparmor=` and `apparmor:` become the native `AppArmor=` key.
 	assert!(map_one("apparmor=docker-default")
 		.0
-		.contains("PodmanArgs=--security-opt apparmor=\"docker-default\""));
+		.contains("AppArmor=docker-default"));
 	assert!(map_one("apparmor:unconfined")
 		.0
-		.contains("PodmanArgs=--security-opt apparmor=\"unconfined\""));
+		.contains("AppArmor=unconfined"));
 }
 
 #[test]

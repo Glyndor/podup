@@ -158,7 +158,7 @@ pub struct Engine {
 	/// issues those creates one at a time (#1955).
 	///
 	/// Podman's API service computes the `keep-id` mapping racily when several
-	/// such creates arrive at once: measured on 5.7.0, one container now and
+	/// such creates arrive at once. Measured on 5.7.0: one container now and
 	/// then comes back mapped as `1000:0:1` alone, and crun then cannot write
 	/// the default `net.ipv4.ping_group_range=0 0` sysctl because container
 	/// GID 0 is unmapped, so the container is left in `created`. Creating in
@@ -166,6 +166,10 @@ pub struct Engine {
 	/// stays outside the lock. Reported upstream as
 	/// podman-container-tools/podman#29848. Two podup processes creating
 	/// `keep-id` containers at the same moment can still race.
+	///
+	/// On Podman 6.2.0 (2026-11-22) 60 concurrent `keep-id` creates, in five
+	/// rounds of 12, did not reproduce it. That does not show the race is gone,
+	/// so the lock stays until it is shown to be.
 	pub(crate) keep_id_create: tokio::sync::Mutex<()>,
 	/// What the daemon says about its host, read on first use and kept for
 	/// the rest of the invocation.

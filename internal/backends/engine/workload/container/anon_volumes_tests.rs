@@ -237,7 +237,7 @@ async fn replaced_container_delete(renew: bool) -> String {
 
 /// `up -V` has to drop the old container's anonymous volumes. libpod reads
 /// `volumes=true` for that: the docker spelling `v=true` is ignored there and
-/// the volume stays behind, which measured against a real Podman 5.7.0.
+/// the volume stays behind, which measured against a real Podman 6.2.0 (2026-11-22).
 #[cfg(unix)]
 #[tokio::test]
 async fn renew_anon_volumes_asks_libpod_to_remove_the_volumes() {

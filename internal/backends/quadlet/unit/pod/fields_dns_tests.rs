@@ -32,17 +32,17 @@ fn assert_dns_fallback(field: &str, key: &str, flag: &str, value: &str) {
 
 #[test]
 fn dns_with_blank_entry_stays_on_containers() {
-	assert_dns_fallback("dns", "DNS", "--dns=", "1.1.1.1");
+	assert_dns_fallback("dns", "DNS", "DNS=", "1.1.1.1");
 }
 
 #[test]
 fn dns_options_with_blank_entry_stay_on_containers() {
-	assert_dns_fallback("dns_opt", "DNSOption", "--dns-option=", "ndots:1");
+	assert_dns_fallback("dns_opt", "DNSOption", "DNSOption=", "ndots:1");
 }
 
 #[test]
 fn dns_search_with_blank_entry_stays_on_containers() {
-	assert_dns_fallback("dns_search", "DNSSearch", "--dns-search=", "example.com");
+	assert_dns_fallback("dns_search", "DNSSearch", "DNSSearch=", "example.com");
 }
 
 fn assert_dns_disagreement(field: &str, key: &str, flag: &str, value: &str, other: &str) {
@@ -78,18 +78,12 @@ fn assert_dns_disagreement(field: &str, key: &str, flag: &str, value: &str, othe
 
 #[test]
 fn dns_disagreement_stays_on_containers() {
-	assert_dns_disagreement("dns", "DNS", "--dns=", "1.1.1.1", "9.9.9.9");
+	assert_dns_disagreement("dns", "DNS", "DNS=", "1.1.1.1", "9.9.9.9");
 }
 
 #[test]
 fn dns_option_disagreement_stays_on_containers() {
-	assert_dns_disagreement(
-		"dns_opt",
-		"DNSOption",
-		"--dns-option=",
-		"ndots:1",
-		"ndots:2",
-	);
+	assert_dns_disagreement("dns_opt", "DNSOption", "DNSOption=", "ndots:1", "ndots:2");
 }
 
 #[test]
@@ -97,7 +91,7 @@ fn dns_search_disagreement_stays_on_containers() {
 	assert_dns_disagreement(
 		"dns_search",
 		"DNSSearch",
-		"--dns-search=",
+		"DNSSearch=",
 		"example.com",
 		"example.net",
 	);

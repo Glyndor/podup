@@ -58,9 +58,9 @@ impl Client {
 	/// The full decoded stat for a container path, on a 200 or on a 404 that
 	/// still carries the `X-Docker-Container-Path-Stat` header.
 	///
-	/// On Podman 5.7.0 a dangling symbolic link answers the stat HEAD with a
-	/// 404 whose body carries the link's own `mode` and `size` in the stat
-	/// header, and `head_path_stat` throws that stat away. The link is there;
+	/// Measured on Podman 6.2.0 (2026-11-22): a dangling symbolic link answers
+	/// the stat HEAD with a 404 whose body carries the link's own `mode` and
+	/// `size` in the stat header, and `head_path_stat` throws that stat away. The link is there;
 	/// the 404 is what the runtime returns for "not a regular file or
 	/// directory", not "absent". Reading the stat back off the 404 is what
 	/// closes the gap: a regular file or directory that answers 404 returns
@@ -92,7 +92,7 @@ impl Client {
 			// A 404 without the stat header means the path is truly absent;
 			// the caller sees the same `None` `head_path_stat` returned for
 			// the regular-file/directory case it already covered. A 404 WITH
-			// the header (the Podman 5.7.0 dangling-link shape) gets the stat
+			// the header (the dangling-link shape, still returned by Podman 6.2.0) gets the stat
 			// back so the verification can read the link's mode off it.
 			let Some(stat) = stat_header else {
 				return Ok(None);

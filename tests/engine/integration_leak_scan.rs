@@ -243,7 +243,7 @@ async fn the_scanner_detects_a_planted_network() {
 /// other test here can notice, because on a healthy host every `ls` it runs
 /// succeeds. This one drives the failure on purpose: Podman rejects an
 /// undefined template function with exit 125
-/// (`template: list:1: function "garbage" not defined`, Podman 5.7.0).
+/// (`template: list:1: function "garbage" not defined`, Podman 5.7.0; 6.2.0 gives the same error and exit 125 for `ps`).
 ///
 /// The panic message is read, not just the fact of a panic, so the test
 /// pins the non-zero-exit branch and not the spawn-failure one. Skipped when

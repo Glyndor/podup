@@ -32,7 +32,7 @@ fn a_short_ns_path_is_accepted() {
 	assert!(is_valid_namespace_mode(PID_FIELD, "ns:/x"));
 }
 
-/// Measured against podman 5.7.0: `shareable` and `none` parse for `ipc`
+/// Measured against podman 6.2.0 (2026-11-22): `shareable` and `none` parse for `ipc`
 /// and are rejected by every other slot with "unrecognized namespace
 /// mode". `shareable` is the one compose files reach for, and podup used
 /// to refuse it.
@@ -46,7 +46,7 @@ fn ipc_takes_shareable_and_none_but_no_other_slot_does() {
 	}
 }
 
-/// Measured against podman 5.7.0. `keep-id` is the standard rootless
+/// Measured against podman 6.2.0 (2026-11-22). `keep-id` is the standard rootless
 /// answer to a file-ownership mismatch, and podup rejected it outright
 /// (#1463). The option-carrying forms parse too.
 #[test]

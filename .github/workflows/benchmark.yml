@@ -7,7 +7,7 @@
 #   smoke      runs on a shared GitHub runner and validates the harness itself:
 #                shell syntax, Python syntax, and the aggregation stats path run
 #                against inline sample rows. It does NOT install Podman or drive
-#                podup: ubuntu-latest ships Podman 4.9, below podup's floor
+#                podup: ubuntu-latest ships a Podman older than podup's floor
 #                (Podman >= 6.2.0), so a shared-runner engine run would either fail
 #                or exercise an unsupported configuration. It produces NO
 #                published numbers and proves nothing about podup on real Podman.

@@ -16,7 +16,7 @@ async fn an_answered_refusal_is_not_recovered_by_a_matching_destination() {
 	);
 }
 
-/// Podman 5 answers the PUT, and that answer is the confirmation: nothing is
+/// An answered PUT is the confirmation: nothing is
 /// read back, so a tree costs it no extra requests.
 #[tokio::test]
 async fn an_answered_upload_is_not_read_back() {
@@ -52,7 +52,7 @@ async fn upload_carries_copy_uid_gid_false() {
 	let src = dir.path().join("hello.txt");
 	std::fs::write(&src, b"hi").unwrap();
 
-	// A clean 200 from the PUT (Podman 5) is enough: the upload is the
+	// A clean 200 from the PUT is enough: the upload is the
 	// path under test, not the apply-then-close confirmation.
 	let fake = fake_podman::start_replying(move |method, target| {
 		if method == "PUT" && target.contains("/archive?") {

@@ -30,26 +30,18 @@ pub(super) fn render_healthcheck(
 			Command::Exec(parts) => match parts.first().map(String::as_str) {
 				// `CMD-SHELL` carries one string that is already a shell command.
 				Some("CMD-SHELL") | Some("NONE") => parts[1..].join(" "),
-				// `CMD` is an argument vector, but `HealthCmd=` is read by Podman as
-				// a shell command line, so each word is quoted: joined with plain
-				// spaces, `["CMD", "sh", "-c", "wget -q x || exit 1"]` ran `wget`
-				// with no argument and then `exit 1`.
-				Some("CMD") => {
-					// Podman 5 reads `HealthCmd=` only as a shell command line, so the
-					// exec form cannot be kept: the probe runs through `/bin/sh -c`,
-					// where `up` runs it directly. In an image without a shell
-					// (distroless, scratch) it then fails every time and a
-					// `Notify=healthy` unit never starts.
-					warnings.push(format!(
-						"{name}: healthcheck test [\"CMD\", ...] runs through /bin/sh in the \
-						 Quadlet unit (HealthCmd= is a shell command line); the image needs a shell"
-					));
-					parts[1..]
-						.iter()
-						.map(|word| shell_word(word))
-						.collect::<Vec<_>>()
-						.join(" ")
+				// `CMD` is an argument vector. Podman reads a `HealthCmd=` value that is
+				// a JSON array as the exec form (measured on Podman 6.2.0,
+				// 2026-11-22: `--health-cmd '["CMD","wget","-q","a b"]'` stores
+				// `Test: ["CMD","wget","-q","a b"]`, where a plain string is stored as
+				// `CMD-SHELL`), so the words reach the probe as they are and the image
+				// needs no shell.
+				// Written through `Value`, whose rendering cannot fail: a list of
+				// strings always has a JSON form, so there is no error to drop.
+				Some("CMD") if parts.len() > 1 => {
+					serde_json::Value::from(parts.clone()).to_string()
 				}
+				Some("CMD") => String::new(),
 				_ => parts.join(" "),
 			},
 		};
@@ -62,12 +54,11 @@ pub(super) fn render_healthcheck(
 			// readiness, and a dependant starts against a service that is not
 			// serving yet.
 			//
-			// Measured on podman 5.7.0 with a probe that takes ten seconds to
-			// pass: `systemctl start` on the unit itself returned after 11s
-			// rather than immediately, and a second unit with
-			// `After=`/`Requires=` on it started 10s in. That second number is
-			// the one that matters: it is `depends_on: service_healthy`
-			// actually being honoured.
+			// With the 6.2.0 generator the unit is `Type=notify` and `podman run`
+			// gets `--sdnotify=healthy`, so systemd waits for the probe to pass
+			// and a unit ordered `After=`/`Requires=` on this one starts once the
+			// service is ready: that is `depends_on: service_healthy` being
+			// honoured.
 			//
 			// Only emitted alongside a command. `--sdnotify=healthy` with
 			// nothing to probe would leave the unit starting until
@@ -102,9 +93,10 @@ pub(super) fn render_healthcheck(
 		// Compose `start_interval` (the probe interval during the start period)
 		// has no Quadlet/Podman equivalent. The Quadlet `HealthStartupInterval=`
 		// key drives Podman's separate *startup healthcheck* feature, which is a
-		// no-op without a `HealthStartupCmd=`; Podman 5.x exposes no
-		// `--health-start-interval`. Skip it and warn rather than emit a key that
-		// silently does nothing.
+		// no-op without a `HealthStartupCmd=`; on Podman 6.2.0 (2026-11-22)
+		// `--health-start-interval` is only an alias of `--health-startup-interval`,
+		// so it is no equivalent either. Skip it and warn rather than emit a key
+		// that silently does nothing.
 		warnings.push(format!(
 			"{name}: healthcheck.start_interval has no Quadlet/Podman equivalent and is skipped"
 		));
@@ -115,17 +107,3 @@ pub(super) fn render_healthcheck(
 #[cfg(test)]
 #[path = "health_tests.rs"]
 mod tests;
-
-/// One word of a command line, quoted for `sh` only when it needs it.
-fn shell_word(word: &str) -> String {
-	let plain = !word.is_empty()
-		&& word.chars().all(|c| {
-			c.is_ascii_alphanumeric()
-				|| matches!(c, '-' | '_' | '.' | '/' | ':' | '=' | ',' | '@' | '%' | '+')
-		});
-	if plain {
-		word.to_string()
-	} else {
-		format!("'{}'", word.replace('\'', "'\\''"))
-	}
-}

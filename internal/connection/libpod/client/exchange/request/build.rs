@@ -12,7 +12,7 @@ use super::{BoxBody, Client, PodmanError, Result};
 impl Client {
 	/// Build a request with an optional JSON body.
 	///
-	/// The request target is sent in origin form (`POST /v5.0.0/libpod/build?...
+	/// The request target is sent in origin form (`POST /v6.2.0/libpod/build?...
 	/// HTTP/1.1`), the same shape `podman --remote` and curl write when they
 	/// talk to the Podman socket. Podman decides "is this a libpod request"
 	/// by splitting `r.URL.String()` on `/` and reading `split[2]`; an

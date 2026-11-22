@@ -4,31 +4,16 @@
 use crate::compose::types::{RestartPolicy, Service};
 use crate::size::parse_duration_secs_rounded_up;
 
-use super::super::{quote_podman_arg_value, render_restart, Section};
+use super::super::{render_restart, Section};
 
 /// Emit the stop signal and the stop timeout of the container.
 pub(in super::super) fn emit_stop(service: &Service, container: &mut Section) {
 	if let Some(signal) = &service.stop_signal {
-		// An empty signal (`stop_signal: ""`) would render as
-		// `--stop-signal=`, which podman rejects. The native
-		// `StopSignal=` key omits empty values, so the podman-args
-		// route has to skip them too.
-		if signal.is_empty() {
-			// Skip without warning: an empty `stop_signal:` is a no-op
-			// the user almost certainly did not intend, but the same
-			// input was already a no-op via the native key, and the
-			// podman-args route is the new code path; matching the
-			// old behaviour silently is the smallest change.
-		} else {
-			// `StopSignal=` has been in Quadlet since Podman 5.2.0, but the
-			// native key is not written yet, so route the signal through
-			// `PodmanArgs=` as `--stop-signal`, like the other
-			// escape-hatch flags. Quoted per #1734: a hostile value
-			// carrying whitespace must not become two argv elements.
-			container.add(
-				"PodmanArgs",
-				format!("--stop-signal={}", quote_podman_arg_value(signal)),
-			);
+		// An empty signal (`stop_signal: ""`) is skipped without a warning: it
+		// is a no-op the user almost certainly did not intend, and a bare
+		// `StopSignal=` would only reset the key.
+		if !signal.is_empty() {
+			container.add_native("StopSignal", "--stop-signal=", signal);
 		}
 	}
 	if let Some(grace) = &service.stop_grace_period {

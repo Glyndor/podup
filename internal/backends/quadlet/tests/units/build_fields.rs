@@ -86,12 +86,9 @@ fn build_extra_hosts_write_an_add_host_flag() {
 }
 
 #[test]
-fn build_tags_write_a_tag_flag() {
+fn build_tags_write_an_image_tag() {
 	let unit = build_unit_for("tags:\n  - \"extra:1\"");
-	assert!(
-		unit.contains("PodmanArgs=--tag \"extra:1\""),
-		"got:\n{unit}"
-	);
+	assert!(unit.contains("ImageTag=extra:1\n"), "got:\n{unit}");
 }
 
 #[test]

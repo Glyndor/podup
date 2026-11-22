@@ -15,9 +15,8 @@ fn unit_named<'a>(out: &'a crate::quadlet::QuadletOutput, filename: &str) -> &'a
 /// per-service `.container` units when the extension is set, with the
 /// project name as `PodName=`, one `Network=` per declared network, the
 /// union of every service's `ports:` as `PublishPort=`, one
-/// `--add-host=` flag per service and the project ownership label
-/// (carried through `PodmanArgs=` because the native `AddHost=`/`Label=`
-/// keys on `[Pod]` post-date the 5.0 floor). The `.container` units
+/// `AddHost=` line per service and the project ownership `Label=`. The
+/// `.container` units
 /// reference it via `Pod=<stem>.pod` and drop their own `PublishPort=`
 /// and `Network=` lines.
 #[test]
@@ -73,26 +72,20 @@ networks:
 		"pod must carry the declared network: {}",
 		pod.contents
 	);
-	// One host entry per service, routed through `PodmanArgs=` because
-	// `AddHost=` on `[Pod]` is a Podman 5.3.0 addition and the supported
-	// floor is 5.0.
+	// One host entry per service.
 	assert!(
-		pod.contents
-			.contains("PodmanArgs=--add-host=\"web:127.0.0.1\""),
+		pod.contents.contains("AddHost=web:127.0.0.1\n"),
 		"pod must carry the web host entry: {}",
 		pod.contents
 	);
 	assert!(
-		pod.contents
-			.contains("PodmanArgs=--add-host=\"db:127.0.0.1\""),
+		pod.contents.contains("AddHost=db:127.0.0.1\n"),
 		"pod must carry the db host entry: {}",
 		pod.contents
 	);
-	// Ownership label, also routed through `PodmanArgs=` because
-	// `Label=` on `[Pod]` is a Podman 5.6.0 addition.
+	// Ownership label.
 	assert!(
-		pod.contents
-			.contains("PodmanArgs=--label=\"podup.project=demo\""),
+		pod.contents.contains("Label=podup.project=demo\n"),
 		"pod must carry the ownership label: {}",
 		pod.contents
 	);

@@ -43,6 +43,11 @@ impl Peer {
 		let worker = std::thread::spawn(move || loop {
 			match listener.accept() {
 				Ok((mut stream, _)) => {
+					// On macOS an accepted socket inherits the listener's
+					// non-blocking mode, and a read that runs before the
+					// request arrives returns at once with nothing: the
+					// connection closed unanswered and the command failed.
+					stream.set_nonblocking(false).unwrap();
 					stream
 						.set_read_timeout(Some(Duration::from_secs(2)))
 						.unwrap();

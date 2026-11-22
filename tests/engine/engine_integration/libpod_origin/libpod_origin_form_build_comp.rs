@@ -42,8 +42,8 @@ use std::process::Command;
 /// The two builds run back-to-back with no teardown between them,
 /// because that is the only shape that pins the docker-distribution
 /// `outputformat=` parameter on every Podman version that runs the
-/// suite. Podman 5.8.1 and 6.1.2 (the CI lane, a nested-virt runner)
-/// drop the intermediate layers when an image is removed with
+/// suite. On the CI lane (a nested-virt runner) Podman 5.8.1 and 6.1.2
+/// dropped the intermediate layers when an image is removed with
 /// `podup down --rmi local`, so a teardown between the two builds
 /// gave the second build nothing to hit and the `Using cache`
 /// assertion could not fire. Podman 5.7.0 (local socket) and 6.0.1
@@ -132,11 +132,12 @@ async fn build_uses_the_layer_cache_and_produces_a_docker_manifest() {
 		],
 	);
 
-	// No inter-build teardown. Podman 5.8.1 / 6.1.2 (the CI lane)
-	// remove the intermediate layers alongside the image, which would
+	// No inter-build teardown. The CI lane's Podman 5.8.1 / 6.1.2 removed
+	// the intermediate layers alongside the image, which would
 	// force the second build to start cold and miss the `Using cache`
-	// path that this test exists to pin. Podman 5.7.0 / 6.0.1 keep
-	// the layers, which is why the local run stayed green before the
+	// path that this test exists to pin. Podman 5.7.0 / 6.0.1 kept
+	// the layers (6.2.0 was not measured for either behaviour; the test passes
+	// on it with no teardown between the builds), which is why the local run stayed green before the
 	// CI lane went red. The final `podup down --rmi local` below
 	// cleans up regardless of which version ran the test.
 	let second = Command::new(bin())

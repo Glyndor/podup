@@ -71,8 +71,7 @@ pub(crate) fn collect_warnings(
 	// `service_healthy` IS enforceable, as long as the service it names has a
 	// healthcheck: that service's unit carries `Notify=healthy`, so systemd
 	// does not call it started until the probe passes, and `After=`/`Requires=`
-	// then order against readiness rather than creation. Measured on podman
-	// 5.7.0: a dependant started 10s into a dependency whose probe took 10s.
+	// then order against readiness rather than creation.
 	//
 	// So the warning is now about the cases that really cannot work: a
 	// `service_healthy` naming a service with no healthcheck to wait on, and
@@ -209,7 +208,7 @@ pub(crate) fn collect_warnings(
 		warn("use_api_socket", skipped);
 	}
 	// MAC addresses have no Quadlet key (service-level or per-network), and a
-	// per-network value cannot be expressed via the whole-container PodmanArgs=.
+	// per-network value cannot be expressed as a whole-container flag.
 	let has_network_mac = service
 		.networks
 		.names()

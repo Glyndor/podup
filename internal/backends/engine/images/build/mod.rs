@@ -118,7 +118,7 @@ impl BuildOptions {
 /// endpoint takes.
 ///
 /// podup used to report this field as having no libpod mapping. It does.
-/// Measured on podman 5.7.0 by building the same Containerfile twice through
+/// Measured on podman 6.2.0 (2026-11-22) by building the same Containerfile twice through
 /// the API, with a `RUN` that prints `ulimit -n`: without the parameter the
 /// build saw 524288, with `ulimits=["nofile=1234:1234"]` it saw 1234.
 ///

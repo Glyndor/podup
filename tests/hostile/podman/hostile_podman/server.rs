@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use tempfile::TempDir;
 
-/// What the client asked for: `GET /v5.0.0/libpod/events?...`.
+/// What the client asked for: `GET /v6.2.0/libpod/events?...`.
 pub struct Request {
 	pub target: String,
 }

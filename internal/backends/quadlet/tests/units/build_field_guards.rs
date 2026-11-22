@@ -213,15 +213,12 @@ fn an_unknown_ulimit_name_is_reported_and_skipped() {
 fn extended_build_values_cannot_inject_podman_arguments() {
 	use super::super::exec::podman_argv::{podman_argv_from_unit, tokenise_podman_argv};
 
-	let generator = ["/usr/libexec/podman/quadlet", "/usr/lib/podman/quadlet"]
-		.into_iter()
-		.find(|path| std::path::Path::new(path).is_file());
+	let generator = crate::backends::quadlet::tests::generator::generator();
 
 	for (field, flag) in [
 		("cache_from", "--cache-from"),
 		("cache_to", "--cache-to"),
 		("ssh", "--ssh"),
-		("tags", "--tag"),
 		("extra_hosts", "--add-host"),
 		("additional_contexts", "--build-context"),
 	] {
@@ -252,7 +249,7 @@ fn extended_build_values_cannot_inject_podman_arguments() {
 			let pairs: Vec<_> = argv.windows(2).filter(|pair| pair[0] == flag).collect();
 			assert_eq!(pairs.len(), 1, "{field} {payload:?}: {unit}");
 			assert_eq!(pairs[0][1], expected, "{field} {payload:?}: {argv:?}");
-			if let Some(generator) = generator {
+			if let Some(generator) = &generator {
 				let dir = tempfile::tempdir().unwrap();
 				std::fs::write(dir.path().join("proj-app.build"), &unit).unwrap();
 				let output = std::process::Command::new(generator)

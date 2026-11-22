@@ -213,12 +213,11 @@ fn the_oracle_agrees_with_the_known_base_date() {
 #[cfg(unix)]
 #[test]
 fn quadlet_turns_the_job_unit_into_a_oneshot_service() {
-	let generator =
-		std::path::Path::new("/usr/lib/systemd/system-generators/podman-system-generator");
-	if !generator.exists() {
-		eprintln!("skipped: podman-system-generator is not installed");
+	let Some(generator) = crate::backends::quadlet::tests::generator::generator_from(&[
+		"/usr/lib/systemd/system-generators/podman-system-generator".into(),
+	]) else {
 		return;
-	}
+	};
 	let file = crate::parse_str(
 		"jobs:\n  nightly:\n    image: docker.io/library/alpine\n    command: [echo, hi]\n    triggers:\n      schedule: ['0 3 * * *']\n",
 	)
@@ -226,7 +225,7 @@ fn quadlet_turns_the_job_unit_into_a_oneshot_service() {
 	let out = crate::quadlet::generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 	let dir = tempfile::tempdir().unwrap();
 	crate::quadlet::write_units(dir.path(), &out.units).unwrap();
-	let run = Command::new(generator)
+	let run = Command::new(&generator)
 		.arg("-dryrun")
 		.env_clear()
 		.env("QUADLET_UNIT_DIRS", dir.path())

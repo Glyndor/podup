@@ -33,7 +33,7 @@ fn pod_keeps_exit_policy_and_omits_stop_timeout() {
 		"x-podman-pod: true\nservices:\n  web:\n    image: nginx\n    stop_grace_period: 30s\n";
 	let pod = pod_contents(yaml);
 	assert!(
-		pod.contains("PodmanArgs=--exit-policy=continue") && !pod.contains("ExitPolicy="),
+		pod.contains("ExitPolicy=continue\n") && !pod.contains("--exit-policy"),
 		"pod lost its exit policy:\n{pod}"
 	);
 	assert!(

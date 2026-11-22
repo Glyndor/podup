@@ -247,15 +247,15 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub healthconfig: Option<HealthConfig>,
 
-	/// What Podman does when the healthcheck flips to unhealthy (Podman 5's
-	/// `--health-on-failure`). Podman's key is `health_check_on_failure_action`.
+	/// What Podman does when the healthcheck flips to unhealthy
+	/// (`--health-on-failure`). Podman's key is `health_check_on_failure_action`.
 	#[serde(
 		rename = "health_check_on_failure_action",
 		skip_serializing_if = "Option::is_none"
 	)]
 	pub health_check_on_failure_action: Option<HealthCheckOnFailureAction>,
 
-	/// Separate startup-phase healthcheck (Podman 5's `--health-startup-*`).
+	/// Separate startup-phase healthcheck (`--health-startup-*`).
 	/// Podman's key is `startupHealthConfig`.
 	#[serde(
 		rename = "startupHealthConfig",
@@ -282,7 +282,8 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub restart_tries: Option<u64>,
 
-	/// Device nodes to expose. Podman 5.x has no SpecGenerator CDI field; CDI
+	/// Device nodes to expose. The SpecGenerator of Podman 6.2.0 has no CDI field
+	/// (measured 2026-11-22: a `cdi_devices` key is ignored); CDI
 	/// device names (e.g. `nvidia.com/gpu=all`) are recognized by ExtractCDIDevices
 	/// from this array by their qualified path, so they are appended here as
 	/// `LinuxDevice` entries.

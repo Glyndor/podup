@@ -36,7 +36,7 @@ const SPAN_FORMAT: DurationFormat = DurationFormat::default_parts();
 /// to settle.
 ///
 /// The health suffix only appears when the container has a healthcheck:
-/// libpod leaves `Status` empty otherwise, measured on Podman 5.7.0, so there is
+/// libpod leaves `Status` empty otherwise (measured on Podman 6.2.0, 2026-11-22), so there is
 /// nothing to append rather than an unknown to invent.
 ///
 /// Podman's list endpoint reports an exited container with a bare `exited` state
@@ -73,7 +73,7 @@ pub(super) fn table_status(c: &ContainerListEntry, now: i64) -> String {
 /// Pure so the query it builds can be asserted without a server. The `size`
 /// parameter is the one worth pinning: `size=true` is not a bigger payload, it
 /// is work: libpod walks each container's writable layer to answer, measured
-/// at 21 ms against 109 ms over 59 containers on Podman 5.7.0, so asking for it
+/// at 6 to 27 ms against 62 to 155 ms over 40 containers on Podman 6.2.0 (2026-11-22), so asking for it
 /// unconditionally would make every `ps` pay for a column most readers do not
 /// look at. `docker ps -s` is opt-in for the same reason.
 ///

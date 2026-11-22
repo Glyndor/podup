@@ -2,7 +2,7 @@ use super::*;
 
 /// libpod's answer for `GET /images/{name}/json` of an image built with
 /// `HEALTHCHECK --interval=1m --timeout=5s --retries=7 --start-period=3s CMD /bin/true`
-/// (shape measured on Podman 5.7.0: `Healthcheck` is a top-level key).
+/// (shape measured on Podman 6.2.0, 2026-11-22: `Healthcheck` is a top-level key).
 const IMAGE_WITH_HEALTHCHECK: &str = r#"{"Id":"sha256:abc","Healthcheck":{"Test":["CMD-SHELL","/bin/true"],"StartPeriod":3000000000,"Interval":60000000000,"Timeout":5000000000,"Retries":7}}"#;
 
 async fn healthconfig(image_answer: Option<&str>, extra: &str) -> serde_json::Value {

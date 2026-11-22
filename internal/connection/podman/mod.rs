@@ -37,8 +37,8 @@ pub fn connect(socket_path: Option<&str>) -> Result<Client> {
 ///
 /// Every command that talks to Podman connects through here, once, so the
 /// check costs one request per command. Until 5.10.2 the check existed
-/// (`Client::ping`) and nothing called it: on a host with Podman 4.9 the
-/// command failed on its first real request with whatever that request
+/// (`Client::ping`) and nothing called it: on a host with an unsupported
+/// Podman the command failed on its first real request with whatever that request
 /// returned, and the message written for the unsupported case never
 /// appeared (#1924).
 ///
@@ -196,10 +196,10 @@ fn runtime_candidates(uid: u32, xdg_runtime_dir: Option<&str>) -> Vec<String> {
 }
 
 /// Socket candidates on macOS: the host-side sockets `podman machine`
-/// creates, newest layout first. Podman 5 names the per-provider directory
-/// after the active machine provider (`applehv` by default, `vz` for the
-/// Virtualization.framework backend), so those are tried before the older
-/// `qemu`/default layouts.
+/// creates, newest layout first. The per-provider directory is named after the active
+/// machine provider (`applehv` by default, `vz` for the Virtualization.framework
+/// backend), so those are tried before the older `qemu`/default layouts. Not
+/// measured on Podman 6.2.0: there is no macOS host to check it against.
 #[cfg(any(target_os = "macos", test))]
 fn machine_candidates(home: &str) -> Vec<String> {
 	let machine_dir = format!("{home}/.local/share/containers/podman/machine");

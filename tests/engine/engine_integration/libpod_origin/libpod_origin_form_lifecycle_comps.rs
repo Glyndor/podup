@@ -4,7 +4,7 @@
 //! handler reads a different query key or returns before the
 //! container reaches the expected state, and podup's user-visible
 //! behaviour (the docker-compat shape) is the contract these tests are
-//! here to keep honest. Every test runs against the same Podman 5.7.0
+//! here to keep honest. Every test runs against the same local Podman
 //! socket the build/lifecycle unit tests already assume, and skips
 //! cleanly when no daemon is reachable.
 //!

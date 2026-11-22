@@ -32,20 +32,14 @@ pub(in super::super) fn emit_limits(service: &Service, in_pod: bool, container: 
 		}
 	}
 	if let Some(mem) = service.mem_limit.as_ref().filter(|m| !m.trim().is_empty()) {
-		// `Memory=` is not a recognised [Container] Quadlet key (Quadlet would drop
-		// the whole unit at daemon-reload), so route the limit through PodmanArgs=
-		// as `--memory`, like the CPU limits. The value is validated as a size
-		// before generation, so it is a well-formed limit here. The value is
-		// still quoted (and `%`-doubled) so an interpolation site cannot smuggle
-		// additional podman args into the same argv (#1734).
-		container.add(
-			"PodmanArgs",
-			format!("--memory={}", quote_podman_arg_value(mem)),
-		);
+		// The value is validated as a size before generation, so it is a
+		// well-formed limit here; Quadlet passes it to `--memory` as one word.
+		container.add_native("Memory", "--memory=", mem);
 	}
-	// CPU limits have no native [Container] Quadlet key (unlike Memory=/
-	// PidsLimit=), so they go through PodmanArgs=. Quoted per #1734, same
-	// reason as `mem_limit` above.
+	// Measured on Podman 6.2.0 (2026-11-22): Quadlet has no CPU, `--cpuset-cpus`,
+	// `--memory-reservation`, `--memory-swap` or `--oom-score-adj` key (the
+	// generator rejects each as an unsupported key), so those go through
+	// PodmanArgs=. Quoted per #1734.
 	// `cpus` falls back to the modern `deploy.resources.limits.cpus`.
 	let deploy_cpus = service
 		.deploy
@@ -247,10 +241,7 @@ pub(in super::super) fn emit_deploy_limits(service: &Service, container: &mut Se
 			.and_then(|r| r.limits.as_ref())
 			.and_then(|l| l.memory.as_ref())
 		{
-			container.add(
-				"PodmanArgs",
-				format!("--memory={}", quote_podman_arg_value(mem)),
-			);
+			container.add_native("Memory", "--memory=", mem);
 		}
 	}
 }

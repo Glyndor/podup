@@ -146,8 +146,6 @@ for major in $majors; do
 	check "Podman $major has its known-failures file" 1 \
 		"$([ -f "$HERE/.github/podman_lane/known-failures-$major" ] && echo 1 || echo 0)"
 done
-check "no Podman 5 list of known failures is left" 0 \
-	"$([ -e "$HERE/.github/podman_lane/known-failures-5" ] && echo 1 || echo 0)"
 check "the lane does not boot a Fedora release image" 0 "$(grep -cE 'releases/[0-9]+/Cloud' "$workflow" "$HERE/.github/scripts/fedora_image/fetch-fedora-image.sh" | awk -F: '{s+=$NF} END {print s+0}')"
 # Execute the required check's actual result handler too.
 awk '

@@ -247,9 +247,9 @@ mod tests {
 	/// query, and each must appear exactly once. `rm=true` removes
 	/// intermediate containers only after a successful build;
 	/// `forcerm=true` removes them after a failure too. Without
-	/// `forcerm`, Podman 5.7.0 keeps a buildah working container for
-	/// every failed build (measured 2026-09-24: 2 of 2 leaked without,
-	/// 0 of 2 with). The exact-once count pins the wire shape so a
+	/// `forcerm`, Podman keeps a buildah working container for
+	/// a failed build (measured on 6.2.0, 2026-11-22: 1 of 1 leaked
+	/// without, 0 of 1 with). The exact-once count pins the wire shape so a
 	/// future change cannot accidentally send the parameter twice and
 	/// have Podman reject the request.
 	#[tokio::test]
@@ -319,12 +319,12 @@ mod tests {
 	/// must be present on the build query. The libpod handler defaults
 	/// the manifest format to OCI, which does not reuse the layer cache
 	/// on a subsequent build of the same Containerfile and drops
-	/// `HEALTHCHECK` from the image config. Measured on 2026-09-24
-	/// against Podman 5.7.0 by building the same Containerfile twice
-	/// through `/v5.0.0/libpod/build`: `layers=true` alone prints zero
+	/// `HEALTHCHECK` from the image config. Measured on 2026-11-22
+	/// against Podman 6.2.0 by building the same Containerfile twice
+	/// through `/v6.2.0/libpod/build`: `layers=true` alone prints zero
 	/// `Using cache` lines on the second build; the same query with
 	/// `outputformat=application/vnd.docker.distribution.manifest.v2+json`
-	/// appended prints two. Sent once, not twice (Podman rejects a
+	/// appended prints one for its one `RUN`. Sent once, not twice (Podman rejects a
 	/// duplicate param).
 	#[tokio::test]
 	async fn build_query_carries_docker_distribution_outputformat() {

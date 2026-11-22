@@ -181,21 +181,20 @@ impl Engine {
 		// `rm=true` removes intermediate containers only after a successful
 		// build; `forcerm=true` removes them after a failure too. Podman's
 		// `podman build` (and `podman --remote build`) default `--force-rm`
-		// to true, and podup shipped without it: measured on 2026-09-24
-		// against Podman 5.7.0, posting the same failing build to
-		// `/v5.0.0/libpod/build` leaked one buildah working container on
-		// every run without `forcerm` (2 of 2) and on none of the runs
-		// with it (0 of 2).
+		// to true, and podup shipped without it: measured on 2026-11-22
+		// against Podman 6.2.0, posting the same failing build to
+		// `/v6.2.0/libpod/build` leaked one buildah working container
+		// without `forcerm` (1 of 1) and none with it (0 of 1).
 		//
 		// `outputformat=application/vnd.docker.distribution.manifest.v2+json`
 		// forces the docker-distribution manifest format. Measured on
-		// 2026-09-24 against Podman 5.7.0 by building the same
-		// Containerfile twice through `/v5.0.0/libpod/build`:
+		// 2026-11-22 against Podman 6.2.0 by building the same
+		// Containerfile twice through `/v6.2.0/libpod/build`:
 		// `layers=true` alone prints zero `Using cache` lines on the
 		// second build (the OCI format the endpoint defaults to does not
 		// reuse the layer cache); the same query with
 		// `outputformat=application/vnd.docker.distribution.manifest.v2+json`
-		// appended prints two. The Docker format also keeps
+		// appended prints one for its one `RUN`. The Docker format also keeps
 		// `HEALTHCHECK` in the image config (the OCI format drops it),
 		// which `podup`'s `healthcheck:` field inherits when the user
 		// does not set one explicitly, so the same query preserves the

@@ -42,7 +42,7 @@ const HOST_CONFIG_KEYS: &[&str] = &[
 ];
 
 async fn host_config(client: &Client, name: &str) -> serde_json::Value {
-	let path = format!("/v5.0.0/libpod/containers/{name}/json");
+	let path = format!("/v6.2.0/libpod/containers/{name}/json");
 	let v: serde_json::Value = client.get_json(&path).await.expect("inspect");
 	v.get("HostConfig").cloned().expect("HostConfig present")
 }

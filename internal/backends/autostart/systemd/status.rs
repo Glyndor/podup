@@ -19,8 +19,8 @@ use super::super::quadlet::{installed_units, quadlet_dir};
 pub enum NetworkWait {
 	/// systemd loaded the shim, so the ordering the unit declares takes effect.
 	Loaded,
-	/// No such unit. Podman ships it from 5.3.0; below that the ordering in
-	/// every autostart unit is inert.
+	/// No such unit (a Podman package that leaves the shim out), so the
+	/// ordering in every autostart unit is inert.
 	NotFound,
 	/// `systemctl` could not be asked, or answered something unrecognised.
 	/// Carried rather than collapsed into `NotFound`: "we could not tell" and
@@ -79,10 +79,10 @@ fn query<S: super::super::systemctl::SystemCtl>(sc: &S, arg: &str, unit_name: &s
 /// Ask systemd whether the network shim is loadable.
 ///
 /// **The exit code is not the signal, and must not be used as one.** Measured
-/// 2026-08-30 on Podman 5.7.0, rootless: `systemctl --user show <unit> -p
-/// LoadState` exits **0 for a unit that does not exist** just as it does for one
-/// that does, printing `LoadState=not-found` in the first case and
-/// `LoadState=loaded` in the second. A guard branching on the status would
+/// 2026-08-30 and again 2026-11-22 on Podman 6.2.0, rootless: `systemctl --user
+/// show <unit> -p LoadState` exits **0 for a unit that does not exist** just as
+/// it does for one that does, printing `LoadState=not-found` in the first case
+/// and `LoadState=loaded` in the second. A guard branching on the status would
 /// report the shim as fine while it is missing, which is the same vacuous check
 /// this function exists to replace.
 ///
@@ -262,7 +262,7 @@ pub fn status<S: super::super::systemctl::SystemCtl>(sc: &S, project: &str) -> c
 			"network wait",
 			&format!(
 				"{NETWORK_SHIM} is not loadable, so the unit's network ordering \
-				 is dropped silently (Podman ships it from 5.3.0)"
+				 is dropped silently"
 			),
 			Some(false),
 		)?,

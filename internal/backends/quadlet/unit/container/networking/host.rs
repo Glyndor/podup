@@ -5,9 +5,9 @@ use crate::compose::types::Service;
 
 use super::super::super::pod::{PodField, PodFields};
 use super::super::super::shared_values::host_values;
-use super::super::{quote_podman_arg_value, Section};
+use super::super::Section;
 
-/// Emit one `AddDevice=` line per `devices:` entry, one `--add-host` podman arg
+/// Emit one `AddDevice=` line per `devices:` entry, one `AddHost=` line
 /// per `extra_hosts:` entry, and the DNS settings.
 pub(in super::super) fn emit_host_config(
 	service: &Service,
@@ -21,23 +21,14 @@ pub(in super::super) fn emit_host_config(
 	let values = host_values(service);
 	if !(in_pod && pod_fields.owns(PodField::AddHost)) {
 		for host in &values.extra_hosts {
-			// An empty entry (`- ""`) would render as `--add-host=`, which
-			// podman rejects with `error parsing additional short
-			// argument`. The native `AddHost=` key omits empty values, so the
-			// podman-args route has to skip them too.
+			// An empty entry (`- ""`) would render as a bare `AddHost=`, which
+			// resets the list instead of adding a host. An entry that is empty
+			// once the control characters are stripped, or that has a space at
+			// either end, stays on `PodmanArgs=` (see `Section::add_native`).
 			if host.is_empty() {
 				continue;
 			}
-			// `AddHost=` has been in Quadlet since Podman 5.3.0, but the native
-			// key is not written yet, so route each entry through `PodmanArgs=`
-			// as `--add-host`, like the memory/CPU limits: podman sees the
-			// same flag. Quoted per #1734 for
-			// the same reason as `mem_limit`: a value carrying whitespace
-			// must not become two argv elements.
-			container.add(
-				"PodmanArgs",
-				format!("--add-host={}", quote_podman_arg_value(host)),
-			);
+			container.add_native("AddHost", "--add-host=", host);
 		}
 	}
 	if !(in_pod && pod_fields.owns(PodField::Dns)) {

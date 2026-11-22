@@ -34,7 +34,7 @@ fn pod_spec_serialises_with_known_field_names() {
 /// A pod spec with `exit_policy` set serialises the field under its
 /// libpod wire name (`exit_policy`), so the daemon reads it instead of
 /// silently keeping the `containers.conf` default. Verified live against
-/// `/v5.7.0/libpod/pods/create` before the field was added.
+/// `/v6.2.0/libpod/pods/create` (2026-11-22): `podman pod inspect` reports `stop`.
 #[test]
 fn pod_spec_serialises_exit_policy_when_set() {
 	let spec = PodSpecGenerator {

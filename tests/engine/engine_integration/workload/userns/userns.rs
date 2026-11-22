@@ -108,7 +108,7 @@ async fn auto_size_controls_the_allocated_range() {
 	// Podman takes the range from the free holes of the subordinate pool,
 	// first fit, and splits it when no single hole is large enough: next to a
 	// 1024-ID hole left by other containers, `auto:size=2048` comes back as two
-	// lines of 1024 (measured on Podman 5.7.0). What the size controls is the
+	// lines of 1024 (measured on Podman 5.7.0, not repeated on 6.2.0). What the size controls is the
 	// total, starting at 0 inside the container with no gap, not how many
 	// lines the host side takes.
 	let mut inside = 0;

@@ -291,9 +291,6 @@ fn network_mode_container_maps_to_join_form() {
 fn duplicate_network_aliases_are_emitted_once() {
 	// A repeated alias must not produce duplicate `--network-alias=`
 	// flags on the same argv, which podman may reject at container create.
-	// The flag is emitted through `PodmanArgs=` because `NetworkAlias=` on
-	// `[Container]` has been in Quadlet since Podman 5.2.0 and is not written
-	// natively yet.
 	let yaml = "services:\n  s:\n    image: x\n    networks:\n      front:\n        aliases: [dup, dup, uniq]\nnetworks:\n  front:\n";
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
@@ -380,7 +377,7 @@ networks:
 
 /// Quadlet drops the whole `.volume` unit when `Options=` or `Type=` is there
 /// without a `Device=` (`key Options can't be used without Device`, measured
-/// with Podman 5.7.0's generator), so the volume would not exist at all. Without
+/// with the Podman 6.2.0 generator on 2026-11-22), so the volume would not exist at all. Without
 /// a device the options go through `--opt`, which `podman volume create` takes.
 #[test]
 fn volume_options_without_a_device_go_through_opt() {

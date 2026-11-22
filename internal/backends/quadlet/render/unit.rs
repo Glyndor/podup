@@ -1,4 +1,4 @@
-use super::sanitize_value;
+use super::{quote_podman_arg_value, sanitize_value};
 
 /// Keys whose value Quadlet/systemd splits on whitespace (a `KEY=VALUE` option
 /// list): an unquoted space would split a single value into a truncated value
@@ -21,6 +21,7 @@ fn key_is_word_split(key: &str) -> bool {
 			| "EnvironmentFile"
 			| "Label"
 			| "Annotation"
+			| "BuildArg"
 			| "Sysctl"
 			| "Secret"
 			| "AddCapability"
@@ -75,6 +76,26 @@ fn key_is_arg_line(key: &str) -> bool {
 	matches!(key, "PodmanArgs" | "Exec" | "Entrypoint")
 }
 
+/// Keys Quadlet reads as shell-like words: it splits the value on whitespace
+/// and honours `"` and `'` groups but, unlike the word-split keys such as
+/// `Label=` and `BuildArg=`, does not decode backslash escapes (measured on
+/// Podman 6.2.0: `LogOpt=k=a\\b` reaches `--log-opt` with both backslashes,
+/// and `LogOpt="k=a\"b"` ends the group at the quote and loses the entry). A
+/// value with a space in it is therefore one `--log-opt` only when it is
+/// wrapped in a quote group.
+fn key_is_shell_split(key: &str) -> bool {
+	matches!(key, "LogOpt")
+}
+
+/// Quote a value for a [`key_is_shell_split`] key. The value goes into one
+/// `"..."` group, which keeps whitespace, `'` and backslashes literal; a `"`
+/// inside it closes the group, is written in a `'"'` group and reopens it, so
+/// the reader joins the pieces back into the original text.
+fn quote_shell_split_value(value: &str) -> String {
+	let body = value.replace('"', "\"'\"'\"");
+	format!("\"{body}\"")
+}
+
 /// Escape a value for a single-line systemd `Key=Value` entry.
 ///
 /// On top of [`sanitize_value`] (control characters stripped so a value can
@@ -99,6 +120,15 @@ pub(super) fn escape_unit_value(key: &str, value: &str) -> String {
 	if key_is_arg_line(key) {
 		return sanitize_value(value);
 	}
+	if key_is_shell_split(key) {
+		let clean = sanitize_value(value);
+		let body = if value_needs_quoting(&clean) {
+			quote_shell_split_value(&clean)
+		} else {
+			clean
+		};
+		return body.replace('%', "%%");
+	}
 	let needs_quote = (key_is_word_split(key) && value_needs_quoting(value))
 		|| value.ends_with('\\')
 		|| value.starts_with('"');
@@ -113,6 +143,19 @@ pub(super) fn escape_unit_value(key: &str, value: &str) -> String {
 	} else {
 		body
 	}
+}
+
+/// Whether Quadlet hands this value to Podman with the bytes it has here.
+///
+/// Quadlet trims the whitespace around the value of a key, and an assignment
+/// that is empty once the control characters are gone does not add an entry: on
+/// a key that holds a list it empties the list. A value that is not stripped of
+/// anything and does not start or end with whitespace is read back unchanged.
+pub(in super::super) fn native_value_is_exact(value: &str) -> bool {
+	!value.is_empty()
+		&& sanitize_value(value) == value
+		&& !value.starts_with(char::is_whitespace)
+		&& !value.ends_with(char::is_whitespace)
 }
 
 /// A single `[Section]` accumulating `Key=Value` lines in insertion order.
@@ -144,6 +187,22 @@ impl Section {
 			value = value.replace('$', "$$");
 		}
 		self.lines.push(format!("{key}={value}"));
+	}
+
+	/// Write `value` to the native key `key` when Quadlet reads it back with the
+	/// same bytes (see [`native_value_is_exact`]); otherwise write it to
+	/// `PodmanArgs=` as `arg` followed by the quoted value, which is the route
+	/// that keeps every byte. `arg` is the flag with its separator, for example
+	/// `--group-add=` or `--build-arg `.
+	pub(in super::super) fn add_native(&mut self, key: &str, arg: &str, value: &str) {
+		if native_value_is_exact(value) {
+			self.add(key, value.to_string());
+		} else {
+			self.add(
+				"PodmanArgs",
+				format!("{arg}{}", quote_podman_arg_value(value)),
+			);
+		}
 	}
 
 	/// True when no lines have been added; lets the caller skip emitting an empty

@@ -25,7 +25,7 @@
 //! container outside the pod would leave every mapping assertion
 //! passing while the pod path went unexercised.
 //!
-//! Defaults are the runtime's, read from Podman 5.7.0 on 2026-09-20:
+//! Defaults are the runtime's, read from Podman 5.7.0 on 2026-09-20 and again from 6.2.0 on 2026-11-22:
 //! `auto` → size 1024; `auto:size=N` → size N total across every range;
 //! `keep-id:uid=N,gid=M` → size N on the first line of the mapping.
 

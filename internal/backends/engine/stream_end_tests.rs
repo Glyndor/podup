@@ -3,8 +3,8 @@
 //! #1104 is the question of whether podup can tell those apart. The argument has
 //! been circular so far because the only evidence came from a live daemon, where
 //! *both* the version and the wire shape move at once: making a mid-stream error
-//! fatal reddened fifteen tests on the lane's Podman 5.8.1 while the identical
-//! commit stayed green on 5.4.2.
+//! fatal reddened fifteen tests on one lane version while the identical commit
+//! stayed green on another (Podman 5.8.1 and 5.4.2 at the time).
 //!
 //! These tests take the daemon out of it. The fake writes the wire shapes
 //! deliberately, so what podup does with each is pinned here rather than inferred
