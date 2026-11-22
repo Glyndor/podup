@@ -854,6 +854,19 @@ jobs:
           fi
           echo "tests=$((SECONDS - start))" >> "$PHASES"
           [ "$rc" -eq 0 ] && [ "$scan" -eq 0 ]
+      - name: Run the Quadlet tests against the generator of this Podman
+        # They skip where the generator is older than the minimum, which is
+        # every stock runner; here its absence is a failure.
+        if: always()
+        env:
+          PODUP_REQUIRE_QUADLET_GENERATOR: "1"
+        run: |
+          start=$SECONDS
+          rc=0
+          cargo test --locked --features test-helpers --lib quadlet:: || rc=$?
+          cargo test --locked --features test-helpers --test hostile_quadlet_units || rc=$?
+          echo "quadlet=$((SECONDS - start))" >> "$PHASES"
+          [ "$rc" -eq 0 ]
       - name: Report the phases
         if: always()
         run: |
