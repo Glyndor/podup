@@ -85,7 +85,7 @@ fn a_content_length_past_u64_is_refused() {
 fn two_conflicting_content_lengths_are_refused() {
 	ps_with_hostile_ping("conflicting Content-Length", |s| {
 		let _ = s.write_all(
-			b"HTTP/1.1 200 OK\r\nLibpod-API-Version: 5.0.0\r\nContent-Length: 2\r\n\
+			b"HTTP/1.1 200 OK\r\nLibpod-API-Version: 6.2.0\r\nContent-Length: 2\r\n\
 			  Content-Length: 40\r\n\r\nOK",
 		);
 	});
@@ -95,7 +95,7 @@ fn two_conflicting_content_lengths_are_refused() {
 fn a_malformed_chunked_body_is_refused() {
 	ps_with_hostile_ping("chunk size is not hex", |s| {
 		let _ = s.write_all(
-			b"HTTP/1.1 200 OK\r\nLibpod-API-Version: 5.0.0\r\n\
+			b"HTTP/1.1 200 OK\r\nLibpod-API-Version: 6.2.0\r\n\
 			  Transfer-Encoding: chunked\r\n\r\nZZZZ\r\nOK\r\n0\r\n\r\n",
 		);
 	});
@@ -105,7 +105,7 @@ fn a_malformed_chunked_body_is_refused() {
 fn a_chunk_size_that_overflows_is_refused() {
 	ps_with_hostile_ping("chunk size overflows u64", |s| {
 		let _ = s.write_all(
-			b"HTTP/1.1 200 OK\r\nLibpod-API-Version: 5.0.0\r\n\
+			b"HTTP/1.1 200 OK\r\nLibpod-API-Version: 6.2.0\r\n\
 			  Transfer-Encoding: chunked\r\n\r\nFFFFFFFFFFFFFFFFFFFF\r\nOK\r\n",
 		);
 	});
@@ -115,7 +115,7 @@ fn a_chunk_size_that_overflows_is_refused() {
 fn a_body_shorter_than_its_content_length_is_refused() {
 	ps_with_hostile_ping("body cut short", |s| {
 		let _ = s.write_all(
-			b"HTTP/1.1 200 OK\r\nLibpod-API-Version: 5.0.0\r\nContent-Length: 1000000\r\n\r\nOK",
+			b"HTTP/1.1 200 OK\r\nLibpod-API-Version: 6.2.0\r\nContent-Length: 1000000\r\n\r\nOK",
 		);
 	});
 }
@@ -142,7 +142,7 @@ fn a_status_line_whose_code_is_not_a_status_is_refused() {
 	// status parser is what refuses them and not the framing.
 	for code in ["000", "099", "1000", "2O0", "-1", "20"] {
 		let line = format!(
-			"HTTP/1.1 {code} X\r\nLibpod-API-Version: 5.0.0\r\nContent-Length: 2\r\n\r\nOK"
+			"HTTP/1.1 {code} X\r\nLibpod-API-Version: 6.2.0\r\nContent-Length: 2\r\n\r\nOK"
 		);
 		ps_with_hostile_ping(&format!("status code {code}"), move |s| {
 			let _ = s.write_all(line.as_bytes());
@@ -206,7 +206,7 @@ fn a_ping_body_past_the_response_cap_is_cut_off() {
 	// 400 MiB promised, 64 MiB is the cap: the rest must never be buffered.
 	ps_with_hostile_ping("400 MiB ping body", |s| {
 		let head = format!(
-			"HTTP/1.1 200 OK\r\nLibpod-API-Version: 5.0.0\r\nContent-Length: {BIG}\r\n\r\n"
+			"HTTP/1.1 200 OK\r\nLibpod-API-Version: 6.2.0\r\nContent-Length: {BIG}\r\n\r\n"
 		);
 		let _ = s.write_all(head.as_bytes());
 		flood(s, &[b'a'; 65536], BIG);

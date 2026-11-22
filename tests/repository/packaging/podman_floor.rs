@@ -14,11 +14,14 @@
 //! The Podman floor is written in three places and nothing derives one from
 //! another.
 //!
-//! - `internal/connection/libpod/client/mod.rs`: `MIN_LIBPOD_API_MAJOR`, the gate the
-//!   running binary applies to the major the engine reports.
-//! - `install.sh`: `PODMAN_MIN_MAJOR`, the precheck that refuses to install
+//! - `internal/connection/libpod/client/mod.rs`: `MIN_PODMAN_VERSION`, the gate
+//!   the running binary applies to the version the engine reports.
+//! - `install.sh`: `PODMAN_MIN_VERSION`, the precheck that refuses to install
 //!   over a local engine below the floor.
-//! - `debian/control`: the `podman (>= N.0)` relationship.
+//! - `debian/control`: the `podman (>= X.Y.Z)` relationship.
+//!
+//! The floor is a full `major.minor.patch`, and the three copies must agree on
+//! all three parts, not only on the major.
 //!
 //! The third one used to be a `Recommends`, where a wrong number cost a
 //! suggestion. As a `Depends` it decides whether the package installs at all,
@@ -39,36 +42,58 @@ fn read(rel: &str) -> String {
 	fs::read_to_string(&path).unwrap_or_else(|e| panic!("{rel} is readable: {e}"))
 }
 
-/// `const MIN_LIBPOD_API_MAJOR: u64 = 5;`
-fn floor_from_source(src: &str) -> u64 {
+/// A Podman release as `(major, minor, patch)`.
+type Floor = (u64, u64, u64);
+
+/// `X.Y.Z` as three numbers; anything else is not a floor.
+fn parse_floor(text: &str) -> Option<Floor> {
+	let mut parts = text.trim().split('.');
+	let floor = (
+		parts.next()?.parse().ok()?,
+		parts.next()?.parse().ok()?,
+		parts.next()?.parse().ok()?,
+	);
+	parts.next().is_none().then_some(floor)
+}
+
+/// `pub(crate) const MIN_PODMAN_VERSION: (u64, u64, u64) = (6, 2, 0);`
+fn floor_from_source(src: &str) -> Floor {
 	src.lines()
 		.map(str::trim_start)
 		.filter(|l| !l.starts_with("//"))
-		.find_map(|l| l.split_once("MIN_LIBPOD_API_MAJOR: u64 = "))
+		.find_map(|l| l.split_once("MIN_PODMAN_VERSION: (u64, u64, u64) = "))
 		// `trim()` first. Trimming the semicolon before the whitespace leaves
 		// a trailing carriage return in front of it, so the `;` is never the
-		// last character and never removed, and the parse fails on `5;`.
-		.and_then(|(_, rest)| rest.trim().trim_end_matches(';').trim().parse().ok())
-		.expect("MIN_LIBPOD_API_MAJOR is declared as a u64 literal")
+		// last character and never removed, and the parse fails.
+		.and_then(|(_, rest)| {
+			let tuple = rest
+				.trim()
+				.trim_end_matches(';')
+				.trim()
+				.strip_prefix('(')?
+				.strip_suffix(')')?;
+			parse_floor(&tuple.replace(", ", "."))
+		})
+		.expect("MIN_PODMAN_VERSION is declared as a (u64, u64, u64) literal")
 }
 
-/// `PODMAN_MIN_MAJOR=5`
-fn floor_from_installer(src: &str) -> u64 {
+/// `PODMAN_MIN_VERSION=6.2.0`
+fn floor_from_installer(src: &str) -> Floor {
 	src.lines()
 		.map(str::trim_start)
 		.filter(|l| !l.starts_with('#'))
-		.find_map(|l| l.strip_prefix("PODMAN_MIN_MAJOR="))
-		.and_then(|v| v.trim().trim_matches('"').parse().ok())
-		.expect("install.sh assigns PODMAN_MIN_MAJOR")
+		.find_map(|l| l.strip_prefix("PODMAN_MIN_VERSION="))
+		.and_then(|v| parse_floor(v.trim().trim_matches('"')))
+		.expect("install.sh assigns PODMAN_MIN_VERSION")
 }
 
-/// The major out of `Depends: …, podman (>= 5.0)`.
+/// The version out of `Depends: …, podman (>= 6.2.0)`.
 ///
 /// Read off the `Depends:` line specifically, not from anywhere the string
 /// appears: this file exists because the same number in several places went
 /// out of step, and a comment quoting the relationship would satisfy a looser
 /// search. The comment above that field quotes it more than once.
-fn floor_from_control(src: &str) -> u64 {
+fn floor_from_control(src: &str) -> Floor {
 	let depends = src
 		.lines()
 		.filter(|l| !l.trim_start().starts_with('#'))
@@ -81,11 +106,8 @@ fn floor_from_control(src: &str) -> u64 {
 		.split(')')
 		.next()
 		.expect("the podman relationship closes its parenthesis");
-	version
-		.split('.')
-		.next()
-		.and_then(|major| major.parse().ok())
-		.unwrap_or_else(|| panic!("cannot read a major out of {version:?}"))
+	parse_floor(version)
+		.unwrap_or_else(|| panic!("cannot read major.minor.patch out of {version:?}"))
 }
 
 /// The relationship lines of the binary stanza, in order.
@@ -200,14 +222,14 @@ fn every_podman_floor_agrees() {
 
 	assert_eq!(
 		source, installer,
-		"MIN_LIBPOD_API_MAJOR is {source} and install.sh's PODMAN_MIN_MAJOR is \
-		 {installer}. The installer would admit an engine the binary refuses, \
+		"MIN_PODMAN_VERSION is {source:?} and install.sh's PODMAN_MIN_VERSION is \
+		 {installer:?}. The installer would admit an engine the binary refuses, \
 		 or refuse one it accepts."
 	);
 	assert_eq!(
 		source, control,
-		"MIN_LIBPOD_API_MAJOR is {source} and debian/control requires podman \
-		 >= {control}.0. Since podman is a Depends, this number decides whether \
+		"MIN_PODMAN_VERSION is {source:?} and debian/control requires podman \
+		 >= {control:?}. Since podman is a Depends, this number decides whether \
 		 apt installs podup at all: too low and apt installs it onto an engine \
 		 the binary will refuse, too high and apt refuses an install that would \
 		 have worked."
@@ -215,8 +237,9 @@ fn every_podman_floor_agrees() {
 }
 
 /// The parsers are what the assertions above trust, so pin them on input that
-/// differs from today's files. A parser that always returned 5 would satisfy
-/// every equality and prove nothing.
+/// differs from today's files. A parser that always returned the same floor
+/// would satisfy every equality and prove nothing. The three parts are all
+/// read: two floors that differ only in the minor or the patch are different.
 #[test]
 fn the_floor_parsers_read_the_values_rather_than_guessing_them() {
 	// Each helper reads a real file, so the shapes are exercised here through
@@ -224,7 +247,7 @@ fn the_floor_parsers_read_the_values_rather_than_guessing_them() {
 	let control = "\
 # Depends: …, podman (>= 99.0) quoted in a comment
 Package: podup
-Depends: ${shlibs:Depends}, ${misc:Depends}, podman (>= 7.0)
+Depends: ${shlibs:Depends}, ${misc:Depends}, podman (>= 7.3.9)
 ";
 	let depends = control
 		.lines()
@@ -232,19 +255,50 @@ Depends: ${shlibs:Depends}, ${misc:Depends}, podman (>= 7.0)
 		.find(|l| l.starts_with("Depends:"))
 		.unwrap();
 	assert!(
-		depends.contains("podman (>= 7.0)"),
+		depends.contains("podman (>= 7.3.9)"),
 		"the comment quoting a different floor must not be the line that is read"
 	);
 
-	// The real files still have to parse, and to a plausible major rather than
-	// to whatever `unwrap_or_default` would hand back.
+	assert_eq!(floor_from_control(control), (7, 3, 9));
+	assert_eq!(
+		floor_from_source("pub(crate) const MIN_PODMAN_VERSION: (u64, u64, u64) = (7, 3, 9);"),
+		(7, 3, 9)
+	);
+	assert_eq!(
+		floor_from_installer("PODMAN_MIN_VERSION=7.3.9\n"),
+		(7, 3, 9)
+	);
+	assert_eq!(
+		floor_from_installer("PODMAN_MIN_VERSION=\"7.3.9\"\n"),
+		(7, 3, 9)
+	);
+	assert_ne!(
+		parse_floor("6.2.0"),
+		parse_floor("6.2.1"),
+		"the patch is part of the floor"
+	);
+	assert_ne!(
+		parse_floor("6.2.0"),
+		parse_floor("6.3.0"),
+		"the minor is part of the floor"
+	);
+	for unreadable in ["6", "6.2", "6.2.", "6.2.0.1", "6.x.0", ""] {
+		assert_eq!(
+			parse_floor(unreadable),
+			None,
+			"{unreadable:?} is not a floor"
+		);
+	}
+
+	// The real files still have to parse, and to a plausible release rather
+	// than to whatever `unwrap_or_default` would hand back.
 	for (name, got) in [
 		(
-			"MIN_LIBPOD_API_MAJOR",
+			"MIN_PODMAN_VERSION",
 			floor_from_source(&read("internal/connection/libpod/client/mod.rs")),
 		),
 		(
-			"PODMAN_MIN_MAJOR",
+			"PODMAN_MIN_VERSION",
 			floor_from_installer(&read("install.sh")),
 		),
 		(
@@ -253,8 +307,8 @@ Depends: ${shlibs:Depends}, ${misc:Depends}, podman (>= 7.0)
 		),
 	] {
 		assert!(
-			(1..=99).contains(&got),
-			"{name} parsed as {got}, which is not a plausible Podman major"
+			(1..=99).contains(&got.0),
+			"{name} parsed as {got:?}, which is not a plausible Podman release"
 		);
 	}
 }
@@ -287,12 +341,12 @@ fn the_parsers_do_not_care_about_line_endings() {
 	assert_eq!(
 		floor_from_source(&crlf("internal/connection/libpod/client/mod.rs")),
 		floor_from_source(&lf("internal/connection/libpod/client/mod.rs")),
-		"MIN_LIBPOD_API_MAJOR reads differently under CRLF"
+		"MIN_PODMAN_VERSION reads differently under CRLF"
 	);
 	assert_eq!(
 		floor_from_installer(&crlf("install.sh")),
 		floor_from_installer(&lf("install.sh")),
-		"PODMAN_MIN_MAJOR reads differently under CRLF"
+		"PODMAN_MIN_VERSION reads differently under CRLF"
 	);
 	assert_eq!(
 		floor_from_control(&crlf("debian/control")),
