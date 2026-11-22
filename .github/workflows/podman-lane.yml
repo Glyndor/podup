@@ -270,9 +270,11 @@ jobs:
             #
             # The events backend reads the same journal through the same binding,
             # and was left on journald: `niche::engine_events_stream_connects`
-            # failed on the Podman 5 leg with `Api { status: 500, message:
-            # "unable to open a handle to the library" }`, the logs error word for
-            # word. `events_logger = "file"` takes the journal out of that path too.
+            # failed with `Api { status: 500, message: "unable to open a handle
+            # to the library" }`, the logs error word for word. `events_logger =
+            # "file"` takes the journal out of that path too. Seen first on a
+            # Podman 5 VM and not re-measured on 6.x: the lane cannot show it
+            # without a run that drops the line.
             - path: /etc/containers/containers.conf
               content: |
                 [containers]
@@ -320,8 +322,8 @@ jobs:
                 # counted; it just reddened the leg, which is exactly what happened to
                 # fifteen streaming tests when a mid-stream error was made fatal.
                 #
-                # EXPERIMENT (#1039): the thread cap is substituted into this
-                # script when the seed is built; the suite runs at 1.
+                # EXPERIMENT (#1039): the suite and the coverage run both use one
+                # test thread.
                 #
                 # Every hypothesis for Podman 6's failing tail has been falsified in
                 # turn: journald, SELinux, and a boot race on systemd-resolved, the
@@ -351,7 +353,7 @@ jobs:
                 # 2 rather than 1 so the suite still fits the VM's time budget.
                 DROPPED='IncompleteMessage|connection closed before message completed|channel closed|Connection reset|error reading a body from connection|unexpected EOF during chunk size line|IncompleteBody|body-unexpected-eof'
                 for attempt in 1 2; do
-                  RUST_LOG=podup=warn cargo test --features test-helpers --test engine_integration -- --test-threads=__THREADS__ > /tmp/cargo.log 2>&1
+                  RUST_LOG=podup=warn cargo test --features test-helpers --test engine_integration -- --test-threads=1 > /tmp/cargo.log 2>&1
                   RC=$?
                   [ "$RC" -eq 0 ] && break
                   grep -qE "$DROPPED" /tmp/cargo.log || break
@@ -444,7 +446,7 @@ jobs:
                     # with hyper IncompleteMessage. Uncapped, this step measures
                     # a different suite than the one that gates.
                     cargo llvm-cov --all-features --summary-only \
-                      -- --test-threads=__THREADS__ >/tmp/cov.log 2>&1
+                      -- --test-threads=1 >/tmp/cov.log 2>&1
                     PCT=$(awk '$1=="TOTAL" { for (i=1;i<=NF;i++) if ($i ~ /%$/) { print $i; exit } }' /tmp/cov.log)
                     if [ -n "$PCT" ]; then
                       echo "PODUP_COVERAGE=$PCT"
@@ -473,7 +475,7 @@ jobs:
                 echo "PODUP_FAILED_TESTS_BEGIN tests=${FAILED_TESTS} PODUP_FAILED_TESTS_END"
           runcmd:
             - bash -c 'F=$(findmnt -no FSTYPE /); case $F in btrfs) btrfs filesystem resize max / ;; xfs) xfs_growfs / ;; ext4) resize2fs $(findmnt -no SOURCE /) ;; esac >/dev/console 2>&1; echo "DISK_BEGIN value=$(df -h / | tail -1) DISK_END" >/dev/console'
-            - bash -c 'dnf install -y podman rust cargo gcc git llvm >/dev/console 2>&1'
+            - bash -c 'dnf install -y podman rust cargo gcc git __LLVM__ >/dev/console 2>&1'
             # Prove the driver took, so a silently-ignored config cannot put the
             # logs tests back to passing without reading anything.
             - bash -c 'echo "LOGDRIVER_BEGIN value=$(podman info --format {{.Host.LogDriver}} 2>/dev/null) LOGDRIVER_END" >/dev/console'
@@ -484,11 +486,6 @@ jobs:
             - bash -c 'sudo -iu tester /usr/local/bin/run-suite.sh >/dev/console 2>&1'
             - bash -c 'echo PROBE_DONE >/dev/console; sleep 2; poweroff'
           EOF
-          # The seed heredoc is quoted, so a shell variable cannot expand inside
-          # it. Substitute the thread cap here instead (#1039).
-          THREADS=1
-          echo "test-threads for Podman ${{ matrix.podman }}: $THREADS"
-          sed -i "s/__THREADS__/$THREADS/" "$RUNNER_TEMP/user-data"
           # Coverage on the scheduled and manual paths only. A pull request must
           # not pay for a second instrumented build, and must not be able to fail
           # for a reason that has nothing to do with its own change.
@@ -496,6 +493,11 @@ jobs:
           case "${{ github.event_name }}" in schedule|workflow_dispatch) COVERAGE=1 ;; esac
           echo "coverage pass for Podman ${{ matrix.podman }}: $COVERAGE"
           sed -i "s/__COVERAGE__/$COVERAGE/" "$RUNNER_TEMP/user-data"
+          # llvm carries the coverage tools and nothing else uses it, so only the
+          # runs that measure coverage install it.
+          LLVM=""
+          [ "$COVERAGE" = "1" ] && LLVM="llvm"
+          sed -i "s/__LLVM__/$LLVM/" "$RUNNER_TEMP/user-data"
           cloud-localds "$RUNNER_TEMP/seed.iso" "$RUNNER_TEMP/user-data"
       - name: Boot VM (9p = repo only) + capture
         if: needs.decide.outputs.engine == 'true'
@@ -531,11 +533,11 @@ jobs:
             echo "::error::the VM could not serve logs (journald cannot open its library); the logs tests would pass without reading anything"
             exit 1
           fi
-          # Guard the matrix: the VM must actually run the Podman major it was asked to.
-          case "$VER" in
-            ${{ matrix.podman }}.*) : ;;
-            *) echo "::error::expected Podman ${{ matrix.podman }}.x but VM has $VER"; exit 1 ;;
-          esac
+          # Guard the VM: it must run a Podman at or above the floor podup requires
+          # (6.2.0), whatever rawhide ships today.
+          if [ "$(printf '%s\n6.2.0\n' "$VER" | LC_ALL=C sort -V | head -1)" != "6.2.0" ]; then
+            echo "::error::the VM has Podman $VER, below the 6.2.0 floor podup requires"; exit 1
+          fi
           # Read the machine-readable summary the VM computed from the FULL cargo
           # log (the console here is tail-truncated, so don't recount from it).
           SUM=$(perl -0777 -ne 'while (/PODUP_SUMMARY_BEGIN\s+pass=(\d+)(?s:(?:(?!PODUP_SUMMARY_BEGIN).)*?)fail=(\d+)(?s:(?:(?!PODUP_SUMMARY_BEGIN).)*?)flaky=(\d+)\s+PODUP_SUMMARY_END/g) { print "PODUP_SUMMARY pass=$1 fail=$2 flaky=$3\n" }' "$L" | tail -1)
@@ -579,40 +581,41 @@ jobs:
           if [ -n "$FAILED_TESTS" ]; then
             echo "Failing tests on Podman $VER: $FAILED_TESTS"
           fi
-          # Identity gate, per major, when that major has a classified list.
+          # Identity gate, against the classified list of the major the VM booted.
           # A count cannot tell a regression from noise: the #1072 regression
           # broke one test and left the pass count at 144, far above the floor,
           # so nothing went red and it shipped. WHICH tests fail does tell you.
-          # Derive the major from the Podman the VM actually booted (the matrix
-          # guard above already proved they agree), so dropping in a
-          # known-failures-<major> file is all it takes to gate a new
-          # major, no edit here.
+          # The major comes from the Podman the VM actually booted, so the day
+          # rawhide moves to Podman 7 this step asks for a known-failures-7 file
+          # instead of passing without a gate.
           major="${VER%%.*}"
           known="$GITHUB_WORKSPACE/.github/podman_lane/known-failures-$major"
-          if [ -f "$known" ]; then
-            # `comm` compares bytes while `sort` orders by locale, so pin both to
-            # C. Defensive rather than observed: the first-run false red was the
-            # CR above, not collation, but the two must agree or comm reports
-            # present entries as missing.
-            LC_ALL=C
-            export LC_ALL
-            grep -vE '^[[:space:]]*(#|$)' "$known" | tr -d '[:blank:]' | sort -u > "$RUNNER_TEMP/known.txt"
-            printf '%s' "$FAILED_TESTS" | tr ',' '\n' | sed '/^$/d' | sort -u > "$RUNNER_TEMP/failed.txt"
-            unexpected="$(comm -23 "$RUNNER_TEMP/failed.txt" "$RUNNER_TEMP/known.txt")"
-            if [ -n "$unexpected" ]; then
-              echo "::error::Podman $VER: these failing tests are not in $(basename "$known"): a test that used to pass is failing, which is a regression, not nested-virt noise:"
-              echo "$unexpected" | awk '{print "  " $0}'
-              echo "Environment: Podman $VER on ${VM_IMAGE:-an unrecorded image}. Before concluding, check whether the run you are comparing against booted the same one; the rawhide leg usually does not (#1222)."
-              echo "If a run proves the failure is environmental, add it to that file with the evidence; do not add it to make this red go away."
-              exit 1
-            fi
-            stale="$(comm -13 "$RUNNER_TEMP/failed.txt" "$RUNNER_TEMP/known.txt")"
-            if [ -n "$stale" ]; then
-              echo "::notice::Podman $VER: listed as environmentally-broken but passing in this run; drop them from $(basename "$known") once that holds:"
-              echo "$stale" | awk '{print "  " $0}'
-            fi
-            echo "Podman $VER: every failure is on the classified list ($(wc -l < "$RUNNER_TEMP/known.txt") entries)."
+          if [ ! -f "$known" ]; then
+            echo "::error::the VM booted Podman $VER and there is no .github/podman_lane/known-failures-$major to gate it against; add one (an empty list is fine) once a run proves the failing set"
+            exit 1
           fi
+          # `comm` compares bytes while `sort` orders by locale, so pin both to
+          # C. Defensive rather than observed: the first-run false red was the
+          # CR above, not collation, but the two must agree or comm reports
+          # present entries as missing.
+          LC_ALL=C
+          export LC_ALL
+          grep -vE '^[[:space:]]*(#|$)' "$known" | tr -d '[:blank:]' | sort -u > "$RUNNER_TEMP/known.txt"
+          printf '%s' "$FAILED_TESTS" | tr ',' '\n' | sed '/^$/d' | sort -u > "$RUNNER_TEMP/failed.txt"
+          unexpected="$(comm -23 "$RUNNER_TEMP/failed.txt" "$RUNNER_TEMP/known.txt")"
+          if [ -n "$unexpected" ]; then
+            echo "::error::Podman $VER: these failing tests are not in $(basename "$known"): a test that used to pass is failing, which is a regression, not nested-virt noise:"
+            echo "$unexpected" | awk '{print "  " $0}'
+            echo "Environment: Podman $VER on ${VM_IMAGE:-an unrecorded image}. Before concluding, check whether the run you are comparing against booted the same one; the rawhide leg usually does not (#1222)."
+            echo "If a run proves the failure is environmental, add it to that file with the evidence; do not add it to make this red go away."
+            exit 1
+          fi
+          stale="$(comm -13 "$RUNNER_TEMP/failed.txt" "$RUNNER_TEMP/known.txt")"
+          if [ -n "$stale" ]; then
+            echo "::notice::Podman $VER: listed as environmentally-broken but passing in this run; drop them from $(basename "$known") once that holds:"
+            echo "$stale" | awk '{print "  " $0}'
+          fi
+          echo "Podman $VER: every failure is on the classified list ($(wc -l < "$RUNNER_TEMP/known.txt") entries)."
           # Gate: the core must pass the baseline in .github/podman_lane/baseline-tests.
           # A real regression breaks previously-passing tests and knocks PASS
           # below the floor; the baseline is versioned so it is bumped

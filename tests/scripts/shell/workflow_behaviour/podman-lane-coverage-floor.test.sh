@@ -53,6 +53,14 @@ check "the lane calls the floor script" 1 \
 check "the lane no longer compares the full version with a bare major" 0 \
 	"$(grep -cE '\[ "\$VER" = "[0-9]+" \]' "$workflow")"
 
+# Single Podman major: nothing in the lane selects by it any more.
+# shellcheck disable=SC2016 # the pattern is literal workflow text
+check "the lane does not guard a matrix major against the VM" 0 \
+	"$(grep -cF 'expected Podman ${{ matrix.podman }}' "$workflow")"
+check "the thread cap is not substituted per major" 0 "$(grep -c '__THREADS__' "$workflow")"
+check "llvm is installed only for runs that measure coverage" 1 \
+	"$(grep -cF 'dnf install -y podman rust cargo gcc git __LLVM__' "$workflow")"
+
 echo
 echo "passed: $pass  failed: $fail"
 printf 'DONE %s %d %d\n' "${BASH_SOURCE[0]##*/}" "$pass" "$fail"
