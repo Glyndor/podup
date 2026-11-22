@@ -4,9 +4,24 @@ use std::{fs, io::Write, path::Path, process::Command};
 
 use super::{exec_start_words, literal_path};
 
-fn option<'a>(argv: &'a [String], flag: &str) -> &'a str {
-	assert_eq!(argv.iter().filter(|arg| *arg == flag).count(), 1);
-	&argv.windows(2).find(|pair| pair[0] == flag).unwrap()[1]
+/// The value of `flag`, read from either spelling the generator writes: as
+/// two words (`-v`, `src:dst`) or as one word joined with `=`
+/// (`--entrypoint=[...]`, which is how Podman 6.2.0 writes it).
+fn option(argv: &[String], flag: &str) -> String {
+	let joined = format!("{flag}=");
+	let values: Vec<String> = argv
+		.iter()
+		.enumerate()
+		.filter_map(|(i, arg)| {
+			if arg == flag {
+				Some(argv[i + 1].clone())
+			} else {
+				arg.strip_prefix(&joined).map(str::to_string)
+			}
+		})
+		.collect();
+	assert_eq!(values.len(), 1, "{flag} must appear once: {argv:?}");
+	values.into_iter().next().unwrap()
 }
 
 #[test]
@@ -90,9 +105,9 @@ fn bind_and_command_bytes_survive_the_real_quadlet_generator_or_are_refused() {
 		let recovered: Vec<_> = argv[image + 1..].iter().map(|s| literal_path(s)).collect();
 		assert_eq!(recovered, command, "command bytes changed: {stdout}");
 		let recovered: Vec<String> =
-			serde_json::from_str(&literal_path(option(&argv, "--entrypoint"))).unwrap();
+			serde_json::from_str(&literal_path(&option(&argv, "--entrypoint"))).unwrap();
 		assert_eq!(recovered, entrypoint, "entrypoint bytes changed: {stdout}");
-		let mount = literal_path(option(&argv, "-v"));
+		let mount = literal_path(&option(&argv, "-v"));
 		// Decode Podman's colon-delimited mount, rather than comparing its text.
 		// A colon inside either path must be refused or represented losslessly.
 		let fields: Vec<_> = mount.split(':').collect();
