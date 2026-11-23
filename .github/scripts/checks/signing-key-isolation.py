@@ -5,7 +5,8 @@ Usage: signing-key-isolation.py [WORKFLOW_DIR]
        signing-key-isolation.py --print-hashes [WORKFLOW_DIR]
 
 Not a proof of security: a fixed definition and a tripwire on it. The jobs
-`sign`, `attest` and `release` of release.yml are pinned whole. The SHA-256 of
+`sign`, `attest` and `release` of release.yml are pinned whole, and so is each of
+`sign-packages` and `seal` when the workflow has it. The SHA-256 of
 each one's canonical JSON (the job as loaded, plus the workflow's `env`,
 `defaults` and `permissions`, which apply to it) must equal the hash in
 `release-pinned.txt`. Any change to any field of those jobs, a comment in a
@@ -14,7 +15,8 @@ the same pull request, which is where the whole diff of the job gets read.
 
 Around that, in every workflow: the key (`secrets.GLYNDOR_RELEASE_ED25519_KEY`,
 `toJSON(secrets)`, a computed `secrets[...]`, `secrets: inherit`) appears only
-in `sign` and `release` of release.yml, read inside a `${{ }}` expression;
+in `sign`, `sign-packages`, `seal` and `release` of release.yml, read inside a
+`${{ }}` expression;
 `id-token: write` and `attestations: write` only in `attest`. Exit 0 or 1.
 """
 import hashlib
@@ -43,7 +45,11 @@ import ci_yaml  # noqa: E402  (the one loader and enumerator; run from the repos
 KEY = re.compile(r"\bsecrets\b(?!\s*\.\s*GITHUB_TOKEN\b)", re.IGNORECASE)
 EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 PINNED = ("sign", "attest", "release")
-KEY_JOBS = ("sign", "release")
+# Held whole as well, but only once the workflow has them: the jobs that sign the
+# packages and seal the set (checksums, SBOMs, installers) without any permission to
+# write a release, which is the split that keeps the key and the write token apart.
+PINNED_WHEN_PRESENT = ("sign-packages", "seal")
+KEY_JOBS = ("sign", "sign-packages", "seal", "release")
 
 
 def strings(value):
@@ -92,7 +98,7 @@ def offenders(path):
         found.append("workflow: holds the key in its environment")
     for name, job in (spec.get("jobs") or {}).items():
         if (job.get("secrets") == "inherit" or holds_key(job)) and not (is_release and name in KEY_JOBS):
-            found.append(f"job `{name}`: holds the key, which only `sign` and `release` of release.yml may")
+            found.append(f"job `{name}`: holds the key, which only {', '.join(f'`{k}`' for k in KEY_JOBS)} of release.yml may")
         grants = job.get("permissions", spec.get("permissions"))
         mints = grants == "write-all" or (isinstance(grants, dict) and "write" in (grants.get("id-token"), grants.get("attestations")))
         if is_release and mints and name != "attest":
@@ -101,7 +107,8 @@ def offenders(path):
         want = pinned()
         found += [f"job `{j}` changed: review the whole diff of the job (it is privileged) and regenerate "
                   "its hash with --print-hashes in the same pull request"
-                  for j in PINNED if j not in spec["jobs"] or digest(spec, j) != want.get(j)]
+                  for j in PINNED + tuple(n for n in PINNED_WHEN_PRESENT if n in spec["jobs"])
+                  if j not in spec["jobs"] or digest(spec, j) != want.get(j)]
     return [f"::error file={path}::{f}" for f in found]
 
 
@@ -110,7 +117,7 @@ def main(argv):
     root = args[0] if args else ".github/workflows"
     if "--print-hashes" in argv:
         spec = ci_yaml.load(f"{root}/release.yml")
-        print("\n".join(f"{j} {digest(spec, j)}" for j in PINNED))
+        print("\n".join(f"{j} {digest(spec, j)}" for j in PINNED + tuple(n for n in PINNED_WHEN_PRESENT if n in spec["jobs"])))
         return 0
     files = ci_yaml.workflows_in(root)
     if not files:
