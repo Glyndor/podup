@@ -35,7 +35,8 @@ while IFS= read -r path; do
 		.github/workflows/podman-lane-develop-nightly.yml | \
 		.github/workflows/podman-watch.yml | .github/workflows/supply-chain.yml | \
 		.github/workflows/workflow-lint.yml | \
-		.github/workflows/reusable-branch-health.yml | .github/workflows/reusable-dco.yml | \
+		.github/workflows/reusable-branch-health.yml | .github/workflows/reusable-cancel-others.yml | \
+		.github/workflows/reusable-dco.yml | \
 		.github/workflows/reusable-dependabot-freshness.yml | \
 		.github/workflows/reusable-installer-contract.yml | \
 		.github/workflows/reusable-line-limit.yml | \

@@ -56,3 +56,14 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: .github/scripts/hygiene/check-secrets.sh "$BASE" "$HEAD"
+
+  # When this workflow fails on a pull request, the other runs of the same commit
+  # stop: they would spend runners on a commit that is already red. The job and
+  # the rules it follows are in reusable-cancel-others.yml.
+  cancel-others:
+    needs: [commit-identity, secret-scan]
+    if: ${{ failure() && github.event_name == 'pull_request' }}
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/reusable-cancel-others.yml

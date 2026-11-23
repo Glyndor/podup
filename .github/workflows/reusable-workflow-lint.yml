@@ -616,3 +616,14 @@ jobs:
         if: steps.decide.outputs.run != 'false'
         run: |
           python3 .github/scripts/checks/check-merge-group-triggers.py
+
+      # The token that can cancel other runs (`actions: write`) is held to an
+      # exact list of steps, by its effective permissions: `write-all`, a grant
+      # at the top of a workflow, and what a job inherits all count. A job that
+      # holds it may run only the steps the script lists, and the one launcher
+      # that runs a script runs the copy of the base commit, never a file of the
+      # pull request's tree. Logic lives in the script; its tests plant each way
+      # around it.
+      - name: A job that can end other runs runs only the steps the list holds
+        if: steps.decide.outputs.run != 'false'
+        run: python3 .github/scripts/checks/check-write-token-jobs.py
