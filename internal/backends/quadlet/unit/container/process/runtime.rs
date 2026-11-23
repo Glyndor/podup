@@ -2,7 +2,6 @@
 //! directory, and the flags that shape the run.
 
 use crate::compose::types::Service;
-use crate::quadlet::is_no_warn_set;
 
 use super::super::super::shared_values::hostname;
 use super::super::Section;
@@ -51,16 +50,13 @@ pub(in super::super) fn emit_runtime(name: &str, service: &Service, container: &
 		// host-binding mode. Quadlet cannot call the engine (it has no Podman
 		// client), so it surfaces the same warning here, at generate time, so
 		// the operator sees the warning whichever path they use. The mode is
-		// still emitted below; the warning is the point. `--no-warn` opts
-		// the operator out of this one too (set via the `NoWarnGuard` the CLI
-		// driver wraps around `write_quadlet`).
-		if !is_no_warn_set() {
-			tracing::warn!(
-				"service \"{name}\": privileged: true grants every Linux capability and exposes \
-				 every host device; under rootless Podman the effect is reduced but the container \
-				 still bypasses the default capability set"
-			);
-		}
+		// still emitted below; the warning is the point. It is a security
+		// warning, so `--no-warn` does not silence it.
+		tracing::warn!(
+			"service \"{name}\": privileged: true grants every Linux capability and exposes \
+			 every host device; under rootless Podman the effect is reduced but the container \
+			 still bypasses the default capability set"
+		);
 	}
 	if service.init == Some(true) {
 		container.add("RunInit", "true".to_string());

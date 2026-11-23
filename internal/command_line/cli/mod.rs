@@ -184,13 +184,13 @@ pub(crate) struct Cli {
 	#[arg(long, value_enum, default_value_t = AnsiMode::Auto, global = true, overrides_with = "ansi")]
 	pub(crate) ansi: AnsiMode,
 
-	/// Suppress the host-binding / privilege-escalation warnings the engine
-	/// emits during `up`/`create`/`run`/`exec` (e.g. `network_mode: host`,
-	/// `privileged: true`, `pid: host`, `container:<id>` namespace sharing).
-	/// Operators who wrote the compose file deliberately use this to silence
-	/// the per-run warning. `podup config` still surfaces the active modes, since
-	/// that command is the "show me what will happen" path, where the
-	/// warning is the whole point.
+	/// Suppress the advisory warnings: the client-address notice for published
+	/// ports and the notes about what rootless Podman cannot honour. Security
+	/// warnings are always shown: host namespaces and privilege
+	/// (`network_mode: host`, `privileged: true`, `pid: host`,
+	/// `container:<id>` namespace sharing) and ports published on every
+	/// interface. Every command that prints a warning honours the switch alike,
+	/// `config` included.
 	// `global` so it works on every subcommand that may build a container spec
 	// (`up`, `create`, `run`, `exec`). The subcommand flags use `-q` for their
 	// own `--quiet`, so the long form is the only spelling here.

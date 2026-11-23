@@ -72,14 +72,12 @@ pub(in super::super) fn emit_network_mode(
 			// Quadlet emits the unit file with `Network=host` and walks away;
 			// there is no engine call to warn on it. The warning is the same
 			// one the live `up` path emits, so the operator sees an identical
-			// message whichever path they use. `--no-warn` opts the operator
-			// out of this one too.
-			if !is_no_warn_set() {
-				tracing::warn!(
-					"service \"{name}\": network_mode: host shares the host's network namespace; \
-					 the container sees host network interfaces and any port it binds is a host port"
-				);
-			}
+			// message whichever path they use. It is a security warning, so
+			// `--no-warn` does not silence it.
+			tracing::warn!(
+				"service \"{name}\": network_mode: host shares the host's network namespace; \
+				 the container sees host network interfaces and any port it binds is a host port"
+			);
 		}
 		Some("none") => container.add("Network", "none".to_string()),
 		Some(m) => {
@@ -106,15 +104,13 @@ pub(in super::super) fn emit_network_mode(
 				container.add("Network", format!("container:{target}"));
 				// Sharing another container's netns collides with the same
 				// isolation argument as `host`. Podman does not warn on it at
-				// generate time, so the surface lives here. `--no-warn` opts
-				// the operator out of this one too.
-				if !is_no_warn_set() {
-					tracing::warn!(
-						"service \"{name}\": network_mode: container:{target} shares another \
-						 container's network namespace; both containers see the same network \
-						 interfaces and ports"
-					);
-				}
+				// generate time, so the surface lives here. It is a security
+				// warning, so `--no-warn` does not silence it.
+				tracing::warn!(
+					"service \"{name}\": network_mode: container:{target} shares another \
+					 container's network namespace; both containers see the same network \
+					 interfaces and ports"
+				);
 			}
 		}
 		None => {}

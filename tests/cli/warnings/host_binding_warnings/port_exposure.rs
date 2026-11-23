@@ -7,8 +7,7 @@
 use super::*;
 
 /// Compose file that publishes a port on every host interface (the `5432:5432`
-/// short form), exercising the parse-time port-exposure detector without a
-/// network host mode that `--no-warn` would also silence.
+/// short form), exercising the parse-time port-exposure detector.
 const PORT_EXPOSED_COMPOSE: &str = "\
 services:
   web:
@@ -48,16 +47,14 @@ fn up_emits_the_port_exposure_warning() {
 }
 
 #[test]
-fn up_no_warn_silences_the_port_exposure_warning() {
+fn up_no_warn_does_not_silence_the_port_exposure_warning() {
 	let (_dir, file) = compose_file("compose.yaml", PORT_EXPOSED_COMPOSE);
 	let out = run_podup_isolated(&["-f", file.to_str().unwrap(), "--no-warn", "up"]);
 	let stderr = String::from_utf8_lossy(&out.stderr);
 	assert!(
-		!stderr.contains(PORT_EXPOSURE_NEEDLE),
-		"--no-warn must silence the port-exposure warning on up; got stderr:\n{stderr}"
+		stderr.contains(PORT_EXPOSURE_NEEDLE),
+		"a port published on every interface is a security warning and --no-warn keeps it on up; got stderr:\n{stderr}"
 	);
-	// The other parse-time warnings (unknown keys, etc.) keep firing; the
-	// assertion above targets the host-binding port warning specifically.
 }
 
 #[test]
@@ -118,10 +115,8 @@ fn top_command_never_emits_the_port_exposure_warning() {
 #[test]
 fn config_emits_the_port_exposure_warning_regardless_of_no_warn() {
 	let (_dir, file) = compose_file("compose.yaml", PORT_EXPOSED_COMPOSE);
-	// `config` is the "show me what will happen" surface, so the port bind
-	// it can confirm by reading the file is always shown; `--no-warn` is
-	// documented to opt out of the *per-run* warning on `up`/`create`/`run`,
-	// not this one.
+	// A port published on every interface is a security warning, so
+	// `--no-warn` does not silence it on `config` or on any other command.
 	let without = run_podup_isolated(&["-f", file.to_str().unwrap(), "config"]);
 	let without_stderr = String::from_utf8_lossy(&without.stderr);
 	assert!(

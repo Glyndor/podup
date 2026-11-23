@@ -199,12 +199,9 @@ pub struct Engine {
 	/// uploaded. The mount reads this instead of asking the path again, which by
 	/// then may name another file.
 	pub(crate) uploaded_file_modes: std::sync::Mutex<std::collections::HashMap<String, u32>>,
-	/// CLI `--no-warn`: suppress the host-binding / privilege-escalation
-	/// warnings the engine emits during `up`/`create`/`run`/`exec`. The
-	/// operator wrote the compose file deliberately, so the default-warning
-	/// behaviour is opt-out per run rather than per command. `config`'s
-	/// surface-mode listing is unaffected; `config` is the "show me what will
-	/// happen" command, where the warnings stay visible there.
+	/// CLI `--no-warn`: suppress the advisory warnings the engine emits (the
+	/// rootless caveats). The security warnings, the host-binding and
+	/// privilege-escalation modes, are emitted whatever it says.
 	pub(crate) no_warn: bool,
 	/// Services already warned about missing last-pull tracking on this engine.
 	pull_policy_warned: std::sync::Mutex<std::collections::HashSet<String>>,

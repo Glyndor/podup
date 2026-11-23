@@ -7,8 +7,8 @@
 //! layer with a separate warning), and on `podup config` (where the active
 //! modes are surfaced at the default log level). The three sites share one
 //! detector so the messages match: an operator who sees the warning on `config`
-//! sees the same line on `up`, and a host-mode they wrote deliberately can be
-//! silenced the same way everywhere via `--no-warn`.
+//! sees the same line on `up`. They are security warnings: `--no-warn` does not
+//! silence them on any of the three.
 
 use crate::compose::types::Service;
 

@@ -101,8 +101,8 @@ fn config_surfaces_every_active_host_binding_mode() {
 
 #[test]
 fn config_warning_is_unaffected_by_no_warn() {
-	// `config` is the "show me what will happen" command, so `--no-warn`
-	// (intended for `up`/`create`/`run`) must not silence it.
+	// A host-binding mode is a security warning, so `--no-warn` does not
+	// silence it on `config`, as it does not on `up`.
 	let (_dir, file) = compose_file(
 		"compose.yaml",
 		"services:\n  web:\n    image: alpine:3.19\n    network_mode: host\n",
@@ -148,14 +148,10 @@ fn config_with_no_active_modes_is_silent() {
 }
 
 #[test]
-fn no_warn_drops_the_host_binding_warnings_at_config_parse() {
-	// The `config` command goes through the same detector path. `--no-warn`
-	// must still suppress the per-service warning *at config time*? No:
-	// `config` ignores `--no-warn` by design (the surface is the whole point
-	// of the command). This test pins that decision so a future refactor
-	// cannot silently change it: a compose with no host modes + `--no-warn`
-	// is silent; a compose *with* modes + `--no-warn` still warns under
-	// `config`.
+fn no_warn_keeps_the_host_binding_warnings_at_config_parse() {
+	// `config` goes through the same detector as `up`, and `--no-warn` does not
+	// silence a security warning on either: a file with a host mode still
+	// warns under `config --no-warn`.
 	let (_dir, file) = compose_file(
 		"compose.yaml",
 		"services:\n  web:\n    image: alpine:3.19\n    network_mode: host\n",

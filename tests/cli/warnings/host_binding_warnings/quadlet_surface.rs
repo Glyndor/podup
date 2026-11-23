@@ -1,6 +1,6 @@
 //! The `generate quadlet` surface: Quadlet has no Podman client to surface
 //! warnings through, so the emitter runs at generate time, alongside the
-//! emitted directives and gated by the same `--no-warn`.
+//! emitted directives. They are security warnings, so `--no-warn` keeps them.
 //!
 //! Split out from `tests/cli/warnings/host_binding_warnings.rs`; the helpers (`bin`,
 //! `compose_file`) are inherited via `use super::*`.
@@ -82,10 +82,10 @@ fn generate_quadlet_warns_on_container_namespace_sharing() {
 }
 
 #[test]
-fn generate_quadlet_no_warn_suppresses_the_warnings() {
-	// `--no-warn` opts the operator out of the Quadlet-path warnings the
-	// same way it does on the live engine. The mode is still emitted in the
-	// unit file; only the per-mode `podup: warning:` line is suppressed.
+fn generate_quadlet_no_warn_keeps_the_security_warnings() {
+	// A host network or a privileged container is a security warning on the
+	// Quadlet path as it is on the live engine, and `--no-warn` does not
+	// silence it. The mode is emitted in the unit file as well.
 	let (_dir, file) = compose_file(
 		"compose.yaml",
 		"services:\n  net:\n    image: alpine:3.19\n    network_mode: host\n  priv:\n    image: alpine:3.19\n    privileged: true\n",
@@ -108,15 +108,13 @@ fn generate_quadlet_no_warn_suppresses_the_warnings() {
 	);
 	let stderr = String::from_utf8_lossy(&out.stderr);
 	assert!(
-		!stderr.contains("podup: warning: network_mode: host"),
-		"--no-warn must silence the network_mode warning; got stderr:\n{stderr}"
+		stderr.contains("network_mode: host"),
+		"--no-warn must keep the network_mode warning; got stderr:\n{stderr}"
 	);
 	assert!(
-		!stderr.contains("podup: warning: privileged: true"),
-		"--no-warn must silence the privileged warning; got stderr:\n{stderr}"
+		stderr.contains("privileged: true"),
+		"--no-warn must keep the privileged warning; got stderr:\n{stderr}"
 	);
-	// The unit still carries the modes; suppression is the per-line warning,
-	// not the emitted directive.
 	let stdout = String::from_utf8_lossy(&out.stdout);
 	assert!(
 		stdout.contains("Network=host"),

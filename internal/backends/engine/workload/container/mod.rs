@@ -271,20 +271,23 @@ impl Engine {
 			);
 		}
 
-		for warning in rootless::rootless_caveat_warnings(service_name, service) {
-			tracing::warn!("{warning}");
+		// A caveat is advice about what rootless Podman cannot do, not a risk the
+		// file creates, so `--no-warn` silences it.
+		if !self.no_warn {
+			for warning in rootless::rootless_caveat_warnings(service_name, service) {
+				tracing::warn!("{warning}");
+			}
 		}
 
 		// Surface every active host-binding / privilege-escalation mode the
 		// compose file declared. The warning is emitted *before* the spec is
 		// POSTed so a host-mode the operator did not intend never reaches the
 		// daemon: the log line is the only signal they get, and it has to
-		// arrive before the API call succeeds. `--no-warn` is the escape
-		// hatch for operators who wrote the compose file deliberately.
-		if !self.no_warn {
-			for w in check_host_mode(service_name, service) {
-				tracing::warn!("{}", w.message);
-			}
+		// arrive before the API call succeeds. These are security warnings, so
+		// `--no-warn` does not silence them: a file that was written
+		// deliberately still says, on every run, what it opens up.
+		for w in check_host_mode(service_name, service) {
+			tracing::warn!("{}", w.message);
 		}
 
 		let stop_signal = service
@@ -437,3 +440,7 @@ mod spec_body_tests;
 #[cfg(all(test, unix))]
 #[path = "anon_volumes_tests.rs"]
 mod anon_volumes_tests;
+
+#[cfg(all(test, unix))]
+#[path = "no_warn_tests.rs"]
+mod no_warn_tests;
