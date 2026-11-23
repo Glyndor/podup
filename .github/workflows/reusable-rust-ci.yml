@@ -151,6 +151,7 @@ jobs:
     outputs:
       run: ${{ steps.decide.outputs.run }}
       docs_only: ${{ steps.decide.outputs.docs_only }}
+      ci_only: ${{ steps.decide.outputs.ci_only }}
       build: ${{ steps.build.outputs.build }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -216,7 +217,7 @@ jobs:
       # cannot fail either. The checks below are not behind either condition,
       # because a document is exactly what they read.
       - name: Install toolchain
-        if: needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true')
+        if: needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true'))
         env:
           TOOLCHAIN: ${{ inputs.toolchain }}
         run: |
@@ -224,7 +225,7 @@ jobs:
           rustup default "$TOOLCHAIN"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true')
+        if: needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true'))
         with:
           path: |
             ~/.cargo/registry/index
@@ -235,11 +236,11 @@ jobs:
           restore-keys: rust-lint-${{ runner.os }}-
 
       - name: rustfmt
-        if: needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true')
+        if: needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true'))
         run: cargo fmt --all --check
 
       - name: clippy
-        if: needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true')
+        if: needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true'))
         env:
           EXTRA_CLIPPY_ARGS: ${{ inputs.extra-clippy-args }}
         run: |
@@ -367,7 +368,7 @@ jobs:
     # crate: a document cannot fail a test that only runs on Windows. A
     # documentation-only range skips the matrix, and the aggregate gate below
     # still reports `rust / Extra platforms`.
-    if: ${{ inputs.extra-test-os != '[]' && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}
+    if: ${{ inputs.extra-test-os != '[]' && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}
     runs-on: ${{ matrix.os }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 205s; the slowest leg is windows-latest. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
@@ -436,6 +437,7 @@ jobs:
           PLAN: ${{ needs.classify.result }}
           RUN: ${{ needs.classify.outputs.run }}
           DOCS: ${{ needs.classify.outputs.docs_only }}
+          CI_ONLY: ${{ needs.classify.outputs.ci_only }}
           RESULT: ${{ needs.test-extra.result }}
           EXTRA_ON: ${{ inputs.extra-test-os != '[]' }}
         run: |
@@ -448,9 +450,9 @@ jobs:
           [ "$RESULT" = success ] && ok=yes
           if [ "$RESULT" = skipped ]; then
             [ "$EXTRA_ON" = false ] && ok=yes
-            [ "$PLAN" = success ] && { [ "$RUN" = false ] || { [ "$RUN" = true ] && [ "$DOCS" = true ]; }; } && ok=yes
+            [ "$PLAN" = success ] && { [ "$RUN" = false ] || { [ "$RUN" = true ] && { [ "$DOCS" = true ] || [ "$CI_ONLY" = true ]; }; }; } && ok=yes
           fi
-          [ "$ok" = yes ] || { echo "::error::extra-platform tests: $RESULT, and nothing certifies it (plan: $PLAN, run: '$RUN', docs_only: '$DOCS')"; exit 1; }
+          [ "$ok" = yes ] || { echo "::error::extra-platform tests: $RESULT, and nothing certifies it (plan: $PLAN, run: '$RUN', docs_only: '$DOCS', ci_only: '$CI_ONLY')"; exit 1; }
 
   coverage:
     name: Coverage
@@ -459,7 +461,7 @@ jobs:
     # changes no line of it: the gate would read the same number it read
     # yesterday. The job is skipped, and a job skipped by its own `if:`
     # reports `skipped`, which the required check `rust / Coverage` accepts.
-    if: ${{ inputs.coverage-threshold > 0 && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}
+    if: ${{ inputs.coverage-threshold > 0 && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 166s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
@@ -717,6 +719,7 @@ jobs:
           PLAN: ${{ needs.classify.result }}
           RUN: ${{ needs.classify.outputs.run }}
           DOCS: ${{ needs.classify.outputs.docs_only }}
+          CI_ONLY: ${{ needs.classify.outputs.ci_only }}
           BUILD: ${{ needs.classify.outputs.build }}
           LINT: ${{ needs.lint.result }}
           TEST: ${{ needs.test.result }}
@@ -739,14 +742,14 @@ jobs:
           # An explicit "no" from the plan is the only reason to skip; a plan
           # that did not succeed, or an output that is empty, never is.
           plan_says() { [ "$PLAN" = success ] && [ "$1" = false ]; }
-          docs_only() { [ "$PLAN" = success ] && [ "$RUN" = true ] && [ "$DOCS" = true ]; }
+          narrowed() { [ "$PLAN" = success ] && [ "$RUN" = true ] && { [ "$DOCS" = true ] || [ "$CI_ONLY" = true ]; }; }
           # judge <name> <result> <switched-on> <skip-is-certified>
           judge() {
             case "$2" in
               success) ;;
               skipped)
                 if [ "$3" = false ] || [ "$4" = yes ]; then :
-                else fail "$1 was skipped and nothing certifies the skip (plan: $PLAN, run: '$RUN', docs_only: '$DOCS', build: '$BUILD')"; fi ;;
+                else fail "$1 was skipped and nothing certifies the skip (plan: $PLAN, run: '$RUN', docs_only: '$DOCS', ci_only: '$CI_ONLY', build: '$BUILD')"; fi ;;
               *) fail "$1: $2" ;;
             esac
           }
@@ -754,7 +757,7 @@ jobs:
           judge lint "$LINT" true no
           cert=no; plan_says "$RUN" && cert=yes
           judge test "$TEST" true "$cert"
-          cert=no; { plan_says "$RUN" || docs_only; } && cert=yes
+          cert=no; { plan_says "$RUN" || narrowed; } && cert=yes
           judge coverage "$COVERAGE" "$COVERAGE_ON" "$cert"
           judge extra-platforms "$EXTRA" "$EXTRA_ON" "$cert"
           cert=no; plan_says "$BUILD" && cert=yes

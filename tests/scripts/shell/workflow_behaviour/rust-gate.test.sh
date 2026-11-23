@@ -50,7 +50,7 @@ check "the gate step was read from the workflow" yes "$([ -s "$WORK/gate.sh" ] &
 # gate <plan> <run> <docs_only> <build> <lint> <test> <extra> <coverage> <msrv> <doc>
 # Every suite is switched on and package and semver are off, as in ci.yml.
 gate() {
-	env PLAN="$1" RUN="$2" DOCS="$3" BUILD="$4" LINT="$5" TEST="$6" EXTRA="$7" COVERAGE="$8" MSRV="$9" DOC="${10}" \
+	env PLAN="$1" RUN="$2" DOCS="$3" CI_ONLY="${CI_ONLY:-false}" BUILD="$4" LINT="$5" TEST="$6" EXTRA="$7" COVERAGE="$8" MSRV="$9" DOC="${10}" \
 		PACKAGE=skipped SEMVER=skipped \
 		EXTRA_ON="${EXTRA_ON:-true}" COVERAGE_ON="${COVERAGE_ON:-true}" MSRV_ON="${MSRV_ON:-true}" \
 		DOC_ON="${DOC_ON:-true}" PACKAGE_ON="${PACKAGE_ON:-false}" SEMVER_ON="${SEMVER_ON:-false}" \
@@ -95,6 +95,13 @@ red "coverage and matrix skipped after tests failed" $s true false true $s failu
 red "coverage skipped on docs_only=true without run=true" $s "" true false $s $s $k $k $k $k
 red "coverage skipped on an empty docs_only answer" $s true "" false $s $s $k $k $k $k
 red "coverage skipped on docs_only=false" $s true false false $s $s $k $k $k $k
+# The CI-only answer certifies the same two skips, and only with run=true.
+check "coverage and matrix skipped on a CI-only range are green" 0 "$(CI_ONLY=true gate $s true false false $s $s $k $k $s $s)"
+check "coverage skipped on ci_only without run=true is red" 1 "$(CI_ONLY=true gate $s "" false false $s $s $k $k $s $s)"
+check "coverage skipped on ci_only=false is red" 1 "$(CI_ONLY=false gate $s true false false $s $s $k $k $s $s)"
+check "ci_only does not excuse tests" 1 "$(CI_ONLY=true gate $s true false false $s $k $k $k $s $s)"
+check "ci_only does not excuse msrv" 1 "$(CI_ONLY=true gate $s true false true $s $s $k $k $k $s)"
+check "ci_only is void after a failed plan" 1 "$(CI_ONLY=true gate failure true false false $s $s $k $k $s $s)"
 # docs_only means nothing once the plan itself did not succeed.
 red "docs-only skips are void when the plan failed" failure true true true $s $s $k $k $k $k
 
@@ -150,7 +157,7 @@ PY
 done
 old_gate() { # <id> <plan> <run> <docs> <build> <result> <switch>
 	local id="$1"
-	env PLAN="$2" RUN="$3" DOCS="$4" BUILD="$5" RESULT="$6" EXTRA_ON="$7" MSRV_ON="$7" bash "$WORK/$id.sh" >/dev/null 2>&1
+	env PLAN="$2" RUN="$3" DOCS="$4" CI_ONLY="${CI_ONLY:-false}" BUILD="$5" RESULT="$6" EXTRA_ON="$7" MSRV_ON="$7" bash "$WORK/$id.sh" >/dev/null 2>&1
 	echo $?
 }
 check "extra platforms: success is green" 0 "$(old_gate extra-platforms-gate $s true false true $s true)"
@@ -162,6 +169,8 @@ check "extra platforms: skipped on an empty answer is red" 1 "$(old_gate extra-p
 check "extra platforms: skipped while the plan said to run is red" 1 "$(old_gate extra-platforms-gate $s true false true $k true)"
 check "extra platforms: failure is red" 1 "$(old_gate extra-platforms-gate $s true false true failure true)"
 check "extra platforms: cancelled is red" 1 "$(old_gate extra-platforms-gate $s true false true cancelled true)"
+check "extra platforms: skipped on a CI-only range is green" 0 "$(CI_ONLY=true old_gate extra-platforms-gate $s true false false $k true)"
+check "extra platforms: ci_only after a failed plan is red" 1 "$(CI_ONLY=true old_gate extra-platforms-gate failure true false false $k true)"
 check "msrv: success is green" 0 "$(old_gate msrv-gate $s true false true $s true)"
 check "msrv: skipped on build=false is green" 0 "$(old_gate msrv-gate $s true false false $k true)"
 check "msrv: skipped when switched off is green" 0 "$(old_gate msrv-gate failure "" "" "" $k false)"
