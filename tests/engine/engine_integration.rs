@@ -261,6 +261,8 @@ mod cli_up_flags;
 mod cli_volumes_config;
 #[path = "engine_integration/cli/lifecycle/cli_wait_flags.rs"]
 mod cli_wait_flags;
+#[path = "engine_integration/cli/lifecycle/cli_wait_timeout.rs"]
+mod cli_wait_timeout;
 #[path = "engine_integration/workload/lifecycle/create_ls.rs"]
 mod create_ls;
 #[path = "engine_integration/workload/lifecycle/lifecycle_output.rs"]

@@ -63,7 +63,7 @@ A container that already exists is left in place when two facts both hold: its r
 | `--no-build` | Do not build images, even for services with a `build:` section. | off |
 | `--quiet-pull` | Suppress image-pull progress output. | off |
 | `--wait` | Wait until services are running/healthy before returning. | off |
-| `--wait-timeout <SECS>` | Maximum seconds to wait with `--wait` before giving up. | no additional overall cap |
+| `--wait-timeout <SECS>` | The whole budget, in seconds, of the wait of `--wait`: it extends a service's own health budget when longer and ends the wait when spent. | no additional overall cap |
 | `--no-start` | Create the containers but do not start them. | off |
 | `--timestamps` | Prefix attached log lines with a timestamp (ignored with `-d`). | off |
 | `-V, --renew-anon-volumes` | Recreate anonymous volumes instead of keeping the previous ones. | off |
@@ -79,7 +79,7 @@ A container that already exists is left in place when two facts both hold: its r
 | `--always-recreate-deps` | Recreate the containers of the services that were not named on the command line even when they are unchanged. With no service named there is nothing to single out. Cannot be combined with `--no-recreate`. | off |
 | `-y, --yes` | Accepted for compatibility. `up` never asks for confirmation, so there is nothing to answer. | off |
 
-`--wait` implies `-d` and checks every replica of each selected service. Health polling retains its per-service budget (interval × retries + start_period); `--wait-timeout` does not extend this dependency budget.
+`--wait` implies `-d` and checks every replica of each selected service. Each service is polled for its own budget (interval × retries + start_period). `--wait-timeout` is the whole budget of the wait, as it is for `start --wait`: it extends a service's budget when it is longer and ends the wait when it is spent. The pull, build and create before the wait are not part of it, and a `service_healthy` wait that gates a dependent inside `up` keeps its own budget. `docker compose up --wait --wait-timeout` does not extend the budget: it fails as soon as the runtime marks the container unhealthy (1.8 s with two retries and a 30 s timeout, measured against the same Podman 6.2.0 socket) and caps the wait at the timeout while retries remain.
 
 With `missing`, an observed local image skips redundant pulls. `always`/`newer` and platform-pinned services still pull; build services use or build their local image.
 
@@ -119,7 +119,7 @@ Start existing stopped containers. Accepts a trailing service list. `start --wai
 | Flag | Description | Default |
 |---|---|---|
 | `--wait` | Wait until services are running/healthy before returning. | off |
-| `--wait-timeout <SECS>` | Maximum seconds to wait with `--wait` before giving up. | no additional overall cap |
+| `--wait-timeout <SECS>` | The whole budget, in seconds, of the wait of `--wait`: it extends a service's own health budget when longer and ends the wait when spent. | no additional overall cap |
 
 ### `stop`
 Stop running containers without removing them. Accepts a trailing service list.
