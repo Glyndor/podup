@@ -175,6 +175,8 @@ mod recreate_on_image;
 mod run_flags;
 #[path = "engine_integration/objects/resources/secrets.rs"]
 mod secrets;
+#[path = "engine_integration/workload/environment/unset_image_env.rs"]
+mod unset_image_env;
 
 #[cfg(feature = "test-helpers")]
 #[path = "engine_integration/host_files/watch/watch.rs"]

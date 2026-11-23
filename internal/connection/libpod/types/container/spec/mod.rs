@@ -41,6 +41,12 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "HashMap::is_empty", default)]
 	pub env: HashMap<String, String>,
 
+	/// Names of image (or `containers.conf`) variables to remove before
+	/// `env` is applied, which is how a compose variable left unresolved
+	/// takes an image's value of the same name away.
+	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	pub unsetenv: Vec<String>,
+
 	/// Allocate a pseudo-TTY for the container.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub terminal: Option<bool>,

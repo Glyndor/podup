@@ -40,3 +40,24 @@ pub(crate) fn effective_env(
 	}
 	Ok(env)
 }
+
+/// The variables the service's `environment:` names without giving them a
+/// value, and that no source resolved: a bare `KEY` the project environment
+/// does not define, or a null in a mapping.
+///
+/// The Compose Specification says such a variable "is unset and is removed
+/// from the service container environment". Left out of the environment it
+/// would only be absent from what compose sets, and the image's own value of
+/// the same name would stay. Podman takes the names to remove in `unsetenv`,
+/// which it applies to the image's environment before the service's own, so
+/// these are sent there. Sorted, because the request is built from a hash map.
+pub(crate) fn unresolved_env_keys(service: &Service, env: &HashMap<String, String>) -> Vec<String> {
+	let mut keys: Vec<String> = service
+		.environment
+		.to_map()
+		.into_keys()
+		.filter(|key| !env.contains_key(key))
+		.collect();
+	keys.sort();
+	keys
+}
