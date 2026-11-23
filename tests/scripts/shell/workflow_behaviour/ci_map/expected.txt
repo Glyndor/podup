@@ -33,6 +33,7 @@
 .github/scripts/hardening/*	C B N R N
 .github/scripts/hygiene/*	C B N R N
 .github/scripts/lib/*	C B N R V
+.github/scripts/packaging/*	C B N R V
 .github/scripts/podman_lane/*	C B N R V
 .github/scripts/release/*	C B N R N
 .github/vocabulary-exceptions.txt	R B B R V
@@ -98,6 +99,7 @@ tests/compose/*	R N B R N
 tests/engine/*	R N B N V
 tests/fixtures/*	R N B R N
 tests/hostile/*	R N B N N
+tests/packaging/*	R N B R V
 tests/quadlet/*	R N B R N
 tests/repository/*	R N B R N
 tests/scripts/powershell/*	N N N R N
@@ -105,6 +107,7 @@ tests/scripts/shell/bench/*	N N N R N
 tests/scripts/shell/fedora_image/*	N N N R N
 tests/scripts/shell/hardening/*	N N N R N
 tests/scripts/shell/install/*	N N N R N
+tests/scripts/shell/packaging/*	N N N R N
 tests/scripts/shell/podman_lane/*	N N N R N
 tests/scripts/shell/suite_guards/*	N N N R N
 tests/scripts/shell/workflow_behaviour/binary-budget-paths.test.sh	N N N R N

@@ -35,6 +35,14 @@
 .github/scripts/hardening/check-hardening.sh	debian-build,lint-shell,linux-hardening
 .github/scripts/hygiene/*	debian-build,lint-shell
 .github/scripts/lib/*	debian-build,lint-shell
+.github/scripts/packaging/build-pacman.sh	debian-build,lint-shell
+.github/scripts/packaging/build-rpm.sh	debian-build,lint-shell
+.github/scripts/packaging/images.env	debian-build
+.github/scripts/packaging/pacman/*	debian-build,lint-shell
+.github/scripts/packaging/rpm/Containerfile	debian-build
+.github/scripts/packaging/rpm/inner.sh	debian-build,lint-shell
+.github/scripts/packaging/rpm/podup.spec.in	debian-build
+.github/scripts/packaging/stage-payload.py	debian-build,lint-shell
 .github/scripts/podman_lane/*	debian-build,lint-shell
 .github/scripts/release/check-artifact-dir.sh	debian-build,lint-shell
 .github/scripts/release/check-tag.sh	debian-build,lint-shell
@@ -210,6 +218,7 @@ tests/fixtures/releases/scripts/version-self-test.sh	asset-contract,debian-build
 tests/fixtures/releases/signatures/*	asset-contract,debian-build
 tests/fixtures/releases/test-key.b64	asset-contract,debian-build
 tests/hostile/*	debian-build
+tests/packaging/*	debian-build,lint-shell
 tests/quadlet/*	debian-build
 tests/repository/*	debian-build
 tests/scripts/powershell/*	debian-build,lint-powershell
@@ -217,6 +226,7 @@ tests/scripts/shell/bench/*	debian-build,lint-shell
 tests/scripts/shell/fedora_image/*	debian-build,lint-shell
 tests/scripts/shell/hardening/*	debian-build,lint-shell
 tests/scripts/shell/install/*	debian-build,lint-shell
+tests/scripts/shell/packaging/*	debian-build,lint-shell
 tests/scripts/shell/podman_lane/*	debian-build,lint-shell
 tests/scripts/shell/suite_guards/*	debian-build,lint-shell
 tests/scripts/shell/workflow_behaviour/binary-budget-paths.test.sh	debian-build,lint-shell
