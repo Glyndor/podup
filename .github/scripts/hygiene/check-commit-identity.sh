@@ -37,14 +37,14 @@ flag() { # <sha> <what>
 # follows the key before the colon, is read with its continuation lines joined.
 trailer_values() { # <sha> <key>
 	git show -s --format='%B' "$1" | awk -v key="$2" '
-		function flush() { gsub(/^[ \t]+|[ \t]+$/, "", cur); gsub(/[ \t]+/, " ", cur); if (cur != "") print cur; cur = "" }
+		function flush() { gsub(/^[ \t]+|[ \t]+$/, "", cur); gsub(/[ \t]+/, " ", cur); if (have) print (cur == "" ? "<empty>" : cur); cur = ""; have = 0 }
 		BEGIN { want = tolower(key) }
 		{
 			low = tolower($0)
 			if (substr(low, 1, length(want)) == want && substr(low, length(want) + 1) ~ /^[ \t]*:/) {
-				flush(); cur = substr($0, length(want) + 1); sub(/^[ \t]*:/, "", cur); next
+				flush(); have = 1; cur = substr($0, length(want) + 1); sub(/^[ \t]*:/, "", cur); next
 			}
-			if (cur != "" && $0 ~ /^[ \t]+[^ \t]/) { cur = cur " " $0; next }
+			if (have && $0 ~ /^[ \t]+[^ \t]/) { cur = cur " " $0; next }
 			flush()
 		}
 		END { flush() }'
@@ -54,6 +54,10 @@ trailer_values() { # <sha> <key>
 # address of each, and the trailers of each. The committer is a second place a personal
 # address lives (a commit rebased or amended on a machine with another identity), and
 # GitHub's own merges and squashes carry its noreply address, which is allowed.
+# The range is listed first, on its own: inside `done < <(...)` the status of git rev-list is
+# dropped, the loop would not run and the script would say every commit was fine over a range
+# it never read.
+commits="$(git rev-list "$base..$head")" || { echo "::error::could not list $base..$head; the range could not be checked" >&2; exit 1; }
 while IFS= read -r sha; do
 	[ -n "$sha" ] || continue
 	author="$(git show -s --format='%ae' "$sha")"
@@ -70,6 +74,7 @@ while IFS= read -r sha; do
 		values="$(printf '%s\n' "$values" | LC_ALL=C sort -u)"
 		while IFS= read -r value; do
 			[ -n "$value" ] || continue
+			if [ "$value" = "<empty>" ]; then flag "$sha" "a $key with no value"; continue; fi
 			# Every address-shaped token in the value, not just the one inside the
 			# last <...>: a trailer can carry two, and a personal one in front of a
 			# noreply one must not pass. A value with no address is refused too.
@@ -80,7 +85,7 @@ while IFS= read -r sha; do
 			done <<< "$addrs"
 		done <<< "$values"
 	done
-done < <(git rev-list "$base..$head")
+done <<< "$commits"
 
 [ "$bad" -eq 0 ] || { echo "Use your GitHub noreply address (git config user.email)." >&2; exit 1; }
 echo "every commit uses a GitHub noreply address"

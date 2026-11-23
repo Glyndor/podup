@@ -36,122 +36,32 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify Signed-off-by trailers
+      # The check is the base commit's copy, never a file of the change. A base that does
+      # not have it (the pull request that introduces it) is told apart from one that
+      # cannot be read, which fails.
+      - name: Take the check from the base commit
         env:
-          # BASE_SHA/HEAD_SHA are the range that the event that fired
-          # this run carries. On pull_request that is the PR's real base
-          # and head commits (not refs/pull/N/merge, the synthetic merge
-          # commit actions/checkout builds when it checks out a PR ref).
-          # On merge_group that is the squash commit(s) GitHub built for
-          # this group, i.e. the commit(s) that will land on develop, so
-          # the trailer is checked on the artefact itself rather than on
-          # the PR's history. That closes the "DCO gate is blind to the
-          # commit it produces" gap for develop. The `||` form picks the
-          # range off whichever event fired; an empty value (workflow_call,
-          # schedule, or any event this workflow is not wired to) makes
-          # the fail-closed block below exit 1 rather than silently
-          # passing on a `git rev-list ..` that lists nothing.
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
-          set -euo pipefail
-          # Fail closed on an empty range: an empty BASE_SHA or HEAD_SHA
-          # makes `git rev-list ..` list nothing, the for-loop never runs,
-          # and the check reports green without looking. This workflow
-          # only knows pull_request and merge_group ranges, and those
-          # events both populate the fields above; if either is empty
-          # here, the trigger wiring is wrong and the gate must go red
-          # rather than pass by accident.
-          if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
-            echo "::error::dco check needs a pull_request or merge_group range; got BASE_SHA='$BASE_SHA' HEAD_SHA='$HEAD_SHA'. Check the workflow_call or event wiring that fired this run."
-            exit 1
+          f=.github/scripts/hygiene/check-dco.sh
+          [ -n "$BASE_SHA" ] || { echo "::error::no base commit: this run carries no pull_request or merge_group range"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/judge"
+          listing="$(git ls-tree --name-only "$BASE_SHA" -- "$f")" || exit 1
+          if [ -n "$listing" ]; then
+            git show "$BASE_SHA:$f" >"$RUNNER_TEMP/judge/check-dco.sh" || exit 1
+          else
+            echo "::notice::$f is not in the base commit; the copy of the change is used"
+            cp "$f" "$RUNNER_TEMP/judge/check-dco.sh"
           fi
-          missing=0
-          for sha in $(git rev-list --no-merges "${BASE_SHA}..${HEAD_SHA}"); do
-            author="$(git show -s --format='%an <%ae>' "$sha")"
-            if ! git show -s --format='%(trailers:key=Signed-off-by)' "$sha" \
-              | grep -qi 'Signed-off-by:'; then
-              echo "::error::commit $sha ($author) is missing a Signed-off-by trailer"
-              missing=1
-            fi
-          done
-          if [ "$missing" -ne 0 ]; then
-            echo "Add a sign-off with: git commit -s (or git rebase --signoff)."
-            exit 1
-          fi
-          echo "All commits carry a Signed-off-by trailer."
 
-      - name: Detect evil merges
-        # A merge commit's tree should always equal the clean, conflict-free
-        # merge of its two parents. If it doesn't, the merge was hand-edited
-        # to smuggle in a change that exists in neither parent and therefore
-        # never went through review or DCO sign-off on its own commit. This
-        # check is independent of the Signed-off-by scope above: merge
-        # commits are still exempt from carrying their own trailer, but their
-        # tree must not silently diverge from what a real merge would produce.
-        #
-        # Policy for edge cases:
-        #   - Octopus merges (more than two parents) are rejected outright:
-        #     `git merge-tree --write-tree` only compares two parents, so a
-        #     three-way-or-more merge can't be verified this way and is not
-        #     assumed safe.
-        #   - A merge whose parents conflict, or whose tree otherwise can't
-        #     be recomputed, fails closed rather than being waved through:
-        #     `git merge-tree --write-tree` exiting non-zero means we cannot
-        #     recompute what the merge should have produced, and a
-        #     hand-resolved conflict is unverifiable by construction: there
-        #     is no way to distinguish a faithful resolution from one that
-        #     also smuggled in an unrelated change. This org's flow is
-        #     squash-only, so merge commits inside a PR range are rare and
-        #     always avoidable (rebase onto the base branch instead of
-        #     merging, or re-merge without conflicts), which is what makes
-        #     failing closed here acceptable friction rather than a
-        #     false-positive machine.
+      # BASE_SHA and HEAD_SHA are the range the event carries: on a pull request its real
+      # base and head (not refs/pull/N/merge), in the merge queue the commit that will land
+      # on develop, so the trailer is checked on the artefact itself. An empty value makes
+      # the script fail rather than list nothing. The script holds both halves: a trailer
+      # whose address is the author's on every commit, and no merge commit whose tree is
+      # not the clean merge of its parents.
+      - name: Every commit is signed off and no merge hides a change
         env:
-          # Same `||` form as the trailer step above: pull_request carries
-          # the PR's base/head, merge_group carries the squash commit(s)
-          # GitHub built for this group, anything else leaves both empty
-          # and the fail-closed block below makes the check red.
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
-        run: |
-          set -euo pipefail
-          # Same empty-range guard as the trailer step: an empty BASE_SHA
-          # or HEAD_SHA here would let `git rev-list --merges` list
-          # nothing and the for-loop never see a merge commit to test.
-          if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
-            echo "::error::evil-merge check needs a pull_request or merge_group range; got BASE_SHA='$BASE_SHA' HEAD_SHA='$HEAD_SHA'. Check the event wiring that fired this run."
-            exit 1
-          fi
-          bad=0
-          stderr_file="$(mktemp)"
-          merges="$(git rev-list --merges "${BASE_SHA}..${HEAD_SHA}")" || {
-            echo "::error::could not enumerate merge commits between ${BASE_SHA} and ${HEAD_SHA}; history may be corrupted or incomplete, and this check fails closed"
-            exit 1
-          }
-          for m in $merges; do
-            read -r -a parents <<< "$(git show -s --format='%P' "$m")"
-            if [ "${#parents[@]}" -ne 2 ]; then
-              echo "::error::merge commit $m has ${#parents[@]} parents. Evil-merge detection only supports ordinary two-parent merges; an octopus merge is rejected rather than assumed safe"
-              bad=1
-              continue
-            fi
-            actual_tree="$(git rev-parse "${m}^{tree}")"
-            if ! clean_tree="$(git merge-tree --write-tree "${parents[0]}" "${parents[1]}" 2>"$stderr_file")"; then
-              echo "::error::merge commit $m cannot be automatically verified (conflicted or merge-tree error); this check fails closed because a hand-resolved merge can carry content that exists in no parent. Rebase the branch onto its base (producing no merge commit) or re-merge without conflicts, then push again."
-              echo "git merge-tree stderr for $m:"
-              cat "$stderr_file"
-              bad=1
-              continue
-            fi
-            if [ "$clean_tree" != "$actual_tree" ]; then
-              echo "::error::merge commit $m's tree does not match the clean merge of its parents ${parents[0]} and ${parents[1]}: it introduces changes present in neither parent"
-              bad=1
-            fi
-          done
-          rm -f "$stderr_file"
-          if [ "$bad" -ne 0 ]; then
-            echo "One or more merge commits smuggle unreviewed changes, use an unsupported merge shape, or could not be automatically verified. See the errors above."
-            exit 1
-          fi
-          echo "No evil merges found."
+        run: bash "$RUNNER_TEMP/judge/check-dco.sh" "$BASE_SHA" "$HEAD_SHA"
