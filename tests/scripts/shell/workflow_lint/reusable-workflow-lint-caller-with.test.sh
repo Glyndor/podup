@@ -111,6 +111,8 @@ new() {
 		reusable-workflow-lint.yml; do
 		cp "$HERE/.github/workflows/$r" "$WORK/t/.github/workflows/"
 	done
+	mkdir -p "$WORK/t/.github/scripts/lib"
+	cp "$HERE/.github/scripts/lib/ci_yaml.py" "$WORK/t/.github/scripts/lib/"
 	cp "$HERE/.github/scripts/checks/check-caller-with-defaults.py" \
 		"$WORK/t/.github/scripts/checks/"
 	printf '%s' "$WORK/t"
@@ -342,16 +344,20 @@ check "and the step did not flag the reuse-side default change" "1" \
 	"$(said "$out" 'caller-with-defaults: every caller')"
 
 # ===========================================================================
-# Edge: an unparseable caller is a warning, not a silent skip. The
-# previous step would fail-closed on a YAML parse error; this one
-# emits a warning so the silence is visible.
+# Edge: a workflow the step cannot parse is a failure, not a skip: what the
+# step cannot read it does not compare, and GitHub reads it all the same.
 # ===========================================================================
 
 d="$(new)"
 printf 'name: [\n' > "$d/.github/workflows/broken.yml"
 out="$(run_in "$d" "$WORK/caller-with.sh")"; rc=$?
-check "an unparseable workflow does not fail the step" "0" "$rc"
-check "but is reported as skipped" "1" "$(said "$out" '::warning')"
+check "an unparseable workflow fails the step" "1" "$rc"
+check "and is reported as an error" "1" "$(said "$out" 'YAML parse error')"
+d="$(new)"
+printf 'on:\n  pull_request:\non:\n  push:\n' > "$d/.github/workflows/dup.yml"
+out="$(run_in "$d" "$WORK/caller-with.sh")"; rc=$?
+check "a duplicate key fails the step" "1" "$rc"
+check "and the message names the key" "1" "$(said "$out" "duplicate key")"
 
 echo
 echo "$pass passed, $fail failed"

@@ -101,7 +101,9 @@ check 'the caller-if assertion was extracted from the workflow' "1" \
 # caller scan has nothing to look at.
 new() {
 	rm -rf "$WORK/t"
-	mkdir -p "$WORK/t/.github/workflows"
+	mkdir -p "$WORK/t/.github/workflows" "$WORK/t/.github/scripts/checks"
+	mkdir -p "$WORK/t/.github/scripts/lib"
+	cp "$HERE/.github/scripts/lib/ci_yaml.py" "$WORK/t/.github/scripts/lib/"
 	for r in \
 		reusable-rust-ci.yml \
 		reusable-dco.yml \
@@ -346,16 +348,18 @@ rc=0; run_in "$d" "$WORK/caller-if.sh" >/dev/null || rc=$?
 check 'an if: false on a non-required reusable caller is allowed' "0" "$rc"
 
 # ===========================================================================
-# Edge: an unparseable caller is a warning, not a silent skip. The
-# previous form of a check here would fail-closed on a YAML parse
-# error; this form follows tooling-isolation and reports it as a
-# ::warning so the silence is visible.
+# Edge: a workflow the step cannot parse is a failure, not a skip: what the
+# step cannot read it does not compare, and GitHub reads it all the same.
 # ===========================================================================
 
 d="$(new)"; printf 'name: [\n' > "$d/.github/workflows/broken.yml"
 out="$(run_in "$d" "$WORK/caller-if.sh")"; rc=$?
-check 'an unparseable workflow does not fail the step' "0" "$rc"
-check 'but is reported as skipped' "1" "$(said "$out" '::warning')"
+check 'an unparseable workflow fails the step' "1" "$rc"
+check 'and is reported as an error' "1" "$(said "$out" 'YAML parse error')"
+d="$(new)"; printf 'on:\n  push:\non:\n  pull_request:\n' > "$d/.github/workflows/dup.yml"
+out="$(run_in "$d" "$WORK/caller-if.sh")"; rc=$?
+check 'a duplicate key fails the step' "1" "$rc"
+check 'and the message names the key' "1" "$(said "$out" 'duplicate key')"
 
 echo
 echo "$pass passed, $fail failed"

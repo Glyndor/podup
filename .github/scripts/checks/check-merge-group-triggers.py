@@ -42,11 +42,13 @@ Reads: .github/workflows/*.yml, .github/workflows/*.yaml under the
 working directory. Symlinks are not followed: a caller escaping the
 filter through a symlinked workflow file is out of scope.
 """
-import glob
 import os
 import sys
 
 import yaml
+
+sys.path.insert(0, ".github/scripts/lib")
+import ci_yaml  # noqa: E402  (the one loader and enumerator; run from the repository root)
 
 # Reusables whose jobs' `name:` becomes part of a develop-required check
 # name when a job in a non-reusable file calls them. The set names the
@@ -146,7 +148,7 @@ def is_required_emitter(spec, name):
     for _job_id, job in jobs.items():
         if not isinstance(job, dict):
             continue
-        job_name = job.get("name")
+        job_name = ci_yaml.check_name(job.get("name"))
         if isinstance(job_name, str) and job_name in DIRECT_EMITTER_NAMES:
             return True
         uses = job.get("uses")
@@ -159,10 +161,7 @@ def is_required_emitter(spec, name):
 
 
 def main():
-    files = sorted(set(
-        glob.glob(".github/workflows/*.yml")
-        + glob.glob(".github/workflows/*.yaml")
-    ))
+    files = ci_yaml.files(".")
 
     # First pass: read every workflow. A non-reusable workflow that
     # emits a required check is "an emitter"; it must have
@@ -174,16 +173,12 @@ def main():
     for path in files:
         name = os.path.basename(path)
         try:
-            with open(path) as fh:
-                spec = yaml.safe_load(fh)
+            spec = ci_yaml.load(path)
         except yaml.YAMLError as e:
-            # Warn and skip, the same way caller-if and
-            # caller-with-defaults do. Silent skip would let a
-            # misconfigured workflow's emission (or absence) hide;
-            # the warning keeps the silence visible to whoever is
-            # reading the run.
-            print(f"::warning file={path}::skipped: YAML parse error: {e}")
-            continue
+            # A file the validator cannot read is a file it does not compare,
+            # and GitHub reads it all the same: that fails the run.
+            print(f"::error file={path}::YAML parse error: {e}")
+            sys.exit(1)
         if not isinstance(spec, dict):
             continue
         parsed[path] = spec

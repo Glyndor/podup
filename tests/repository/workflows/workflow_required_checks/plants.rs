@@ -139,21 +139,25 @@ fn a_renamed_inner_job_name_is_reported_for_that_half_only() {
 fn a_renamed_direct_job_name_is_reported_by_name() {
 	let dir = workflows_dir();
 	let lane = read_workflow(&dir.join("podman-lane.yml"));
-	let needle = "    name: Supported Podman majors\n";
+	let needle = "    name: Supported Podman majors${{";
 	assert!(
 		lane.contains(needle),
 		"podman-lane.yml no longer carries `name: Supported Podman majors`"
 	);
-	let planted = lane.replace(needle, "    name: Supported Podman versions\n");
+	let planted = lane.replace(needle, "    name: Supported Podman versions${{");
 	assert_ne!(planted, lane, "the plant must change the file");
 
 	let gone = newly_unresolved("podman-lane.yml", &planted);
 
 	assert_eq!(
 		gone,
-		vec!["Supported Podman majors: no workflow has a job named \
+		vec![
+			"Supported Podman majors (promotion): no workflow has a job named \
 			 'Supported Podman majors'"
-			.to_string()],
+				.to_string(),
+			"Supported Podman majors: no workflow has a job named 'Supported Podman majors'"
+				.to_string(),
+		],
 		"the one-part shape must be reported too"
 	);
 }

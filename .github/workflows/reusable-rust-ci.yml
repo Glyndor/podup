@@ -113,6 +113,7 @@ concurrency:
 # these, so the range is named once instead of in each job.
 env:
   EVENT: ${{ github.event_name }}
+  BASE_REF: ${{ github.event.pull_request.base.ref }}
   BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
   HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
   # Build settings for every job that compiles. Each run starts from a cold or
@@ -168,7 +169,11 @@ jobs:
       # answer is "run".
       - name: Decide whether the Rust lanes must run
         id: decide
-        run: git show "$BASE_SHA:.github/scripts/checks/rust-ci-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
+        run: |
+          # A pull request into main promotes what develop already holds, and runs
+          # every lane whatever the range says: no plan narrows it.
+          [ "$BASE_REF" = main ] && printf 'run=true\ndocs_only=false\nci_only=false\n' >>"$GITHUB_OUTPUT" ||
+            git show "$BASE_SHA:.github/scripts/checks/rust-ci-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
 
       # The second answer, the one `msrv` and `doc` used to work out each for
       # itself: whether the range reaches anything `cargo build` and
@@ -181,7 +186,7 @@ jobs:
         run: |
           set -euo pipefail
           build=true
-          if [[ "$EVENT" = pull_request || "$EVENT" = push || "$EVENT" = merge_group ]] &&
+          if [ "$BASE_REF" != main ] && [[ "$EVENT" = pull_request || "$EVENT" = push || "$EVENT" = merge_group ]] &&
              changed=$(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA") &&
              judge=$(git show "$BASE_SHA:.github/scripts/checks/rust-build-inputs.sh") &&
              bash -c "$judge" -- "$changed"; then
@@ -706,7 +711,14 @@ jobs:
   # name does not carry a value, so no change of toolchain, MSRV or platforms
   # can move it.
   gate:
-    name: Gate
+    # The name says which kind of run produced it: nothing for a pull request into
+    # `develop` and for the merge queue, `(promotion)` for a pull request into `main`,
+    # and the event in brackets for everything else (a push, a schedule). A required
+    # check is matched by name on a commit, so the push that lands on `develop` and
+    # the pull request that promotes the same commit into `main` must not be able to
+    # answer for each other: they get different names and the ruleset of each branch
+    # requires its own.
+    name: Gate${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || github.event_name != 'pull_request' && github.event_name != 'merge_group' && format(' ({0})', github.event_name) || '' }}
     needs: [classify, lint, test, test-extra, coverage, msrv, doc, package, semver]
     if: always()
     runs-on: ubuntu-latest
@@ -716,19 +728,7 @@ jobs:
     steps:
       - name: Certify the plan and every skip
         env:
-          PLAN: ${{ needs.classify.result }}
-          RUN: ${{ needs.classify.outputs.run }}
-          DOCS: ${{ needs.classify.outputs.docs_only }}
-          CI_ONLY: ${{ needs.classify.outputs.ci_only }}
-          BUILD: ${{ needs.classify.outputs.build }}
-          LINT: ${{ needs.lint.result }}
-          TEST: ${{ needs.test.result }}
-          EXTRA: ${{ needs.test-extra.result }}
-          COVERAGE: ${{ needs.coverage.result }}
-          MSRV: ${{ needs.msrv.result }}
-          DOC: ${{ needs.doc.result }}
-          PACKAGE: ${{ needs.package.result }}
-          SEMVER: ${{ needs.semver.result }}
+          NEEDS: ${{ toJSON(needs) }}
           EXTRA_ON: ${{ inputs.extra-test-os != '[]' }}
           COVERAGE_ON: ${{ inputs.coverage-threshold > 0 }}
           MSRV_ON: ${{ inputs.msrv != '' }}
@@ -738,31 +738,42 @@ jobs:
         run: |
           set -uo pipefail
           bad=0
+          table=""
           fail() { echo "::error::$1"; bad=1; }
-          # An explicit "no" from the plan is the only reason to skip; a plan
-          # that did not succeed, or an output that is empty, never is.
+          res() { jq -r --arg j "$1" '.[$j].result // "missing"' <<<"$NEEDS"; }
+          out() { jq -r --arg j "$1" --arg k "$2" '.[$j].outputs[$k] // ""' <<<"$NEEDS"; }
+          PLAN=$(res classify) RUN=$(out classify run) DOCS=$(out classify docs_only)
+          CI_ONLY=$(out classify ci_only) BUILD=$(out classify build)
+          # An explicit "no" from a plan that succeeded is the only reason to skip;
+          # a plan that did not succeed, or an output that is empty, never is.
           plan_says() { [ "$PLAN" = success ] && [ "$1" = false ]; }
           narrowed() { [ "$PLAN" = success ] && [ "$RUN" = true ] && { [ "$DOCS" = true ] || [ "$CI_ONLY" = true ]; }; }
-          # judge <name> <result> <switched-on> <skip-is-certified>
+          # judge <job> <switched-on> <skip-is-certified>: the result is read from the job itself.
           judge() {
-            case "$2" in
-              success) ;;
+            local r v
+            r=$(res "$1")
+            case "$r" in
+              success) v=ran ;;
               skipped)
-                if [ "$3" = false ] || [ "$4" = yes ]; then :
-                else fail "$1 was skipped and nothing certifies the skip (plan: $PLAN, run: '$RUN', docs_only: '$DOCS', ci_only: '$CI_ONLY', build: '$BUILD')"; fi ;;
-              *) fail "$1: $2" ;;
+                if [ "$2" = false ]; then v="skipped, switched off"
+                elif [ "$3" = yes ]; then v="skipped, the plan said so"
+                else v="SKIPPED WITHOUT A REASON"; fail "$1 was skipped and nothing certifies the skip"; fi ;;
+              *) v="RED"; fail "$1: $r" ;;
             esac
+            table+=$(printf '%-12s %-10s %s' "$1" "$r" "$v")$'\n'
           }
           [ "$PLAN" = success ] || fail "the plan did not succeed ($PLAN)"
-          judge lint "$LINT" true no
+          table+="plan: $PLAN, run='$RUN', docs_only='$DOCS', ci_only='$CI_ONLY', build='$BUILD'"$'\n'
+          judge lint true no
           cert=no; plan_says "$RUN" && cert=yes
-          judge test "$TEST" true "$cert"
+          judge test true "$cert"
           cert=no; { plan_says "$RUN" || narrowed; } && cert=yes
-          judge coverage "$COVERAGE" "$COVERAGE_ON" "$cert"
-          judge extra-platforms "$EXTRA" "$EXTRA_ON" "$cert"
+          judge coverage "$COVERAGE_ON" "$cert"
+          judge test-extra "$EXTRA_ON" "$cert"
           cert=no; plan_says "$BUILD" && cert=yes
-          judge msrv "$MSRV" "$MSRV_ON" "$cert"
-          judge doc "$DOC" "$DOC_ON" "$cert"
-          judge package "$PACKAGE" "$PACKAGE_ON" no
-          judge semver "$SEMVER" "$SEMVER_ON" no
+          judge msrv "$MSRV_ON" "$cert"
+          judge doc "$DOC_ON" "$cert"
+          judge package "$PACKAGE_ON" no
+          judge semver "$SEMVER_ON" no
+          printf '%s' "$table" | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
           exit "$bad"

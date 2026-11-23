@@ -50,8 +50,28 @@ check "the gate step was read from the workflow" yes "$([ -s "$WORK/gate.sh" ] &
 # gate <plan> <run> <docs_only> <build> <lint> <test> <extra> <coverage> <msrv> <doc>
 # Every suite is switched on and package and semver are off, as in ci.yml.
 gate() {
-	env PLAN="$1" RUN="$2" DOCS="$3" CI_ONLY="${CI_ONLY:-false}" BUILD="$4" LINT="$5" TEST="$6" EXTRA="$7" COVERAGE="$8" MSRV="$9" DOC="${10}" \
-		PACKAGE=skipped SEMVER=skipped \
+	local needs
+	needs="$(CI_ONLY="${CI_ONLY:-false}" python3 - "$@" <<'PY'
+import json
+import os
+import sys
+
+plan, run, docs, build, lint, test, extra, cov, msrv, doc = sys.argv[1:11]
+needs = {
+    "classify": {"result": plan, "outputs": {"run": run, "docs_only": docs, "ci_only": os.environ["CI_ONLY"], "build": build}},
+    "lint": {"result": lint},
+    "test": {"result": test},
+    "test-extra": {"result": extra},
+    "coverage": {"result": cov},
+    "msrv": {"result": msrv},
+    "doc": {"result": doc},
+    "package": {"result": "skipped"},
+    "semver": {"result": "skipped"},
+}
+print(json.dumps(needs))
+PY
+)"
+	env NEEDS="${NEEDS_OVERRIDE:-$needs}" \
 		EXTRA_ON="${EXTRA_ON:-true}" COVERAGE_ON="${COVERAGE_ON:-true}" MSRV_ON="${MSRV_ON:-true}" \
 		DOC_ON="${DOC_ON:-true}" PACKAGE_ON="${PACKAGE_ON:-false}" SEMVER_ON="${SEMVER_ON:-false}" \
 		bash "$WORK/gate.sh" >"$WORK/out.log" 2>&1
@@ -143,6 +163,51 @@ check "an uncertified skip is named" 1 "$(grep -c 'test was skipped and nothing 
 gate $s true false true $s $s $s $s cancelled $s >/dev/null
 check "a cancelled needs is named" 1 "$(grep -c 'msrv: cancelled' "$WORK/out.log")"
 
+# The table: the plan's answers and each job's result, printed where a reader
+# looks first, so "it ran" and "everything inside was skipped" are told apart.
+gate $s true true false $s $s $k $k $k $k >/dev/null
+check "the table prints the plan's answers" 1 "$(grep -c "^plan: success, run='true', docs_only='true', ci_only='false', build='false'" "$WORK/out.log")"
+check "the table prints a job that ran" 1 "$(grep -cE '^test +success +ran$' "$WORK/out.log")"
+check "the table prints a certified skip" 1 "$(grep -cE '^coverage +skipped +skipped, the plan said so$' "$WORK/out.log")"
+gate $s true false true $s $k $k $k $s $s >/dev/null
+check "the table prints a skip nothing certifies" 1 "$(grep -cE '^test +skipped +SKIPPED WITHOUT A REASON$' "$WORK/out.log")"
+# What the gate reads is the result of the job itself, and a job that is not there is red.
+check "a needs that is not JSON is red" 1 "$(NEEDS_OVERRIDE='not json' gate $s true false true $s $s $s $s $s $s)"
+check "a needs with no entry for the tests is red" 1 \
+	"$(NEEDS_OVERRIDE='{"classify":{"result":"success","outputs":{"run":"true"}},"lint":{"result":"success"}}' gate $s true false true $s $s $s $s $s $s)"
+
+# A pull request into main promotes what develop holds: no plan narrows it. The
+# plan steps are run as shipped, with a git that records what it was asked.
+mkdir -p "$WORK/fake"
+cat >"$WORK/fake/git" <<'GIT'
+#!/usr/bin/env bash
+echo "git $*" >>"$GIT_LOG"
+exit 1
+GIT
+chmod +x "$WORK/fake/git"
+plan_step() { # <workflow> <job> <step id> <BASE_REF> -> the outputs, one line, and whether git was asked
+	python3 - "$HERE/.github/workflows/$1" "$2" "$3" >"$WORK/step.sh" <<'PY'
+import sys
+import yaml
+
+spec = yaml.safe_load(open(sys.argv[1]))
+step = next(s for s in spec["jobs"][sys.argv[2]]["steps"] if s.get("id") == sys.argv[3])
+print(step["run"])
+PY
+	: >"$WORK/gh-out"
+	: >"$WORK/git.log"
+	env PATH="$WORK/fake:$PATH" GIT_LOG="$WORK/git.log" GITHUB_OUTPUT="$WORK/gh-out" BASE_REF="$4" EVENT=pull_request \
+		BASE_SHA=base HEAD_SHA=head bash "$WORK/step.sh" >/dev/null 2>&1
+	printf '%s|git:%s' "$(paste -sd, "$WORK/gh-out")" "$(wc -l <"$WORK/git.log" | tr -d ' ')"
+}
+check "a pull request into main runs every lane, with no judge asked" \
+	"run=true,docs_only=false,ci_only=false|git:0" "$(plan_step reusable-rust-ci.yml classify decide main)"
+check "a pull request into main builds, with no judge asked" "build=true|git:0" "$(plan_step reusable-rust-ci.yml classify build main)"
+check "a pull request into develop asks the judge" "|git:1" "$(plan_step reusable-rust-ci.yml classify decide develop)"
+check "the build answer for a pull request into develop asks git" "build=true|git:1" "$(plan_step reusable-rust-ci.yml classify build develop)"
+check "the workflow lint runs for a pull request into main, with no judge asked" "run=true|git:0" "$(plan_step reusable-workflow-lint.yml workflow-lint decide main)"
+check "the workflow lint asks the judge for a pull request into develop" "|git:1" "$(plan_step reusable-workflow-lint.yml workflow-lint decide develop)"
+
 # The two older gates still carry the names the ruleset requires until it moves
 # to `rust / Gate`. A skip is a pass for them only when the caller switched the
 # check off or a plan that succeeded said so out loud.
@@ -191,7 +256,7 @@ gate = jobs["gate"]
 problems = []
 if gate.get("if") != "always()":
     problems.append("gate-if")
-if gate.get("name") != "Gate":
+if not str(gate.get("name")).startswith("Gate"):
     problems.append("gate-name")
 certified = [j for j in jobs if j not in ("gate", "extra-platforms-gate", "msrv-gate")]
 for job in certified:

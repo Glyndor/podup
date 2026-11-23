@@ -35,11 +35,13 @@ Reads: .github/workflows/*.yml, .github/workflows/*.yaml under the working
 directory. Symlinks are not followed: a caller escaping the filter through
 a symlinked workflow file is out of scope.
 """
-import glob
 import os
 import sys
 
 import yaml
+
+sys.path.insert(0, ".github/scripts/lib")
+import ci_yaml  # noqa: E402  (the one loader and enumerator; run from the repository root)
 
 # Same map of required-emitting reusables as the caller-if step in
 # .github/workflows/reusable-workflow-lint.yml. A change here must move
@@ -83,10 +85,7 @@ def yaml_scalar(value):
 
 
 def main():
-    files = sorted(set(
-        glob.glob(".github/workflows/*.yml")
-        + glob.glob(".github/workflows/*.yaml")
-    ))
+    files = ci_yaml.files(".")
 
     # First pass: read each reusable's declared `inputs.X.default`.
     # The map is `reusable-name -> {key: default}`. An unknown reusable
@@ -99,14 +98,12 @@ def main():
         if name not in REQUIRED_REUSABLES:
             continue
         try:
-            with open(path) as fh:
-                spec = yaml.safe_load(fh)
+            spec = ci_yaml.load(path)
         except yaml.YAMLError as e:
-            # Warn and skip; same shape as the other lint steps in this
-            # file. A misconfigured workflow is not this step's reason
-            # to fail the run.
-            print(f"::warning file={path}::skipped: YAML parse error: {e}")
-            continue
+            # A file the validator cannot read is a file it does not compare,
+            # and GitHub reads it all the same: that fails the run.
+            print(f"::error file={path}::YAML parse error: {e}")
+            sys.exit(1)
         if not isinstance(spec, dict):
             continue
         on = spec.get("on", spec.get(True))
@@ -136,11 +133,10 @@ def main():
         if name.startswith("reusable-"):
             continue
         try:
-            with open(path) as fh:
-                spec = yaml.safe_load(fh)
+            spec = ci_yaml.load(path)
         except yaml.YAMLError as e:
-            print(f"::warning file={path}::skipped: YAML parse error: {e}")
-            continue
+            print(f"::error file={path}::YAML parse error: {e}")
+            sys.exit(1)
         if not isinstance(spec, dict):
             continue
         jobs = spec.get("jobs") or {}

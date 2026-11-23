@@ -99,6 +99,7 @@ jobs:
           # GitHub built for this group (the range that will land on
           # develop). Other events (schedule, workflow_dispatch) leave both
           # empty, which the engine=true short-circuit below handles.
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
@@ -111,6 +112,12 @@ jobs:
               exit 0
               ;;
           esac
+          # A pull request into main boots the VM whatever the range says.
+          if [ "$BASE_REF" = main ]; then
+            echo "engine=true" >> "$GITHUB_OUTPUT"
+            echo "a pull request into main: the VM always boots"
+            exit 0
+          fi
           # Fail closed: a diff that cannot be read boots the VM.
           if ! changed="$(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA")"; then
             echo "engine=true" >> "$GITHUB_OUTPUT"
@@ -706,7 +713,14 @@ jobs:
           echo "GREEN: podup core PASSED on Podman $VER ($PASS tests >= baseline $BASELINE; $FAIL in the nested-virt-noisy subset)."
 
   podman-majors:
-    name: Supported Podman majors
+    # The name says which kind of run produced it: nothing for a pull request into
+    # `develop` and for the merge queue, `(promotion)` for a pull request into `main`,
+    # and the event in brackets for everything else (a push, a schedule). A required
+    # check is matched by name on a commit, so the push that lands on `develop` and
+    # the pull request that promotes the same commit into `main` must not be able to
+    # answer for each other: they get different names and the ruleset of each branch
+    # requires its own.
+    name: Supported Podman majors${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || github.event_name != 'pull_request' && github.event_name != 'merge_group' && format(' ({0})', github.event_name) || '' }}
     # A required status check is matched by name, and `podman-vm (6)` carries the
     # matrix value. The lane follows the newest Podman: when Podman 7 ships, `["6"]`
     # becomes `["7"]`, and on that pull request the name `podman-vm (6)` stops being

@@ -108,7 +108,7 @@ export JUDGE="$script"
 decide_case() { # <event> <paths> <engine>
 	local rc=0
 	: >"$WORK/output"
-	PATH="$WORK/bin:$PATH" EVENT="$1" BASE_SHA=base HEAD_SHA=head CHANGED="$2" \
+	PATH="$WORK/bin:$PATH" EVENT="$1" BASE_REF="${BASE_REF:-develop}" BASE_SHA=base HEAD_SHA=head CHANGED="$2" \
 		GITHUB_OUTPUT="$WORK/output" bash "$WORK/decide.sh" >"$WORK/log" 2>&1 || rc=$?
 	check "decide $1 $2 exits successfully" 0 "$rc"
 	check "decide $1 $2 result" "engine=$3" "$(cat "$WORK/output")"
@@ -120,6 +120,10 @@ decide_case merge_group .github/workflows/podman-lane.yml true
 decide_case schedule .github/dependabot.yml true
 decide_case workflow_dispatch bench/timeit/Cargo.lock true
 decide_case pull_request '' true
+# A pull request into main boots the VM whatever the range says.
+BASE_REF=main decide_case pull_request .github/dependabot.yml true
+BASE_REF=main decide_case pull_request README.md true
+BASE_REF=develop decide_case pull_request .github/dependabot.yml false
 DIFF_ERROR=1 decide_case pull_request .github/dependabot.yml true
 MISSING_HELPER=1 decide_case pull_request .github/dependabot.yml true
 BUMP_RC=0 decide_case pull_request $'Cargo.toml\nCargo.lock\ndebian/changelog' false

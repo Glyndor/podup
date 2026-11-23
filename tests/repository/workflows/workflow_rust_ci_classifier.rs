@@ -278,23 +278,21 @@ fn classify_exposes_the_decision_and_the_job_that_must_not_be_skipped_stays_whol
 #[test]
 fn the_governed_jobs_check_out_the_history_the_classifier_reads() {
 	let spec = reusable();
-	for id in ["classify"] {
-		let checkout = steps(&job(&spec, id))
-			.into_iter()
-			.find(|s| {
-				s["uses"]
-					.as_str()
-					.unwrap_or_default()
-					.starts_with("actions/checkout")
-			})
-			.unwrap_or_else(|| panic!("{id} checks the repository out"));
-		assert_eq!(
-			checkout["with"]["fetch-depth"].as_u64(),
-			Some(0),
-			"{id} does not fetch the history, so the classifier cannot read the \
-			 base commit or diff the range"
-		);
-	}
+	let checkout = steps(&job(&spec, "classify"))
+		.into_iter()
+		.find(|s| {
+			s["uses"]
+				.as_str()
+				.unwrap_or_default()
+				.starts_with("actions/checkout")
+		})
+		.unwrap_or_else(|| panic!("classify checks the repository out"));
+	assert_eq!(
+		checkout["with"]["fetch-depth"].as_u64(),
+		Some(0),
+		"classify does not fetch the history, so the classifier cannot read the \
+		 base commit or diff the range"
+	);
 }
 
 #[test]
@@ -386,7 +384,13 @@ fn msrv_and_doc_skip_only_on_an_explicit_false_from_the_plan() {
 fn the_gate_waits_for_every_job_and_every_suite_starts_when_the_plan_failed() {
 	let spec = reusable();
 	let gate = job(&spec, "gate");
-	assert_eq!(gate["name"].as_str(), Some("Gate"));
+	assert!(
+		gate["name"]
+			.as_str()
+			.unwrap_or_default()
+			.starts_with("Gate"),
+		"the gate keeps the name the ruleset requires, with the run kind after it"
+	);
 	assert_eq!(
 		gate["if"].as_str(),
 		Some("always()"),
