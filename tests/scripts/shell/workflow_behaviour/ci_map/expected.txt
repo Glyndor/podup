@@ -17,6 +17,7 @@
 .github/scripts/checks/check-planning-words.sh	C N N R N
 .github/scripts/checks/check-private-document-references.sh	C N N R N
 .github/scripts/checks/check-tooling-isolation.py	C N N R N
+.github/scripts/checks/check-write-token-jobs.py	C N N R N
 .github/scripts/checks/debian-ci-inputs.sh	C N B R N
 .github/scripts/checks/dependabot_security_watch.py	C N N R N
 .github/scripts/checks/folder-limit.sh	C N N R N
@@ -28,6 +29,7 @@
 .github/scripts/checks/rust-ci-inputs.sh	R N N R N
 .github/scripts/checks/signing-key-isolation.py	C N N R N
 .github/scripts/checks/workflow-lint-inputs.sh	C N N R N
+.github/scripts/ci/*	C B N R V
 .github/scripts/fedora_image/*	C B N R V
 .github/scripts/hardening/*	C B N R N
 .github/scripts/hygiene/*	C B N R N
@@ -57,6 +59,7 @@
 .github/workflows/release.yml	C B B R N
 .github/workflows/repository-health.yml	C B N R N
 .github/workflows/reusable-branch-health.yml	C N N R N
+.github/workflows/reusable-cancel-others.yml	C N N R N
 .github/workflows/reusable-dco.yml	C N N R N
 .github/workflows/reusable-dependabot-freshness.yml	C N N R N
 .github/workflows/reusable-installer-contract.yml	C N N R N
@@ -106,6 +109,7 @@ tests/scripts/shell/install/*	N N N R N
 tests/scripts/shell/suite_guards/*	N N N R N
 tests/scripts/shell/workflow_behaviour/binary-budget-paths.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/branch-health-conclusion.test.sh	N N N R N
+tests/scripts/shell/workflow_behaviour/cancel-others.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/ci-map.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/ci-wiring.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/ci_map/*	R N B R N
@@ -122,6 +126,7 @@ tests/scripts/shell/workflow_behaviour/rust-build-inputs.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/rust-ci-inputs.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/rust-gate.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/workflow-lint-inputs.test.sh	N N N R N
+tests/scripts/shell/workflow_behaviour/write-token-jobs.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-gate.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-least-privilege.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-wiring.test.sh	N N N R N

@@ -12,7 +12,7 @@ import os
 import sys
 
 R = "reusable-rust-ci.yml"
-IF_TEST = "    if: ${{ !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}\n    runs-on: ubuntu-latest\n    # Bound: worst of the last three successful runs on 2026-09-02 was 106s"
+IF_TEST = "    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}\n    runs-on: ubuntu-latest\n    # Bound: worst of the last three successful runs on 2026-09-02 was 106s"
 
 PLANTS = [
     # 1. The run: of two suites crossed.
@@ -25,11 +25,14 @@ PLANTS = [
      "if: ${{ inputs.extra-test-os != '[]' &&", "if: ${{ inputs.coverage-threshold > 0 &&"),
     # 3. A suite handed a fixed false.
     ("a fixed false on the Linux tests", R, IF_TEST, IF_TEST.replace(
-        "if: ${{ !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}", "if: false")),
+        "if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}", "if: false")),
     ("a fixed false on the Rust pipeline in its caller", "ci.yml", "  rust:\n", "  rust:\n    if: false\n"),
     ("a duplicate `if` on the Linux tests, which PyYAML's safe_load reads as the last one", R,
      "  test:\n    name: Test\n", "  test:\n    name: Test\n    if: true\n"),
     ("a duplicate key in the gate", R, "  gate:\n", "  gate:\n    runs-on: ubuntu-latest\n"),
+    ("the cancel job running the working tree's script instead of the base copy", "reusable-cancel-others.yml",
+     'bash "$RUNNER_TEMP/others.sh"', "bash .github/scripts/ci/cancel-others.sh"),
+    ("the layers no longer waiting for lint", R, "needs: [classify, lint]\n    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}", "needs: [classify]\n    if: ${{ !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}"),
     # 4. The plan variables of two suites crossed in the gate.
     ("the run and build answers crossed in the gate", R, "RUN=$(out classify run)", "RUN=$(out classify build)"),
     ("the switches of two suites crossed in the gate", R, 'judge msrv "$MSRV_ON"', 'judge msrv "$DOC_ON"'),

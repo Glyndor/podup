@@ -2,6 +2,15 @@
  "ci.yml": {
   "env": null,
   "jobs": {
+   "cancel-others": {
+    "if": "${{ failure() && github.event_name == 'pull_request' }}",
+    "needs": "rust",
+    "permissions": {
+     "actions": "write",
+     "contents": "read"
+    },
+    "uses": "./.github/workflows/reusable-cancel-others.yml"
+   },
    "rust": {
     "uses": "./.github/workflows/reusable-rust-ci.yml",
     "with": {
@@ -41,6 +50,18 @@
  "commit-hygiene.yml": {
   "env": null,
   "jobs": {
+   "cancel-others": {
+    "if": "${{ failure() && github.event_name == 'pull_request' }}",
+    "needs": [
+     "commit-identity",
+     "secret-scan"
+    ],
+    "permissions": {
+     "actions": "write",
+     "contents": "read"
+    },
+    "uses": "./.github/workflows/reusable-cancel-others.yml"
+   },
    "commit-identity": {
     "name": "commit identity",
     "permissions": {
@@ -89,6 +110,15 @@
  "dco.yml": {
   "env": null,
   "jobs": {
+   "cancel-others": {
+    "if": "${{ failure() && github.event_name == 'pull_request' }}",
+    "needs": "dco",
+    "permissions": {
+     "actions": "write",
+     "contents": "read"
+    },
+    "uses": "./.github/workflows/reusable-cancel-others.yml"
+   },
    "dco": {
     "uses": "./.github/workflows/reusable-dco.yml"
    }
@@ -113,6 +143,15 @@
  "line-limit.yml": {
   "env": null,
   "jobs": {
+   "cancel-others": {
+    "if": "${{ failure() && github.event_name == 'pull_request' }}",
+    "needs": "line-limit",
+    "permissions": {
+     "actions": "write",
+     "contents": "read"
+    },
+    "uses": "./.github/workflows/reusable-cancel-others.yml"
+   },
    "line-limit": {
     "uses": "./.github/workflows/reusable-line-limit.yml",
     "with": {
@@ -163,6 +202,15 @@
  "podman-lane.yml": {
   "env": null,
   "jobs": {
+   "cancel-others": {
+    "if": "${{ failure() && github.event_name == 'pull_request' }}",
+    "needs": "podman-majors",
+    "permissions": {
+     "actions": "write",
+     "contents": "read"
+    },
+    "uses": "./.github/workflows/reusable-cancel-others.yml"
+   },
    "decide": {
     "name": "Decide whether the VM has anything to look at",
     "runs-on": "ubuntu-latest",
@@ -253,6 +301,34 @@
   "permissions": {
    "contents": "read"
   }
+ },
+ "reusable-cancel-others.yml": {
+  "env": null,
+  "jobs": {
+   "cancel": {
+    "if": "github.event_name == 'pull_request'",
+    "name": "cancel the other runs of this commit",
+    "permissions": {
+     "actions": "write",
+     "contents": "read"
+    },
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": null,
+      "sha": "d52a24e6b943d929"
+     },
+     {
+      "name": "Run the base commit's copy of the cancel script",
+      "sha": "466c469c207f224b"
+     }
+    ]
+   }
+  },
+  "on": {
+   "workflow_call": null
+  },
+  "permissions": {}
  },
  "reusable-dco.yml": {
   "env": null,
@@ -380,9 +456,13 @@
     ]
    },
    "coverage": {
-    "if": "${{ inputs.coverage-threshold > 0 && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}",
+    "if": "${{ inputs.coverage-threshold > 0 && !cancelled() && (github.event_name != 'pull_request' || (needs.lint.result != 'failure' && needs.test.result != 'failure')) && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}",
     "name": "Coverage",
-    "needs": "classify",
+    "needs": [
+     "classify",
+     "lint",
+     "test"
+    ],
     "runs-on": "ubuntu-latest",
     "steps": [
      {
@@ -412,9 +492,12 @@
     ]
    },
    "doc": {
-    "if": "${{ !cancelled() && inputs.doc-warnings && (needs.classify.result != 'success' || needs.classify.outputs.build != 'false') }}",
+    "if": "${{ !cancelled() && inputs.doc-warnings && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.build != 'false') }}",
     "name": "Doc warnings",
-    "needs": "classify",
+    "needs": [
+     "classify",
+     "lint"
+    ],
     "runs-on": "ubuntu-latest",
     "steps": [
      {
@@ -517,9 +600,12 @@
     ]
    },
    "msrv": {
-    "if": "${{ !cancelled() && inputs.msrv != '' && (needs.classify.result != 'success' || needs.classify.outputs.build != 'false') }}",
+    "if": "${{ !cancelled() && inputs.msrv != '' && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.build != 'false') }}",
     "name": "MSRV (${{ inputs.msrv }})",
-    "needs": "classify",
+    "needs": [
+     "classify",
+     "lint"
+    ],
     "runs-on": "ubuntu-latest",
     "steps": [
      {
@@ -598,9 +684,12 @@
     ]
    },
    "test": {
-    "if": "${{ !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}",
+    "if": "${{ !cancelled() && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}",
     "name": "Test",
-    "needs": "classify",
+    "needs": [
+     "classify",
+     "lint"
+    ],
     "runs-on": "ubuntu-latest",
     "steps": [
      {
@@ -626,9 +715,13 @@
     ]
    },
    "test-extra": {
-    "if": "${{ inputs.extra-test-os != '[]' && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}",
+    "if": "${{ inputs.extra-test-os != '[]' && !cancelled() && (github.event_name != 'pull_request' || (needs.lint.result != 'failure' && needs.test.result != 'failure')) && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}",
     "name": "Test (${{ matrix.os }})",
-    "needs": "classify",
+    "needs": [
+     "classify",
+     "lint",
+     "test"
+    ],
     "runs-on": "${{ matrix.os }}",
     "steps": [
      {
@@ -649,7 +742,7 @@
      }
     ],
     "strategy": {
-     "fail-fast": false,
+     "fail-fast": true,
      "matrix": {
       "os": "${{ fromJSON(inputs.extra-test-os) }}"
      }
@@ -734,6 +827,15 @@
  "workflow-lint.yml": {
   "env": null,
   "jobs": {
+   "cancel-others": {
+    "if": "${{ failure() && github.event_name == 'pull_request' }}",
+    "needs": "workflow-lint",
+    "permissions": {
+     "actions": "write",
+     "contents": "read"
+    },
+    "uses": "./.github/workflows/reusable-cancel-others.yml"
+   },
    "workflow-lint": {
     "uses": "./.github/workflows/reusable-workflow-lint.yml"
    }

@@ -18,6 +18,7 @@
 .github/scripts/checks/check-planning-words.sh	debian-build,lint-shell
 .github/scripts/checks/check-private-document-references.sh	debian-build,lint-shell
 .github/scripts/checks/check-tooling-isolation.py	debian-build,lint-shell
+.github/scripts/checks/check-write-token-jobs.py	debian-build,lint-shell
 .github/scripts/checks/debian-ci-inputs.sh	debian-build,lint-shell
 .github/scripts/checks/dependabot_security_watch.py	debian-build,dependabot-security-watch,lint-shell
 .github/scripts/checks/folder-limit.sh	debian-build,lint-shell
@@ -29,6 +30,7 @@
 .github/scripts/checks/rust-ci-inputs.sh	debian-build,lint-shell
 .github/scripts/checks/signing-key-isolation.py	debian-build,lint-shell
 .github/scripts/checks/workflow-lint-inputs.sh	debian-build,lint-shell
+.github/scripts/ci/*	debian-build,lint-shell
 .github/scripts/fedora_image/*	debian-build,lint-shell
 .github/scripts/hardening/check-hardening-macos.sh	debian-build,lint-shell
 .github/scripts/hardening/check-hardening.ps1	debian-build,lint-powershell
@@ -66,6 +68,7 @@
 .github/workflows/release.yml	asset-contract,debian-build,lint-shell,linux-hardening,windows-arm64
 .github/workflows/repository-health.yml	lint-shell
 .github/workflows/reusable-branch-health.yml	lint-shell
+.github/workflows/reusable-cancel-others.yml	lint-shell
 .github/workflows/reusable-dco.yml	lint-shell
 .github/workflows/reusable-dependabot-freshness.yml	lint-shell
 .github/workflows/reusable-installer-contract.yml	asset-contract
@@ -219,6 +222,7 @@ tests/scripts/shell/install/*	debian-build,lint-shell
 tests/scripts/shell/suite_guards/*	debian-build,lint-shell
 tests/scripts/shell/workflow_behaviour/binary-budget-paths.test.sh	debian-build,lint-shell
 tests/scripts/shell/workflow_behaviour/branch-health-conclusion.test.sh	debian-build,lint-shell
+tests/scripts/shell/workflow_behaviour/cancel-others.test.sh	debian-build,lint-shell
 tests/scripts/shell/workflow_behaviour/ci-map.test.sh	debian-build,lint-shell
 tests/scripts/shell/workflow_behaviour/ci-wiring.test.sh	debian-build,lint-shell
 tests/scripts/shell/workflow_behaviour/ci_map/*	debian-build,lint-shell
@@ -235,4 +239,5 @@ tests/scripts/shell/workflow_behaviour/rust-build-inputs.test.sh	debian-build,li
 tests/scripts/shell/workflow_behaviour/rust-ci-inputs.test.sh	debian-build,lint-shell
 tests/scripts/shell/workflow_behaviour/rust-gate.test.sh	debian-build,lint-shell
 tests/scripts/shell/workflow_behaviour/workflow-lint-inputs.test.sh	debian-build,lint-shell
+tests/scripts/shell/workflow_behaviour/write-token-jobs.test.sh	debian-build,lint-shell
 tests/scripts/shell/workflow_lint/*	debian-build,lint-shell

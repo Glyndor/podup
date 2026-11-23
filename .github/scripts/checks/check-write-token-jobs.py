@@ -31,7 +31,6 @@ permission now.
 
 Exit 0 when clean, 1 on any violation.
 """
-import glob
 import hashlib
 import json
 import os
@@ -39,6 +38,9 @@ import re
 import sys
 
 import yaml
+
+sys.path.insert(0, ".github/scripts/lib")
+import ci_yaml  # noqa: E402  (the one loader and enumerator; run from the repository root)
 
 WORKFLOWS = ".github/workflows"
 
@@ -70,8 +72,7 @@ SHA_RE = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
 
 
 def load(path):
-    with open(path) as fh:
-        spec = yaml.safe_load(fh)
+    spec = ci_yaml.load(path)
     return spec if isinstance(spec, dict) else {}
 
 
@@ -112,8 +113,12 @@ def effective(job, spec, inherited):
 
 
 def main():
-    files = sorted(glob.glob(f"{WORKFLOWS}/*.yml") + glob.glob(f"{WORKFLOWS}/*.yaml"))
-    specs = {os.path.basename(f): load(f) for f in files}
+    files = ci_yaml.workflows_in(WORKFLOWS)
+    try:
+        specs = {os.path.basename(f): load(f) for f in files}
+    except yaml.YAMLError as e:
+        print(f"::error::YAML parse error: {e}")
+        return 1
     errors = []
 
     def err(name, job, msg):

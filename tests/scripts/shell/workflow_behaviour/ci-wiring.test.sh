@@ -96,7 +96,9 @@ done
 
 # The messages say where.
 fresh
-python3 "$sabotages" 16 "$WORK/tree"
+j=0
+while [ "$(python3 "$sabotages" --describe "$j")" != "coverage turned off in the caller" ]; do j=$((j + 1)); done
+python3 "$sabotages" "$j" "$WORK/tree"
 verdict >/dev/null
 check "the message names the input that changed" 1 "$(mentions 'coverage-threshold')"
 

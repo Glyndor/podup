@@ -33,8 +33,9 @@ check() { # <description> <expected> <actual>
 # fresh: a copy of the real workflows to plant against.
 fresh() {
 	rm -rf "$WORK/tree"
-	mkdir -p "$WORK/tree/.github"
+	mkdir -p "$WORK/tree/.github/scripts"
 	cp -r "$HERE/.github/workflows" "$WORK/tree/.github/workflows"
+	cp -r "$HERE/.github/scripts/lib" "$WORK/tree/.github/scripts/lib"
 }
 # verdict: the exit status of the rule over the planted tree.
 verdict() {
@@ -181,6 +182,12 @@ check "actions: read is not the permission" 0 "$(verdict)"
 
 fresh
 check "the job callers of the cancel workflow are accepted with the permission" 0 "$(verdict)"
+fresh
+printf 'name: dup\non:\n  push:\non:\n  pull_request:\n' >"$WORK/tree/.github/workflows/dup.yml"
+check "a workflow with a duplicate key fails the rule" 1 "$(verdict)"
+fresh
+printf 'name: [\n' >"$WORK/tree/.github/workflows/broken.yaml"
+check "a .yaml workflow that does not parse fails the rule" 1 "$(verdict)"
 check "six workflows call the cancel workflow" 6 \
 	"$(cat "$WORK"/tree/.github/workflows/*.yml | grep -c 'uses: ./.github/workflows/reusable-cancel-others.yml')"
 
