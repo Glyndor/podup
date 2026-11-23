@@ -2,3 +2,4 @@
 
 pub(in crate::backends::quadlet::tests) mod network_isolation;
 pub(in crate::backends::quadlet::tests) mod network_volume;
+pub(in crate::backends::quadlet::tests) mod volume_options;
