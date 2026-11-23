@@ -8,9 +8,12 @@ on:
 
 permissions: {}
 
+# Never cancelled: this is the one required check that runs again when the title, the body or the base of a
+# pull request is edited (it judges the base), and a run cancelled by the one that follows would leave a red
+# check under the same required name. It is one job of a few seconds.
 concurrency:
   group: main-guard-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 jobs:
   develop-only:

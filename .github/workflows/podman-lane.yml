@@ -30,7 +30,7 @@ on:
   # gates the merge. The internal suite distinguishes nested-virt flakes from real
   # failures and retries a transient once.
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize]
     branches: [main, develop]
   # Required check on develop (ruleset 17287557): `Supported Podman majors`
   # is matched by name, and the queue fires `merge_group` on a temporary
