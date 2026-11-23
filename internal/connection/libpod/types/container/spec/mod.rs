@@ -326,6 +326,13 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub image_os: Option<String>,
 
+	/// Target image variant (e.g. `"v7"`). Podman picks the instance of a
+	/// manifest list by OS, architecture and variant together; without it a
+	/// list with several variants of one architecture yields the instance that
+	/// suits the host, not the one the file names.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub image_variant: Option<String>,
+
 	// Volume image handling
 	/// How image-defined `VOLUME`s are handled (e.g. `"anonymous"`, `"tmpfs"`,
 	/// `"ignore"`).

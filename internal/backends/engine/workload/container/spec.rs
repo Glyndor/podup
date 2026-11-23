@@ -247,6 +247,13 @@ pub(crate) fn build_spec_generator(
 		links,
 		image_os,
 		image_arch,
+		// The variant (`v7` of `linux/arm/v7`) is read from the service's own
+		// `platform:` rather than carried in `image_platform`: it is the third
+		// part of the string whose first two are above.
+		image_variant: service
+			.platform
+			.as_deref()
+			.and_then(|p| crate::backends::engine::images::platform::Platform::parse(p).variant),
 		storage_opts,
 		..Default::default()
 	})

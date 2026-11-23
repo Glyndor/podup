@@ -81,7 +81,8 @@ async fn create_sends_every_compose_field_in_the_spec_generator() {
 	assert_eq!(body["restart_tries"], 5);
 	assert_eq!(body["oci_runtime"], "crun");
 	assert_eq!(body["image_os"], "linux");
-	assert_eq!(body["image_arch"], "amd64");
+	assert_eq!(body["image_arch"], "arm");
+	assert_eq!(body["image_variant"], "v7");
 	assert_eq!(body["oom_score_adj"], -500);
 	// (shm_size asserted in the spec block above with an i64 cast on the
 	// literal so a 32-bit compile does not trip on `64 * 1024 * 1024`.)
