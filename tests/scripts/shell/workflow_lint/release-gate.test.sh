@@ -78,6 +78,15 @@ bump(spec['jobs'])"
 refused "the first action of the sign job renamed under the same commit" "spec['jobs']['sign']['steps'][0].update(uses='actions/cache@3d3c42e5aac5ba805825da76410c181273ba90b1')"
 refused "the first action of the release job pinned to a tag" "spec['jobs']['release']['steps'][0].update(uses='actions/checkout@v7')"
 refused "the first action of the release job with its pin removed" "spec['jobs']['release']['steps'][0].update(uses='actions/checkout')"
+# The jobs that sign the packages and seal the set are held whole as soon as they exist: a job of
+# either name that the hash list does not hold is refused, a job of another name that takes the
+# key is refused, and none of them may mint a token.
+KEYJOB="{'runs-on': 'ubuntu-latest', 'steps': [{'run': 'true', 'env': KEY}]}"
+refused "a sign-packages job that the pinned list does not hold" "spec['jobs']['sign-packages'] = $KEYJOB"
+refused "a seal job that the pinned list does not hold" "spec['jobs']['seal'] = $KEYJOB"
+refused "a packager job that takes the key" "spec['jobs']['packager'] = $KEYJOB"
+refused "a seal job that can mint a token" "spec['jobs']['seal'] = {'runs-on': 'x', 'permissions': {'id-token': 'write'}, 'steps': [{'run': 'true'}]}"
+refused "a sign-packages job with the key at the workflow level of the job env" "spec['jobs']['sign-packages'] = {'runs-on': 'x', 'env': KEY, 'steps': [{'run': 'true'}]}"
 check "the failure says which job to review and how to regenerate" 1 "$(run_gate "step('sign', 'Sign binary')['name'] = 'x'" >/dev/null; grep -c 'job `sign` changed: review the whole diff.*--print-hashes' "$WORK/out")"
 
 # --- every field of the three jobs, generated from the workflow ---------------------------
