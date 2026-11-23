@@ -310,6 +310,8 @@ mod pod_dns;
 mod pod_exit_policy;
 #[path = "engine_integration/workload/pod/pod_fixtures.rs"]
 mod pod_fixtures;
+#[path = "engine_integration/workload/pod/pod_network_options.rs"]
+mod pod_network_options;
 // pasta pods are a Linux feature, and the helpers it uses are Unix-only.
 #[cfg(unix)]
 #[path = "engine_integration/workload/pod/pod_on_pasta.rs"]

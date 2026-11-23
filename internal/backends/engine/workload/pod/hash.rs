@@ -91,6 +91,11 @@ pub(crate) fn pod_config_hash(parsed_ports: &[Vec<ParsedPort>], file: &ComposeFi
 		serde_json::to_value(super::pod_shm_size(file).bytes).expect("shm_size serialises");
 	hasher.update(b"shm_size");
 	hash_canon(&mut hasher, &shm_size_value);
+	// The interface names and driver options the pod attaches its networks with
+	// are fixed at create time as well. They enter the hash only when there are
+	// some, so a project without them keeps the hash its pod already carries and
+	// is not recreated by an upgrade.
+	super::network_options::hash_options(&mut hasher, file);
 
 	hasher
 		.finalize()

@@ -28,7 +28,11 @@ impl Engine {
 		// The pod's shared-memory mount is shared by every member, so a
 		// disagreement has to be visible even when the existing pod is
 		// reused without being recreated.
-		if let Some(warning) = super::pod_shm_size(file).warning {
+		// What a service asked of a network that the pod cannot give it is said on
+		// every `up` for the same reason.
+		let shm = super::pod_shm_size(file).warning;
+		let options = super::pod_network_options_of(file, &self.project).warnings;
+		for warning in shm.into_iter().chain(options) {
 			tracing::warn!("{warning}");
 		}
 		let desired_hash = super::pod_config_hash(parsed_ports, file);

@@ -123,3 +123,60 @@ services:
 		"the engine must inspect the pod to read its hash before deciding; requests: {requests:?}"
 	);
 }
+
+/// The hash `podup` put on a pod before the network options existed, for the
+/// project in the test below (computed by the code of `develop` at 5182503d, and
+/// by hand from its definition: SHA-256 over the tag and the canonical JSON of
+/// ports, networks, hosts, user namespace, network mode and shared memory). A
+/// pod created by that release must be reused, not recreated, by a build that
+/// knows about network options when the file asks for none.
+const HASH_FROM_BEFORE_NETWORK_OPTIONS: &str =
+	"e4c5d2b3ca09445ce5d9d395637691b8eae2acd68f4b7ec9a4351e39d7a69d07";
+
+const PROJECT_WITHOUT_OPTIONS: &str = r#"
+x-podman-pod: true
+services:
+  a:
+    image: nginx
+    networks: [n]
+  b:
+    image: nginx
+    networks: [n]
+networks:
+  n: {}
+"#;
+
+#[test]
+fn a_project_without_network_options_keeps_the_hash_an_older_pod_carries() {
+	let file = parse_str(PROJECT_WITHOUT_OPTIONS).unwrap();
+	let ports = vec![Vec::new(), Vec::new()];
+	assert_eq!(
+		crate::engine::pod::pod_config_hash(&ports, &file),
+		HASH_FROM_BEFORE_NETWORK_OPTIONS
+	);
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn a_pod_made_before_the_network_options_is_not_recreated() {
+	let file = parse_str(PROJECT_WITHOUT_OPTIONS).unwrap();
+	let fake = pod_up_fake_with_existing(Some(HASH_FROM_BEFORE_NETWORK_OPTIONS));
+	let engine = engine_for(&fake, "proj");
+	engine.up(&file).await.expect("up must succeed");
+
+	let requests = fake.requests.lock().unwrap().clone();
+	assert!(
+		!requests
+			.iter()
+			.any(|r| r.starts_with("DELETE") && r.contains("/pods/proj")),
+		"the pod was removed: {requests:?}"
+	);
+	assert_eq!(
+		requests
+			.iter()
+			.filter(|r| r.starts_with("POST") && r.contains("/pods/create"))
+			.count(),
+		0,
+		"the pod was created again: {requests:?}"
+	);
+}
