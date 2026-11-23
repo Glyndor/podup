@@ -9,7 +9,7 @@ mod scale_hash_tests;
 mod signals;
 mod volumes;
 
-pub(crate) use environment::effective_env;
+pub(crate) use environment::{effective_env, unresolved_env_keys};
 pub(crate) use hash::config_hash;
 pub(super) use links::{resolve_links, resolve_volumes_from};
 pub(super) use signals::resolve_stop_signal;

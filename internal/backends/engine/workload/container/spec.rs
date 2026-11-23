@@ -176,6 +176,7 @@ pub(crate) fn build_spec_generator(
 		},
 		command,
 		entrypoint,
+		unsetenv: super::resolve::unresolved_env_keys(service, &env),
 		env,
 		terminal: service.tty,
 		stdin: service.stdin_open,
