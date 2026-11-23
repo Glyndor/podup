@@ -58,7 +58,7 @@ CI is split by responsibility rather than gathered in one file:
 
 | file | what fails there |
 |---|---|
-| `ci.yml` | the rustfmt / clippy / test / coverage / MSRV gates |
+| `ci.yml` | one required check, `rust / Gate`, which reads the result of every rustfmt / clippy / test / coverage / MSRV / doc suite and certifies each skip; the suites report their own checks but do not block on their own |
 | `repository-health.yml` | the advisory audits about the repository rather than about a change: the freshness of the scheduled workflows, the health of `main` and `develop`, and whether Dependabot has spoken recently. They run on protected-branch pushes, on a daily schedule and on demand, and never on a pull request |
 | `lint-shell.yml` | shellcheck and the shell test suite |
 | `lint-powershell.yml` | PSScriptAnalyzer on `install.ps1` |

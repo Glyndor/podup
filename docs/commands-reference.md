@@ -46,6 +46,8 @@ The `.container` unit carries `ipc:`, `pid:`, `uts:` and `cgroup:` as `PodmanArg
 
 The export reports every compose field it cannot carry and skips it: `tty`, `stdin_open`, `blkio_config`, `device_cgroup_rules`, `storage_opt`, `links`, `external_links`, `domainname`, `cpu_rt_runtime`, `cpu_rt_period`, `cpu_count`, `cpu_percent`, `attach`, `develop`, `credential_spec`, `isolation`, `provider`, `use_api_socket`, `mac_address`, `cgroup_parent`, `configs`, `volumes_from`, `profiles`, `pre_start`, `post_start` and `pre_stop`. A `scale:` above one replica is ignored because Quadlet emits one container per service.
 
+Three more cases are reported and not carried: a `network_mode` other than `host`, `none`, `pasta`, `slirp4netns`, `service:<name>` and `container:<name>`; an `env_file` entry marked `required: false`, since `podman run --env-file` is fatal on a missing file; and a `depends_on` condition Quadlet cannot enforce, which is `service_healthy` on a service with no healthcheck and `service_completed_successfully`. Start ordering is still written for them.
+
 In pod mode, most shared-field warnings use `x-podman-pod: <field>: <reason>; the value stays on each container`. Reasons include service disagreement, empty or blank DNS entries, and static pod addresses without exactly one declared network. `shm_size` is different: its warning uses `x-podman-pod: shm_size: services disagree; the pod uses <bytes> bytes (<services>)`, because the largest declared size still moves to the pod. See the [pod field mapping](docker-migration.md#pod-mode-x-podman-pod-true).
 
 | Flag | Description | Default |

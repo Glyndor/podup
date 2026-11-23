@@ -131,7 +131,7 @@ running them.
 | [Security model](docs/security-model.md) and [threat model](docs/threat-model.md) | What podup protects and what it assumes |
 | [Self-update](docs/self-update.md) | How `podup update` verifies a release |
 | [Debian packaging](docs/debian-packaging.md) | The apt package and its update policy |
-| [Benchmarks](docs/benchmarks.md) | Memory and latency against docker-compose and podman-compose, measured on podup 5.10.8 and Podman 5.7.0, with method and limits |
+| [Benchmarks](docs/benchmarks.md) | Memory and latency against docker-compose and podman-compose, measured on podup 5.10.8 and Podman 5.7.0 (below the 6.2.0 floor podup now requires), with method and limits |
 | [Contributing](CONTRIBUTING.md) | Building from source and the contribution flow |
 
 ## License

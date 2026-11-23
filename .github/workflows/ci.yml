@@ -35,8 +35,9 @@ jobs:
     with:
       # Each entry here becomes its own check name: `rust / Test (macos-latest)`
       # and `rust / Test (windows-latest)`. Editing this list changes the names
-      # emitted while the ruleset still requires the old ones, so the PR
-      # carrying the edit blocks itself.
+      # emitted. The pull request that edits it is not blocked, because the
+      # ruleset requires `rust / Gate`, whose name carries no value and which
+      # reads the result of each suite.
       extra-test-os: "[\"macos-latest\", \"windows-latest\"]"
       # Measured against the WHOLE crate, deliberately: an exclusion list would leave
       # part of the code with no gate at all. This job runs `--lib --bins` with no
@@ -48,8 +49,9 @@ jobs:
       # production file changes the denominator. #1696.
       coverage-threshold: 76
       # This number is inside the check name `rust / MSRV (1.88)`. Bumping it
-      # emits `rust / MSRV (<new>)` while the ruleset still requires the old
-      # string, so the PR carrying the bump blocks itself.
+      # emits `rust / MSRV (<new>)`; the ruleset requires `rust / Gate`, whose
+      # name does not change, so the pull request carrying the bump is not
+      # blocked.
       msrv: "1.88"
       # `cargo publish --dry-run`, and podup is no longer published (#1606).
       package-check: false

@@ -25,12 +25,12 @@ on:
       coverage-threshold:
         description: Minimum line coverage percentage (0 disables the gate)
         type: number
-        # Pinned: a caller that passes 0 drops the coverage gate while
-        # the ruleset still requires `rust / Coverage`. The reusable
-        # carries the configured threshold here so callers can use it
-        # by omission; a PR that wants to lower it must move this
-        # default on the reusable's own diff, where the ruleset's
-        # check name stays stable by definition.
+        # Pinned: a caller that passes 0 drops the coverage gate, and
+        # `rust / Gate` would then certify the suite as switched off. The
+        # reusable carries the configured threshold here so callers can
+        # use it by omission; a PR that wants to lower it must move this
+        # default on the reusable's own diff, where the required check
+        # name stays stable by definition.
         default: 76
       coverage-ignore-regex:
         description: Regex of file paths to exclude from coverage (e.g. code covered only by a separate DB integration job)
@@ -43,10 +43,11 @@ on:
       extra-test-os:
         description: JSON array of extra runner images to also run tests on (e.g. '["macos-latest"]')
         type: string
-        # Pinned: an empty default disables the Extra platforms gate
-        # while the ruleset still requires it. The configured array
-        # lives here so callers omit `with:`; a PR that wants to
-        # drop platforms moves this default on the reusable's diff.
+        # Pinned: an empty default disables the Extra platforms suite,
+        # which `rust / Gate` would then certify as switched off. The
+        # configured array lives here so callers omit `with:`; a PR that
+        # wants to drop platforms moves this default on the reusable's
+        # diff.
         default: "[\"macos-latest\", \"windows-latest\"]"
       podman:
         description: Start rootless Podman socket before running the coverage job (ubuntu-latest only)
@@ -55,12 +56,12 @@ on:
       msrv:
         description: Minimum supported Rust version to verify a --locked build against (empty disables the check)
         type: string
-        # Pinned: an empty default disables the MSRV job while the
-        # ruleset still requires `rust / MSRV` and the gated name
-        # `rust / MSRV (<version>)`. The configured value lives here
-        # so callers omit `with:`; a PR that wants a different MSRV
-        # moves this default on the reusable's diff, where the gate
-        # name stays stable by definition.
+        # Pinned: an empty default disables the MSRV job, which
+        # `rust / Gate` would then certify as switched off. The
+        # configured value lives here so callers omit `with:`; a PR that
+        # wants a different MSRV moves this default on the reusable's
+        # diff, where the required check name `rust / Gate` stays stable
+        # by definition.
         default: "1.88"
       package-check:
         description: Run cargo publish --dry-run on PRs to catch packaging breakage before tagging
@@ -78,9 +79,9 @@ on:
         description: Build the docs with -D warnings so broken doc links fail the build
         type: boolean
         # Pinned: a caller that passes `false` disables the Doc
-        # warnings gate while the ruleset still requires
-        # `rust / Doc warnings`. The configured value lives here so
-        # callers omit `with:`.
+        # warnings suite, which `rust / Gate` would then certify as
+        # switched off. The configured value lives here so callers
+        # omit `with:`.
         default: true
       # The Debian package is built from a DIFFERENT crate than the one
       # `--all-features` compiles: debian/rules pins
@@ -468,7 +469,7 @@ jobs:
     # The coverage gate measures the crate, and a documentation-only range
     # changes no line of it: the gate would read the same number it read
     # yesterday. The job is skipped, and a job skipped by its own `if:`
-    # reports `skipped`, which the required check `rust / Coverage` accepts.
+    # reports `skipped`, which `rust / Gate` certifies when the plan says so.
     if: ${{ inputs.coverage-threshold > 0 && !cancelled() && (github.event_name != 'pull_request' || (needs.lint.result != 'failure' && needs.test.result != 'failure')) && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 166s. Ten times that, rounded up, never under ten
