@@ -18,7 +18,6 @@
 .github/scripts/checks/check-planning-words.sh	debian-build,lint-shell
 .github/scripts/checks/check-private-document-references.sh	debian-build,lint-shell
 .github/scripts/checks/check-tooling-isolation.py	debian-build,lint-shell
-.github/scripts/checks/check-write-token-jobs.py	debian-build,lint-shell
 .github/scripts/checks/debian-ci-inputs.sh	debian-build,lint-shell
 .github/scripts/checks/dependabot_security_watch.py	debian-build,dependabot-security-watch,lint-shell
 .github/scripts/checks/folder-limit.sh	debian-build,lint-shell

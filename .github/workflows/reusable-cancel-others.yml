@@ -19,7 +19,7 @@ name: Cancel the other runs of a failed commit (reusable)
 # What it cancels, and what it never does, is written in the script itself and
 # held by tests/scripts/shell/workflow_behaviour/cancel-others.test.sh. The rule
 # that holds the permission to exactly these steps is
-# .github/scripts/checks/check-write-token-jobs.py.
+# .github/scripts/ci/check-write-token-jobs.py.
 
 on:
   workflow_call:

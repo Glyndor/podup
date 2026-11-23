@@ -12,7 +12,7 @@
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-checker="$HERE/.github/scripts/checks/check-write-token-jobs.py"
+checker="$HERE/.github/scripts/ci/check-write-token-jobs.py"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 

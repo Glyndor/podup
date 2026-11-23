@@ -17,6 +17,7 @@ on:
       - main
       - develop
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     branches:
       - main
       - develop

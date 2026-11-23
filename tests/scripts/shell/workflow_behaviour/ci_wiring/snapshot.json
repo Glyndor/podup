@@ -34,6 +34,12 @@
     "branches": [
      "main",
      "develop"
+    ],
+    "types": [
+     "opened",
+     "synchronize",
+     "reopened",
+     "edited"
     ]
    },
    "push": {
@@ -133,6 +139,12 @@
     "branches": [
      "main",
      "develop"
+    ],
+    "types": [
+     "opened",
+     "synchronize",
+     "reopened",
+     "edited"
     ]
    }
   },
@@ -170,6 +182,12 @@
     "branches": [
      "main",
      "develop"
+    ],
+    "types": [
+     "opened",
+     "synchronize",
+     "reopened",
+     "edited"
     ]
    },
    "push": {
@@ -194,6 +212,12 @@
    "pull_request": {
     "branches": [
      "main"
+    ],
+    "types": [
+     "opened",
+     "synchronize",
+     "reopened",
+     "edited"
     ]
    }
   },
@@ -221,13 +245,13 @@
      },
      {
       "name": "List the changed files against the base",
-      "sha": "c0e72debd43d9c37"
+      "sha": "eb10bb057d6a1cc4"
      }
     ]
    },
    "podman-majors": {
     "if": "always()",
-    "name": "Supported Podman majors${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || github.event_name != 'pull_request' && github.event_name != 'merge_group' && format(' ({0})', github.event_name) || '' }}",
+    "name": "Supported Podman majors${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
     "needs": [
      "decide",
      "podman-vm"
@@ -290,7 +314,18 @@
      "checks_requested"
     ]
    },
-   "pull_request": null,
+   "pull_request": {
+    "branches": [
+     "main",
+     "develop"
+    ],
+    "types": [
+     "opened",
+     "synchronize",
+     "reopened",
+     "edited"
+    ]
+   },
    "schedule": [
     {
      "cron": "0 9 * * *"
@@ -334,7 +369,7 @@
   "env": null,
   "jobs": {
    "dco": {
-    "name": "Signed-off-by present on every commit${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || github.event_name != 'pull_request' && github.event_name != 'merge_group' && format(' ({0})', github.event_name) || '' }}",
+    "name": "Signed-off-by present on every commit${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
     "runs-on": "ubuntu-latest",
     "steps": [
      {
@@ -363,7 +398,7 @@
   "env": null,
   "jobs": {
    "line-limit": {
-    "name": "line limit${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || github.event_name != 'pull_request' && github.event_name != 'merge_group' && format(' ({0})', github.event_name) || '' }}",
+    "name": "line limit${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
     "runs-on": "ubuntu-latest",
     "steps": [
      {
@@ -447,11 +482,11 @@
      },
      {
       "name": "Decide whether the Rust lanes must run",
-      "sha": "5082530235612ff5"
+      "sha": "11c0dd1fd775f020"
      },
      {
       "name": "Decide whether the root build inputs changed",
-      "sha": "1bd2a6140b8e10e3"
+      "sha": "62d358a5610c5b3d"
      }
     ]
    },
@@ -535,7 +570,7 @@
    },
    "gate": {
     "if": "always()",
-    "name": "Gate${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || github.event_name != 'pull_request' && github.event_name != 'merge_group' && format(' ({0})', github.event_name) || '' }}",
+    "name": "Gate${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
     "needs": [
      "classify",
      "lint",
@@ -551,7 +586,7 @@
     "steps": [
      {
       "name": "Certify the plan and every skip",
-      "sha": "2057192099bfa484"
+      "sha": "b55bf627dcb8fccf"
      }
     ]
    },
@@ -850,6 +885,12 @@
     "branches": [
      "main",
      "develop"
+    ],
+    "types": [
+     "opened",
+     "synchronize",
+     "reopened",
+     "edited"
     ]
    },
    "push": {

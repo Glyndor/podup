@@ -3,7 +3,9 @@ name: CI
 on:
   push:
     branches: [main, develop]
+  # `edited` is there so that changing the base of a pull request runs the plan again.
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     branches: [main, develop]
   # The `rust` job is required on develop and the ruleset matches the check
   # name GitHub reports. In a merge queue the event is `merge_group` on a

@@ -28,6 +28,8 @@ on:
   # gates the merge. The internal suite distinguishes nested-virt flakes from real
   # failures and retries a transient once.
   pull_request:
+    types: [opened, synchronize, reopened, edited]
+    branches: [main, develop]
   # Required check on develop (ruleset 17287557): `Supported Podman majors`
   # is matched by name, and the queue fires `merge_group` on a temporary
   # branch. The job must run there too or the queue never merges. `paths:`
@@ -112,10 +114,10 @@ jobs:
               exit 0
               ;;
           esac
-          # A pull request into main boots the VM whatever the range says.
-          if [ "$BASE_REF" = main ]; then
+          # The plan is trusted for a pull request only when its base is exactly develop.
+          if [ "$EVENT" = pull_request ] && [ "$BASE_REF" != develop ]; then
             echo "engine=true" >> "$GITHUB_OUTPUT"
-            echo "a pull request into main: the VM always boots"
+            echo "a pull request that is not into develop: the VM always boots"
             exit 0
           fi
           # Fail closed: a diff that cannot be read boots the VM.
@@ -715,12 +717,14 @@ jobs:
   podman-majors:
     # The name says which kind of run produced it: nothing for a pull request into
     # `develop` and for the merge queue, `(promotion)` for a pull request into `main`,
-    # and the event in brackets for everything else (a push, a schedule). A required
+    # and the event in brackets for everything else (a push, a schedule, a pull request
+    # on any other base). `==` in an expression ignores case, so the trigger limits the
+    # bases with `branches`, which does not, and the gate checks the base in shell. A required
     # check is matched by name on a commit, so the push that lands on `develop` and
     # the pull request that promotes the same commit into `main` must not be able to
     # answer for each other: they get different names and the ruleset of each branch
     # requires its own.
-    name: Supported Podman majors${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || github.event_name != 'pull_request' && github.event_name != 'merge_group' && format(' ({0})', github.event_name) || '' }}
+    name: Supported Podman majors${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}
     # A required status check is matched by name, and `podman-vm (6)` carries the
     # matrix value. The lane follows the newest Podman: when Podman 7 ships, `["6"]`
     # becomes `["7"]`, and on that pull request the name `podman-vm (6)` stops being

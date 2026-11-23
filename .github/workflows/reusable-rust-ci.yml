@@ -170,9 +170,10 @@ jobs:
       - name: Decide whether the Rust lanes must run
         id: decide
         run: |
-          # A pull request into main promotes what develop already holds, and runs
-          # every lane whatever the range says: no plan narrows it.
-          [ "$BASE_REF" = main ] && printf 'run=true\ndocs_only=false\nci_only=false\n' >>"$GITHUB_OUTPUT" ||
+          # The plan is trusted for a pull request only when its base is exactly
+          # develop. Into main, which promotes what develop holds, or into anything
+          # else, every lane runs whatever the range says.
+          [ "$EVENT" = pull_request ] && [ "$BASE_REF" != develop ] && printf 'run=true\ndocs_only=false\nci_only=false\n' >>"$GITHUB_OUTPUT" ||
             git show "$BASE_SHA:.github/scripts/checks/rust-ci-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
 
       # The second answer, the one `msrv` and `doc` used to work out each for
@@ -186,7 +187,7 @@ jobs:
         run: |
           set -euo pipefail
           build=true
-          if [ "$BASE_REF" != main ] && [[ "$EVENT" = pull_request || "$EVENT" = push || "$EVENT" = merge_group ]] &&
+          if { [ "$EVENT" != pull_request ] || [ "$BASE_REF" = develop ]; } && [[ "$EVENT" = pull_request || "$EVENT" = push || "$EVENT" = merge_group ]] &&
              changed=$(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA") &&
              judge=$(git show "$BASE_SHA:.github/scripts/checks/rust-build-inputs.sh") &&
              bash -c "$judge" -- "$changed"; then
@@ -715,12 +716,14 @@ jobs:
   gate:
     # The name says which kind of run produced it: nothing for a pull request into
     # `develop` and for the merge queue, `(promotion)` for a pull request into `main`,
-    # and the event in brackets for everything else (a push, a schedule). A required
+    # and the event in brackets for everything else (a push, a schedule, a pull request
+    # on any other base). `==` in an expression ignores case, so the trigger limits the
+    # bases with `branches`, which does not, and the gate checks the base in shell. A required
     # check is matched by name on a commit, so the push that lands on `develop` and
     # the pull request that promotes the same commit into `main` must not be able to
     # answer for each other: they get different names and the ruleset of each branch
     # requires its own.
-    name: Gate${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || github.event_name != 'pull_request' && github.event_name != 'merge_group' && format(' ({0})', github.event_name) || '' }}
+    name: Gate${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}
     needs: [classify, lint, test, test-extra, coverage, msrv, doc, package, semver]
     if: always()
     runs-on: ubuntu-latest
@@ -731,6 +734,7 @@ jobs:
       - name: Certify the plan and every skip
         env:
           NEEDS: ${{ toJSON(needs) }}
+          BASE: ${{ github.event_name == 'pull_request' && github.base_ref || 'none' }}
           EXTRA_ON: ${{ inputs.extra-test-os != '[]' }}
           COVERAGE_ON: ${{ inputs.coverage-threshold > 0 }}
           MSRV_ON: ${{ inputs.msrv != '' }}
@@ -739,8 +743,7 @@ jobs:
           SEMVER_ON: ${{ inputs.semver-check }}
         run: |
           set -uo pipefail
-          bad=0
-          table=""
+          bad=0 table=""
           fail() { echo "::error::$1"; bad=1; }
           res() { jq -r --arg j "$1" '.[$j].result // "missing"' <<<"$NEEDS"; }
           out() { jq -r --arg j "$1" --arg k "$2" '.[$j].outputs[$k] // ""' <<<"$NEEDS"; }
@@ -764,6 +767,8 @@ jobs:
             esac
             table+=$(printf '%-12s %-10s %s' "$1" "$r" "$v")$'\n'
           }
+          # `==` in the name expression ignores case; the base is checked here, exactly.
+          case "$BASE" in develop | main | none) ;; *) fail "the base '$BASE' is not develop or main" ;; esac
           [ "$PLAN" = success ] || fail "the plan did not succeed ($PLAN)"
           table+="plan: $PLAN, run='$RUN', docs_only='$DOCS', ci_only='$CI_ONLY', build='$BUILD'"$'\n'
           judge lint true no

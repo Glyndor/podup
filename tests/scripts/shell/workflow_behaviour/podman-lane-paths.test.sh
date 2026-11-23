@@ -123,6 +123,8 @@ decide_case pull_request '' true
 # A pull request into main boots the VM whatever the range says.
 BASE_REF=main decide_case pull_request .github/dependabot.yml true
 BASE_REF=main decide_case pull_request README.md true
+BASE_REF=Develop decide_case pull_request .github/dependabot.yml true
+BASE_REF=feature decide_case pull_request .github/dependabot.yml true
 BASE_REF=develop decide_case pull_request .github/dependabot.yml false
 DIFF_ERROR=1 decide_case pull_request .github/dependabot.yml true
 MISSING_HELPER=1 decide_case pull_request .github/dependabot.yml true

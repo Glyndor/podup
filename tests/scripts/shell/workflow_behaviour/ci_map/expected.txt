@@ -17,7 +17,6 @@
 .github/scripts/checks/check-planning-words.sh	C N N R N
 .github/scripts/checks/check-private-document-references.sh	C N N R N
 .github/scripts/checks/check-tooling-isolation.py	C N N R N
-.github/scripts/checks/check-write-token-jobs.py	C N N R N
 .github/scripts/checks/debian-ci-inputs.sh	C N B R N
 .github/scripts/checks/dependabot_security_watch.py	C N N R N
 .github/scripts/checks/folder-limit.sh	C N N R N
