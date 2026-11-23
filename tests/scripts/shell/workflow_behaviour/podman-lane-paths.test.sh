@@ -132,9 +132,10 @@ check "tests/engine does not use the exempt test folders" 0 \
 		grep -cvE ':[0-9]+:[[:space:]]*//')"
 
 # The exempt-workflow list must be reconsidered if the lane starts calling a
-# reusable workflow or a local action. Today its only uses are checkout.
-check "the lane has no local/reusable workflow or action calls" 0 \
-	"$(grep 'uses:' "$workflow" | grep -cvE 'uses: actions/checkout@[0-9a-f]{40}')"
+# reusable workflow or a local action. Today its only uses are checkout, and the
+# job that cancels the other runs when the lane fails, which runs after the VM.
+check "the lane has no local/reusable workflow or action calls beyond the cancel job" 0 \
+	"$(grep 'uses:' "$workflow" | grep -cvE 'uses: (actions/checkout@[0-9a-f]{40}|\./\.github/workflows/reusable-cancel-others\.yml)')"
 # Only an explicit `false` skips the boot: an output that never arrived boots.
 check "Nothing to boot is reached only on an explicit false" 1 \
 	"$(grep -A2 -- '- name: Nothing to boot' "$workflow" | grep -cF "if: needs.decide.outputs.engine == 'false'")"
@@ -158,6 +159,7 @@ check "the lane does not boot a Fedora release image" 0 "$(grep -cE 'releases/[0
 awk '
  /      - name: Reflect the matrix result/ { step=1 }
  step && /        run: \|/ { body=1; next }
+ body && /^  [a-z-]+:/ { exit }
  body { sub(/^          /, ""); print }
 ' "$workflow" >"$WORK/result.sh"
 for result in success failure cancelled skipped; do

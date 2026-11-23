@@ -737,3 +737,14 @@ jobs:
             success) echo "the Podman lane passed" ;;
             *) echo "::error::the Podman matrix did not pass (result: $RESULT)"; exit 1 ;;
           esac
+
+  # When this workflow fails on a pull request, the other runs of the same commit
+  # stop: they would spend runners on a commit that is already red. The job and
+  # the rules it follows are in reusable-cancel-others.yml.
+  cancel-others:
+    needs: podman-majors
+    if: ${{ failure() && github.event_name == 'pull_request' }}
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/reusable-cancel-others.yml
