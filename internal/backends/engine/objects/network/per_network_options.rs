@@ -5,13 +5,16 @@ use crate::libpod::types::container::PerNetworkOptions;
 
 /// Build the `PerNetworkOptions` for one service's attachment to a single
 /// network: aliases, static IPv4/IPv6 and link-local IPs, MAC (per-network, else
-/// `fallback_mac`), driver options (with `priority` folded in), and interface
-/// name. The service name is always prepended as an alias unless already present,
-/// so siblings resolve the service by name (compose DNS contract).
+/// `fallback_mac`), driver options, and interface name. The service name is
+/// always prepended as an alias unless already present, so siblings resolve the
+/// service by name (compose DNS contract). `link_aliases` are the names other
+/// services' `links:` give this one on this network; they come after the
+/// declared aliases.
 pub(in crate::backends::engine) fn build_per_network_options(
 	service_name: &str,
 	cfg: Option<&ServiceNetworkConfig>,
 	fallback_mac: Option<&str>,
+	link_aliases: &[String],
 ) -> PerNetworkOptions {
 	let mut opts = PerNetworkOptions::default();
 
@@ -30,15 +33,12 @@ pub(in crate::backends::engine) fn build_per_network_options(
 		if let Some(m) = mac {
 			opts.static_mac = Some(m.to_string());
 		}
-		// Forward per-attachment driver options. `priority` is surfaced by Compose
-		// as a dedicated field but Podman consumes it as a driver option, so fold
-		// it in alongside any explicit `driver_opts`.
-		let mut driver_opts = c.driver_opts.clone();
-		if let Some(prio) = c.priority {
-			driver_opts.insert("priority".to_string(), prio.to_string());
-		}
-		if !driver_opts.is_empty() {
-			opts.driver_opts = Some(driver_opts);
+		// Forward per-attachment driver options as they were written. Podman
+		// reads them from the `options` key of the attachment and hands what it
+		// does not know to the network backend untouched. `priority` is not a
+		// driver option: it orders the attachments and has its own handling.
+		if !c.driver_opts.is_empty() {
+			opts.driver_opts = Some(c.driver_opts.clone());
 		}
 		if let Some(iface) = &c.interface_name {
 			opts.interface_name = Some(iface.clone());
@@ -57,6 +57,11 @@ pub(in crate::backends::engine) fn build_per_network_options(
 	// name and not only by the container name or the auto-generated id alias.
 	if !service_name.is_empty() && !opts.aliases.iter().any(|a| a == service_name) {
 		opts.aliases.insert(0, service_name.to_string());
+	}
+	for alias in link_aliases {
+		if !opts.aliases.contains(alias) {
+			opts.aliases.push(alias.clone());
+		}
 	}
 
 	opts

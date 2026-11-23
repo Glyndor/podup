@@ -92,6 +92,8 @@ mod cp_sparse;
 #[path = "engine_integration/host_files/copy/cp_directory.rs"]
 mod cp_directory;
 
+#[path = "engine_integration/objects/network/attachment_options.rs"]
+mod attachment_options;
 #[path = "engine_integration/objects/network/dns_resolution.rs"]
 mod dns_resolution;
 #[path = "engine_integration/compose_files/error_surfacing.rs"]

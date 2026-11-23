@@ -167,3 +167,54 @@ fn a_healthcheck_without_start_interval_says_nothing() {
 	);
 	assert!(msgs.is_empty(), "got: {msgs:?}");
 }
+
+#[test]
+fn domainname_and_external_links_are_reported_as_not_honored() {
+	let msgs = diagnostics_for(
+		"services:\n  web:\n    image: nginx\n    domainname: example.org\n    external_links:\n      - legacy:db\n",
+	);
+	assert!(
+		msgs.iter()
+			.any(|m| m.contains("domainname is not honored") && m.contains("'web'")),
+		"got: {msgs:?}"
+	);
+	assert!(
+		msgs.iter()
+			.any(|m| m.contains("external_links is not honored")),
+		"got: {msgs:?}"
+	);
+}
+
+#[test]
+fn a_bare_link_says_nothing_and_an_alias_link_says_how_wide_it_is() {
+	let bare = diagnostics_for(
+		"services:\n  db:\n    image: x\n  web:\n    image: x\n    links:\n      - db\n      - db:db\n",
+	);
+	assert!(bare.is_empty(), "got: {bare:?}");
+	let aliased = diagnostics_for(
+		"services:\n  db:\n    image: x\n  web:\n    image: x\n    links:\n      - db:database\n",
+	);
+	assert!(
+		aliased.iter().any(|m| m.contains("alias 'database'")
+			&& m.contains("'default'")
+			&& m.contains("not only 'web'")),
+		"got: {aliased:?}"
+	);
+}
+
+#[test]
+fn an_alias_link_that_cannot_work_is_reported_as_ignored() {
+	let msgs = diagnostics_for(
+		"services:\n  db:\n    image: x\n    networks: [back]\n  web:\n    image: x\n    networks: [front]\n    links:\n      - db:database\n      - ghost:g\nnetworks:\n  back: {}\n  front: {}\n",
+	);
+	assert!(
+		msgs.iter()
+			.any(|m| m.contains("share no network") && m.contains("db:database")),
+		"got: {msgs:?}"
+	);
+	assert!(
+		msgs.iter()
+			.any(|m| m.contains("ghost:g") && m.contains("names no service")),
+		"got: {msgs:?}"
+	);
+}

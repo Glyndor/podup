@@ -78,8 +78,10 @@ pub struct PerNetworkOptions {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub interface_name: Option<String>,
 
-	/// Driver-specific per-connection options.
-	#[serde(skip_serializing_if = "Option::is_none")]
+	/// Driver-specific per-connection options. Podman's `PerNetworkOptions`
+	/// names this field `options`; under any other name its decoder accepts the
+	/// request and drops the value without a word.
+	#[serde(rename = "options", skip_serializing_if = "Option::is_none")]
 	pub driver_opts: Option<HashMap<String, String>>,
 }
 

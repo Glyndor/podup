@@ -75,10 +75,6 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub hostname: Option<String>,
 
-	/// Container NIS domain name.
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub domainname: Option<String>,
-
 	// Labels and annotations
 	/// Container labels.
 	#[serde(skip_serializing_if = "HashMap::is_empty", default)]
@@ -312,10 +308,6 @@ pub struct SpecGenerator {
 	/// runtime at all and runs the container with the host's default one.
 	#[serde(rename = "oci_runtime", skip_serializing_if = "Option::is_none")]
 	pub runtime: Option<String>,
-
-	/// Legacy container links (deprecated in rootless, accepted but may be ignored).
-	#[serde(skip_serializing_if = "Vec::is_empty", default)]
-	pub links: Vec<String>,
 
 	// Platform selection
 	/// Target image CPU architecture (e.g. `"amd64"`, `"arm64"`).

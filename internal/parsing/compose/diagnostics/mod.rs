@@ -15,6 +15,7 @@ use super::types::{ComposeFile, Service};
 mod client_address;
 mod durations;
 mod ignored_fields;
+mod links;
 mod nested_raw;
 mod port_exposure;
 use durations::untranslatable_durations;
@@ -23,6 +24,7 @@ use ignored_fields::{
 	ignored_restart_policy_fields, ignored_secret_config_drivers, ignored_service_fields,
 	ignored_service_network_fields, ignored_volume_mount_fields,
 };
+use links::link_fields;
 pub(super) use nested_raw::collect_raw_nested_warnings;
 use port_exposure::port_published_on_all_interfaces;
 pub(crate) use port_exposure::ports_published_on_all_interfaces;
@@ -185,6 +187,7 @@ pub(super) fn collect(file: &ComposeFile) -> Vec<String> {
 	ignored_build_fields(&units, &mut out);
 	ignored_network_fields(file, &mut out);
 	ignored_service_network_fields(&units, &mut out);
+	link_fields(file, &units, &mut out);
 	ignored_secret_config_drivers(file, &mut out);
 	ignored_models(file, &mut out);
 	ignored_restart_policy_fields(&units, &mut out);

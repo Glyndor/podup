@@ -66,7 +66,8 @@ async fn create_sends_every_compose_field_in_the_spec_generator() {
 	assert_eq!(body["stop_signal"], 15);
 	assert_eq!(body["stop_timeout"], 10);
 	assert_eq!(body["hostname"], "my-host");
-	assert_eq!(body["domainname"], "example.com");
+	// libpod has no field for the domain name; sending one would be dropped.
+	assert!(body.get("domainname").is_none(), "{body}");
 	assert_eq!(
 		body["cap_add"],
 		serde_json::json!(["NET_ADMIN", "SYS_TIME"])
@@ -376,13 +377,9 @@ async fn create_sends_every_compose_field_in_the_spec_generator() {
 	// -- group_add → groups --
 	assert_eq!(body["groups"], serde_json::json!(["1001"]));
 
-	// -- links: a sibling-service reference resolves to
-	// `{container}:{alias}`. `other-svc` has no explicit container_name,
-	// so the engine builds the auto-generated name. --
-	assert_eq!(
-		body["links"],
-		serde_json::json!(["proj-other-svc-1:other-alias"])
-	);
+	// -- links: libpod has no field for them, so none is sent; the alias
+	// reaches the linked service as a network alias. --
+	assert!(body.get("links").is_none(), "{body}");
 
 	// -- storage_opt → storage_opts --
 	assert_eq!(body["storage_opts"], serde_json::json!({"size": "1G"}));
