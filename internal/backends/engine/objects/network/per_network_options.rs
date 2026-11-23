@@ -4,7 +4,7 @@ use crate::compose::types::ServiceNetworkConfig;
 use crate::libpod::types::container::PerNetworkOptions;
 
 /// Build the `PerNetworkOptions` for one service's attachment to a single
-/// network: aliases, static IPv4/IPv6 and link-local IPs, MAC (per-network, else
+/// network: aliases, static IPv4/IPv6, MAC (per-network, else
 /// `fallback_mac`), driver options, and interface name. The service name is
 /// always prepended as an alias unless already present, so siblings resolve the
 /// service by name (compose DNS contract). `link_aliases` are the names other
@@ -26,9 +26,12 @@ pub(in crate::backends::engine) fn build_per_network_options(
 		if let Some(ipv6) = &c.ipv6_address {
 			opts.static_ips.push(ipv6.clone());
 		}
-		if !c.link_local_ips.is_empty() {
-			opts.static_ips.extend(c.link_local_ips.clone());
-		}
+		// `link_local_ips` has no Podman equivalent: they are extra addresses on
+		// the interface, and sending them as `static_ips` asks for the container's
+		// own address, which fails at start for one outside the network's subnet
+		// (measured on 6.2.0, `requested static ip 169.254.5.5 not in any subnet`).
+		// The user-facing notice is the parse-time diagnostic, as for `gw_priority`.
+		opts.priority = c.priority;
 		let mac = c.mac_address.as_deref().or(fallback_mac);
 		if let Some(m) = mac {
 			opts.static_mac = Some(m.to_string());
@@ -36,7 +39,8 @@ pub(in crate::backends::engine) fn build_per_network_options(
 		// Forward per-attachment driver options as they were written. Podman
 		// reads them from the `options` key of the attachment and hands what it
 		// does not know to the network backend untouched. `priority` is not a
-		// driver option: it orders the attachments and has its own handling.
+		// driver option: it orders the attachments, which `network_order` sends
+		// as `networkOrder`.
 		if !c.driver_opts.is_empty() {
 			opts.driver_opts = Some(c.driver_opts.clone());
 		}

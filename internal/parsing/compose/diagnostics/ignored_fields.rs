@@ -220,7 +220,8 @@ pub(super) fn ignored_restart_policy_fields(units: &ContainerUnits<'_>, out: &mu
 }
 
 /// Per-service network attachment fields podup parses but cannot forward.
-/// `gw_priority` has no Podman equivalent, so the engine drops it silently.
+/// `gw_priority` and `link_local_ips` have no Podman equivalent, so the engine
+/// drops them and this is where the operator is told.
 pub(super) fn ignored_service_network_fields(units: &ContainerUnits<'_>, out: &mut Vec<String>) {
 	for (service, def) in units {
 		for name in def.networks.names() {
@@ -228,6 +229,12 @@ pub(super) fn ignored_service_network_fields(units: &ContainerUnits<'_>, out: &m
 				if c.gw_priority.is_some() {
 					out.push(format!(
 						"service '{service}' network '{name}': gw_priority is not supported \
+						 by Podman and is ignored"
+					));
+				}
+				if !c.link_local_ips.is_empty() {
+					out.push(format!(
+						"service '{service}' network '{name}': link_local_ips is not supported \
 						 by Podman and is ignored"
 					));
 				}

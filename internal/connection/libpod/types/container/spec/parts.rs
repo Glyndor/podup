@@ -78,6 +78,12 @@ pub struct PerNetworkOptions {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub interface_name: Option<String>,
 
+	/// The compose `priority` of this attachment. It is not part of the request:
+	/// libpod has no such field, and the order it asks for travels as
+	/// `networkOrder` on the container instead.
+	#[serde(skip)]
+	pub priority: Option<u32>,
+
 	/// Driver-specific per-connection options. Podman's `PerNetworkOptions`
 	/// names this field `options`; under any other name its decoder accepts the
 	/// request and drops the value without a word.

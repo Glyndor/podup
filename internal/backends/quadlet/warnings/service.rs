@@ -234,4 +234,28 @@ pub(crate) fn collect_warnings(
 			"is set on multiple networks; inside a pod Quadlet emits only the first",
 		);
 	}
+	// The pod owns the attachments and carries no per-network options, so what a
+	// service sets on one network has nowhere to go inside it.
+	if in_pod {
+		type Set = fn(&crate::compose::types::ServiceNetworkConfig) -> bool;
+		let checks: [(&str, Set); 3] = [
+			("interface_name", |c| c.interface_name.is_some()),
+			("driver_opts", |c| !c.driver_opts.is_empty()),
+			("priority", |c| c.priority.is_some()),
+		];
+		for (field, set) in checks {
+			if service
+				.networks
+				.names()
+				.iter()
+				.filter_map(|n| service.networks.config_for(n))
+				.any(set)
+			{
+				warn(
+					&format!("networks.*.{field}"),
+					"is not exported inside a pod unit; the pod carries the networks without per-network options",
+				);
+			}
+		}
+	}
 }

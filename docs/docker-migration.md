@@ -101,6 +101,10 @@ The pod keeps `PodmanArgs=--share=net` and `ExitPolicy=continue`. Only the netwo
 
 podup creates every bridge network with the netavark option `isolate=true`, so two bridge networks do not reach each other's unpublished ports, as in Docker. The Quadlet export writes the same default on the `.network` unit as `Options=isolate=true`, so a project started from the exported units is isolated like one started with `podup up`. A compose file that sets `isolate` in the network's `driver_opts` wins, including `"false"` for a project that deliberately spans networks. Networks with another driver are left alone. A network that already exists on the host keeps the options it was created with: after updating the units, remove the old network (`podman network rm <project>_<name>`) so the unit creates it again with `isolate=true`.
 
+### Network priority, interface names and driver options
+
+`networks.<name>.priority` orders the service's networks: the one with the highest priority is connected first and holds `eth0`, as in Docker Compose. `up` sends the order to Podman when any network sets a priority other than 0; networks of equal priority keep Podman's own order, by name, which is also the order of a service that sets none. The Quadlet export writes the `Network=` lines in that order, and the per-network `interface_name` and `driver_opts` on each line, as `interface_name=` and `key=value` options. A driver option whose name Podman reads as one of its own (`alias`, `ip`, `ip6`, `mac`, `interface_name`), or whose name or value holds a character the option list cannot carry, is left out and reported. Inside a pod unit none of the three has a place and each is reported.
+
 ### Time-based pull policies
 
 `pull_policy:` accepts `always`, `never`, `missing` (alias `if_not_present`), `build`, Podman's `newer`, `daily`, `weekly`, `every_<n>[wdhms]`, and the podup extension `refresh`.
@@ -455,6 +459,7 @@ The `[Build]` keys `Annotation=`, `Volume=` and `DNS=` have no compose `build:` 
 | `networks.*.enable_ipv4` | Podman networks enable IPv4 by default and expose no toggle |
 | `networks.*.ipam.config[].aux_addresses` | not supported by Podman |
 | service `networks.*.gw_priority` | not supported by Podman |
+| service `networks.*.link_local_ips` | Podman cannot add an address to the interface; it used to be sent as the container's own static address, which stopped the container from starting for one outside the network's subnet |
 | `logging.options.tag` with `json-file` or `k8s-file` | Podman's file logger refuses a tag when the container starts; podup drops it with a warning, as it does `max-file` |
 | `logging.options.path` with a driver other than `json-file` or `k8s-file` | only the two file drivers write a file; podup drops the path with a warning |
 | any `logging.options` key other than `path`, `max-size`, `max-file` and `tag` | Podman's generator reads nothing else, so the key is forwarded and reported; see below |

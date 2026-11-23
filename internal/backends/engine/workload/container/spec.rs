@@ -201,6 +201,7 @@ pub(crate) fn build_spec_generator(
 		sysctl,
 		expose,
 		portmappings,
+		network_order: crate::engine::network::network_order(&networks),
 		networks,
 		netns,
 		// The in-pod path carries no netns of its own, so no mode options either.
