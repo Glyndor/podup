@@ -4,14 +4,31 @@ use std::path::Path;
 
 use crate::compose::types::Service;
 
-use super::super::{abs_against, sorted_pairs, Section};
+use super::super::{abs_against, quote_podman_arg_value, sorted_pairs, Section};
 
 /// Emit one `Environment=` line per compose environment entry, sorted by name.
+///
+/// A bare `KEY`, or a null in a mapping, is "unset and removed from the service
+/// container environment" in the Compose Specification. `Environment=KEY`
+/// alone (`podman run --env KEY`) takes the value from the environment of the
+/// process that starts the container, and leaves the image's own value of
+/// `KEY` when there is none. Measured on Podman 6.2.0 (2026-11-23): `--env
+/// container` on the Fedora image gives `container=podman`, `--unsetenv
+/// container` removes it, both together remove it when the variable is not
+/// defined and keep the defined value when it is. Quadlet has no `UnsetEnv=`
+/// key (the generator rejects it as unsupported), so the removal goes through
+/// `PodmanArgs=--unsetenv=`, next to the bare `Environment=` line.
 pub(in super::super) fn emit_environment(service: &Service, container: &mut Section) {
 	for (key, val) in sorted_pairs(service.environment.to_map()) {
 		match val {
 			Some(v) => container.add("Environment", format!("{key}={v}")),
-			None => container.add("Environment", key),
+			None => {
+				container.add("Environment", key.clone());
+				container.add(
+					"PodmanArgs",
+					format!("--unsetenv={}", quote_podman_arg_value(&key)),
+				);
+			}
 		}
 	}
 }
