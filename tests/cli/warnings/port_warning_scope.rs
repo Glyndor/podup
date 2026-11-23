@@ -109,7 +109,7 @@ fn commands_that_create_containers_warn() {
 }
 
 #[test]
-fn no_warn_silences_commands_that_create_containers() {
+fn no_warn_does_not_silence_the_port_warning_on_commands_that_create_containers() {
 	for args in [
 		&["--no-warn", "up"][..],
 		&["--no-warn", "create"],
@@ -117,6 +117,6 @@ fn no_warn_silences_commands_that_create_containers() {
 		&["--no-warn", "scale", "web=1"],
 	] {
 		let stderr = run_podup_isolated(args);
-		assert!(!stderr.contains(PORT_EXPOSURE_NEEDLE), "{args:?}: {stderr}");
+		assert!(stderr.contains(PORT_EXPOSURE_NEEDLE), "{args:?}: {stderr}");
 	}
 }

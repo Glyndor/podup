@@ -187,11 +187,11 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 }
 
 thread_local! {
-	/// CLI `--no-warn` flag honoured by the Quadlet path's host-binding /
-	/// privilege-escalation warnings. Set by `write_quadlet` when the CLI
-	/// parsed `--no-warn` and consulted by `container_unit_with_mode` before
-	/// each `tracing::warn!` so the operator can silence the per-generate
-	/// noise the same way they do on `up`/`create`/`run`/`exec`.
+	/// CLI `--no-warn` flag honoured by the Quadlet path's advisory warnings
+	/// (a network alias that is not exported, a network mode a pod ignores).
+	/// Set by `write_quadlet` when the CLI parsed `--no-warn` and consulted
+	/// before each of those `tracing::warn!`. The security warnings (host
+	/// network, `container:` network, privileged) are not gated on it.
 	///
 	/// The live engine path carries the flag on `Engine::no_warn`; the Quadlet
 	/// path goes through a free function and has no such struct, so a
@@ -233,7 +233,7 @@ impl Drop for NoWarnGuard {
 }
 
 /// Whether `--no-warn` is active on the current thread. Read by
-/// `container_unit_with_mode` before each host-binding `tracing::warn!`.
+/// the Quadlet path before each advisory `tracing::warn!`.
 pub(crate) fn is_no_warn_set() -> bool {
 	NO_WARN.with(|c| c.get())
 }

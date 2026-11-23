@@ -248,27 +248,34 @@ async fn run(error_context: &mut startup::exit_status::ErrorContext) -> podup::R
 	if label_only {
 		main_runner::label_only::fail_on_named_file_missing(&cli.file, &compose_files)?;
 	}
-	// Show the port-exposure warning on `config` regardless of `--no-warn`,
-	// and on `up`/`create`/`run`/`scale`/`watch`/`generate quadlet`/`autostart`
-	// unless `--no-warn` is set. It can change a decision only where a container
-	// is created or installed with the port. Suppress it on every other command:
-	// those reuse containers whose configuration was already shown.
-	let suppress_port_warn = match &cli.command {
-		Commands::Config(_) => false,
-		Commands::Up(_) | Commands::Create { .. } | Commands::Run(_) => cli.no_warn,
-		Commands::Scale { .. } | Commands::Watch => cli.no_warn,
-		Commands::Generate { .. } | Commands::Autostart { .. } => cli.no_warn,
-		_ => true,
-	};
+	// Show the port-exposure warning on `config`, `up`, `create`, `run`,
+	// `scale`, `watch`, `generate quadlet` and `autostart`, whatever `--no-warn`
+	// says: a port published on every interface is a security warning, and
+	// `--no-warn` does not silence those. It can change a decision only where a
+	// container is created or installed with the port. Suppress it on every
+	// other command: those reuse containers whose configuration was already
+	// shown.
+	let suppress_port_warn = !matches!(
+		&cli.command,
+		Commands::Config(_)
+			| Commands::Up(_)
+			| Commands::Create { .. }
+			| Commands::Run(_)
+			| Commands::Scale { .. }
+			| Commands::Watch
+			| Commands::Generate { .. }
+			| Commands::Autostart { .. }
+	);
 	let _suppress_port_warn_guard =
 		suppress_port_warn.then(podup::compose::SuppressPortExposureGuard::new);
 	// The client-address warning (#1994) fires on almost any project with
 	// published ports, so it is shown only where it can change a decision: the
-	// commands that create containers, and `config`, which ignores `--no-warn`
-	// as it does for the port-exposure warning.
+	// commands that create containers, and `config`. It is advice, not a
+	// security warning, so `--no-warn` silences it on all of them.
 	let show_client_address = match &cli.command {
-		Commands::Config(_) => true,
-		Commands::Up(_) | Commands::Create { .. } | Commands::Run(_) => !cli.no_warn,
+		Commands::Config(_) | Commands::Up(_) | Commands::Create { .. } | Commands::Run(_) => {
+			!cli.no_warn
+		}
 		_ => false,
 	};
 	let _client_address_guard =
