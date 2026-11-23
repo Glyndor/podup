@@ -22,12 +22,14 @@ reusable-workflow-lint.yml handle it.
 Reads: .github/workflows/*.yml, .github/workflows/*.yaml under the working
 directory.
 """
-import glob
 import os
 import re
 import sys
 
 import yaml
+
+sys.path.insert(0, ".github/scripts/lib")
+import ci_yaml  # noqa: E402  (the one loader and enumerator; run from the repository root)
 
 # Only a local call is affected. A remote `uses:` carries its own
 # SHA, and bumping it edits the caller.
@@ -45,19 +47,16 @@ def triggers(spec):
 
 
 def main():
-    files = sorted(set(
-        glob.glob(".github/workflows/*.yml")
-        + glob.glob(".github/workflows/*.yaml")
-    ))
+    files = ci_yaml.files(".")
     violations = []
     for path in files:
         try:
             with open(path) as fh:
                 text = fh.read()
-            spec = yaml.safe_load(text)
+            spec = ci_yaml.load(path)
         except (OSError, yaml.YAMLError) as e:
-            print(f"::warning file={path}::skipped: {e}")
-            continue
+            print(f"::error file={path}::{e}")
+            sys.exit(1)
         if not isinstance(spec, dict):
             continue
         called = sorted(set(LOCAL_USES_RE.findall(text)))

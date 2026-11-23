@@ -210,8 +210,13 @@ fn the_range_comes_from_the_event_and_covers_the_whole_merge_group() {
 #[test]
 fn the_check_name_the_ruleset_requires_is_unchanged() {
 	let reusable = doc(REUSABLE);
+	// The name may end in an expression that says which kind of run produced
+	// it; the name a ruleset requires is what comes before.
+	let name = reusable["jobs"]["workflow-lint"]["name"]
+		.as_str()
+		.unwrap_or_default();
 	assert_eq!(
-		reusable["jobs"]["workflow-lint"]["name"].as_str(),
+		name.split("${{").next().map(str::trim_end),
 		Some("workflow-lint"),
 		"the reusable's job no longer reports the name it reported before"
 	);

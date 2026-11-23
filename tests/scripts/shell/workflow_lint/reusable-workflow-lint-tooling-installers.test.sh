@@ -115,7 +115,7 @@ for needle in \
 		"$(grep -F -c "$needle" "$WORK/tooling.sh" | awk '{print ($1>0)}')"
 done
 
-new() { rm -rf "$WORK/t"; mkdir -p "$WORK/t/.github/workflows"; printf '%s' "$WORK/t"; }
+new() { rm -rf "$WORK/t"; mkdir -p "$WORK/t/.github/workflows"; mkdir -p "$WORK/t/.github/scripts/lib"; cp "$HERE/.github/scripts/lib/ci_yaml.py" "$WORK/t/.github/scripts/lib/"; printf '%s' "$WORK/t"; }
 run_in() { ( cd "$1" && bash "$2" 2>&1 ); }
 said() { printf '%s' "$1" | grep -q -F -- "$2" && echo 1 || echo 0; }
 

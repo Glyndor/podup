@@ -96,7 +96,9 @@ BAD_PIN="3d3c42e5ac5ba805825da76410c181273ba90b1"
 
 new() {
 	rm -rf "$WORK/t"
-	mkdir -p "$WORK/t/.github/workflows"
+	mkdir -p "$WORK/t/.github/workflows" "$WORK/t/.github/scripts/checks"
+	mkdir -p "$WORK/t/.github/scripts/lib"
+	cp "$HERE/.github/scripts/lib/ci_yaml.py" "$WORK/t/.github/scripts/lib/"
 	printf '%s' "$WORK/t"
 }
 run_in() { # $1=dir $2=script -> stdout+stderr, status in $?

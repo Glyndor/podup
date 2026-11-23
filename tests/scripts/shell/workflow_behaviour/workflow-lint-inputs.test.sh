@@ -198,8 +198,9 @@ check "the checkout fetches the history the judge reads" 1 \
 # job `workflow-lint` and the reusable's job is named `workflow-lint`.
 check "the caller's job id is still workflow-lint" 1 \
 	"$(grep -c '^  workflow-lint:$' "$caller")"
+# shellcheck disable=SC2016
 check "the reusable's job is still named workflow-lint" 1 \
-	"$(grep -c '^    name: workflow-lint$' "$workflow")"
+	"$(grep -c '^    name: workflow-lint\${{' "$workflow")"
 
 echo "$pass passed, $fail failed"
 printf 'DONE %s %d %d\n' "${BASH_SOURCE[0]##*/}" "$pass" "$fail"

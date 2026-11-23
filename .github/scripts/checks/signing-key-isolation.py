@@ -17,7 +17,6 @@ Around that, in every workflow: the key (`secrets.GLYNDOR_RELEASE_ED25519_KEY`,
 in `sign` and `release` of release.yml, read inside a `${{ }}` expression;
 `id-token: write` and `attestations: write` only in `attest`. Exit 0 or 1.
 """
-import glob
 import hashlib
 import json
 import os
@@ -25,6 +24,9 @@ import re
 import sys
 
 import yaml
+
+sys.path.insert(0, ".github/scripts/lib")
+import ci_yaml  # noqa: E402  (the one loader and enumerator; run from the repository root)
 
 # Expression context names, function names and secret names are all case
 # insensitive in GitHub Actions: `SECRETS.release_ed25519_key`, `tojson(secrets)`
@@ -79,7 +81,7 @@ def pinned():
 
 
 def offenders(path):
-    spec = yaml.safe_load(open(path))
+    spec = ci_yaml.load(path)
     if not isinstance(spec, dict):
         return []
     is_release = os.path.basename(path) == "release.yml"
@@ -105,10 +107,10 @@ def main(argv):
     args = [a for a in argv[1:] if a != "--print-hashes"]
     root = args[0] if args else ".github/workflows"
     if "--print-hashes" in argv:
-        spec = yaml.safe_load(open(f"{root}/release.yml"))
+        spec = ci_yaml.load(f"{root}/release.yml")
         print("\n".join(f"{j} {digest(spec, j)}" for j in PINNED))
         return 0
-    files = sorted(glob.glob(f"{root}/*.yml") + glob.glob(f"{root}/*.yaml"))
+    files = ci_yaml.workflows_in(root)
     if not files:
         print(f"signing-key-isolation: no workflow under {root}", file=sys.stderr)
         return 2

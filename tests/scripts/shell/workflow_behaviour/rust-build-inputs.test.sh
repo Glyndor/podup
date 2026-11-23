@@ -48,13 +48,17 @@ run_case 1 ""
 check "no argument builds" 1 "$(bash "$script" >/dev/null 2>&1; echo $?)"
 # The workflow reads the judge from the base commit and guards the steps with it.
 # shellcheck disable=SC2016
-check "msrv and doc both read the judge from the base" 2 \
+check "the plan reads the judge from the base, and nothing else asks it" 1 \
 	"$(grep -c 'git show "\$BASE_SHA:.github/scripts/checks/rust-build-inputs.sh"' "$workflow")"
 # shellcheck disable=SC2016
-check "only pull_request, push and merge_group can skip" 2 \
+check "only pull_request, push and merge_group can skip" 1 \
 	"$(grep -c '\[\[ "\$EVENT" = pull_request || "\$EVENT" = push || "\$EVENT" = merge_group \]\]' "$workflow")"
-check "the build steps are guarded" 6 \
-	"$(grep -c "steps.inputs.outputs.build == 'true'" "$workflow")"
+# msrv and doc are skipped whole on an explicit `false` from the plan; no step
+# inside them asks again.
+check "msrv and doc are skipped whole on the plan's explicit false" 2 \
+	"$(grep -c "needs.classify.outputs.build != 'false'" "$workflow")"
+check "no step of the reusable judges the build inputs itself" 0 \
+	"$(grep -c "steps.inputs.outputs.build" "$workflow")"
 # The macOS and Windows hardening jobs skip the release build with the same judge.
 for wf in lint-shell lint-powershell; do
 	file="$HERE/.github/workflows/$wf.yml"

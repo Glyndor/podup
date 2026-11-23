@@ -1,0 +1,764 @@
+{
+ "ci.yml": {
+  "env": null,
+  "jobs": {
+   "rust": {
+    "uses": "./.github/workflows/reusable-rust-ci.yml",
+    "with": {
+     "coverage-threshold": 76,
+     "doc-warnings": true,
+     "extra-clippy-args": "--no-default-features --features watch,completions",
+     "extra-test-os": "[\"macos-latest\", \"windows-latest\"]",
+     "msrv": "1.88",
+     "package-check": false,
+     "semver-check": false
+    }
+   }
+  },
+  "on": {
+   "merge_group": {
+    "types": [
+     "checks_requested"
+    ]
+   },
+   "pull_request": {
+    "branches": [
+     "main",
+     "develop"
+    ]
+   },
+   "push": {
+    "branches": [
+     "main",
+     "develop"
+    ]
+   }
+  },
+  "permissions": {
+   "contents": "read"
+  }
+ },
+ "commit-hygiene.yml": {
+  "env": null,
+  "jobs": {
+   "commit-identity": {
+    "name": "commit identity",
+    "permissions": {
+     "contents": "read"
+    },
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": null,
+      "sha": "22f655d0e8a7080a"
+     },
+     {
+      "name": "Every commit uses a GitHub noreply address",
+      "sha": "5ebd16b01a3448d4"
+     }
+    ]
+   },
+   "secret-scan": {
+    "name": "secret scan",
+    "permissions": {
+     "contents": "read"
+    },
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": null,
+      "sha": "22f655d0e8a7080a"
+     },
+     {
+      "name": "The change adds no credential-shaped line",
+      "sha": "65ea5b9e30fb3324"
+     }
+    ]
+   }
+  },
+  "on": {
+   "pull_request": {
+    "branches": [
+     "main",
+     "develop"
+    ]
+   }
+  },
+  "permissions": {}
+ },
+ "dco.yml": {
+  "env": null,
+  "jobs": {
+   "dco": {
+    "uses": "./.github/workflows/reusable-dco.yml"
+   }
+  },
+  "on": {
+   "merge_group": {
+    "types": [
+     "checks_requested"
+    ]
+   },
+   "pull_request": {
+    "branches": [
+     "main",
+     "develop"
+    ]
+   }
+  },
+  "permissions": {
+   "contents": "read"
+  }
+ },
+ "line-limit.yml": {
+  "env": null,
+  "jobs": {
+   "line-limit": {
+    "uses": "./.github/workflows/reusable-line-limit.yml",
+    "with": {
+     "exclude-pattern": "^bench/scenarios/",
+     "extensions": "rs go ts tsx js jsx mjs cjs py sh astro vue svelte yml yaml"
+    }
+   }
+  },
+  "on": {
+   "merge_group": {
+    "types": [
+     "checks_requested"
+    ]
+   },
+   "pull_request": {
+    "branches": [
+     "main",
+     "develop"
+    ]
+   },
+   "push": {
+    "branches": [
+     "main",
+     "develop"
+    ]
+   }
+  },
+  "permissions": {
+   "contents": "read"
+  }
+ },
+ "main-guard.yml": {
+  "env": null,
+  "jobs": {
+   "develop-only": {
+    "uses": "./.github/workflows/reusable-main-guard.yml"
+   }
+  },
+  "on": {
+   "pull_request": {
+    "branches": [
+     "main"
+    ]
+   }
+  },
+  "permissions": {}
+ },
+ "podman-lane.yml": {
+  "env": null,
+  "jobs": {
+   "decide": {
+    "name": "Decide whether the VM has anything to look at",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": null,
+      "sha": "3facce523aa8a0e2"
+     },
+     {
+      "name": "List the changed files against the base",
+      "sha": "c0e72debd43d9c37"
+     }
+    ]
+   },
+   "podman-majors": {
+    "if": "always()",
+    "name": "Supported Podman majors${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || github.event_name != 'pull_request' && github.event_name != 'merge_group' && format(' ({0})', github.event_name) || '' }}",
+    "needs": [
+     "decide",
+     "podman-vm"
+    ],
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": "Reflect the matrix result",
+      "sha": "592dce7e8361a23e"
+     }
+    ]
+   },
+   "podman-vm": {
+    "if": "${{ !cancelled() }}",
+    "needs": "decide",
+    "runs-on": "ubuntu-24.04",
+    "steps": [
+     {
+      "if": null,
+      "name": null
+     },
+     {
+      "if": "needs.decide.outputs.engine == 'false'",
+      "name": "Nothing to boot"
+     },
+     {
+      "if": "needs.decide.outputs.engine != 'false'",
+      "name": "Install qemu + cloud tools"
+     },
+     {
+      "if": "needs.decide.outputs.engine != 'false'",
+      "name": "Fetch Fedora cloud image (Podman 6 = rawhide)"
+     },
+     {
+      "if": "needs.decide.outputs.engine != 'false'",
+      "name": "Build cloud-init seed (script-file for clean RC)"
+     },
+     {
+      "if": "needs.decide.outputs.engine != 'false'",
+      "name": "Boot VM (9p = repo only) + capture"
+     },
+     {
+      "if": "needs.decide.outputs.engine != 'false'",
+      "name": "Verify podup core suite passed on the target Podman"
+     }
+    ],
+    "strategy": {
+     "fail-fast": false,
+     "matrix": {
+      "podman": [
+       "6"
+      ]
+     }
+    }
+   }
+  },
+  "on": {
+   "merge_group": {
+    "types": [
+     "checks_requested"
+    ]
+   },
+   "pull_request": null,
+   "schedule": [
+    {
+     "cron": "0 9 * * *"
+    }
+   ],
+   "workflow_dispatch": null
+  },
+  "permissions": {
+   "contents": "read"
+  }
+ },
+ "reusable-dco.yml": {
+  "env": null,
+  "jobs": {
+   "dco": {
+    "name": "Signed-off-by present on every commit${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || github.event_name != 'pull_request' && github.event_name != 'merge_group' && format(' ({0})', github.event_name) || '' }}",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": null,
+      "sha": "3facce523aa8a0e2"
+     },
+     {
+      "name": "Verify Signed-off-by trailers",
+      "sha": "86ecbccfa4c26aae"
+     },
+     {
+      "name": "Detect evil merges",
+      "sha": "18918cfe74f52e64"
+     }
+    ]
+   }
+  },
+  "on": {
+   "workflow_call": null
+  },
+  "permissions": {
+   "contents": "read"
+  }
+ },
+ "reusable-line-limit.yml": {
+  "env": null,
+  "jobs": {
+   "line-limit": {
+    "name": "line limit${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || github.event_name != 'pull_request' && github.event_name != 'merge_group' && format(' ({0})', github.event_name) || '' }}",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": null,
+      "sha": "69983d424f70d56e"
+     },
+     {
+      "name": "Check file lengths",
+      "sha": "b00249359f27ebd2"
+     }
+    ]
+   }
+  },
+  "on": {
+   "workflow_call": {
+    "inputs": {
+     "exclude-pattern": {
+      "default": "^bench/scenarios/",
+      "description": "Optional extended regex; matching paths are skipped",
+      "type": "string"
+     },
+     "extensions": {
+      "default": "rs go ts tsx js jsx mjs cjs py sh astro vue svelte yml yaml",
+      "description": "Space-separated source file extensions to check",
+      "type": "string"
+     },
+     "hard-limit": {
+      "default": 500,
+      "description": "Files with more lines than this fail the build",
+      "type": "number"
+     },
+     "soft-limit": {
+      "default": 300,
+      "description": "Files with more lines than this emit a warning",
+      "type": "number"
+     }
+    }
+   }
+  },
+  "permissions": {
+   "contents": "read"
+  }
+ },
+ "reusable-main-guard.yml": {
+  "env": null,
+  "jobs": {
+   "develop-only": {
+    "if": "github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'",
+    "name": "develop-only",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": "Require develop as source branch",
+      "sha": "2e45dc73745fadd3"
+     }
+    ]
+   }
+  },
+  "on": {
+   "workflow_call": null
+  },
+  "permissions": {}
+ },
+ "reusable-rust-ci.yml": {
+  "env": {
+   "BASE_REF": "${{ github.event.pull_request.base.ref }}",
+   "BASE_SHA": "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}",
+   "CARGO_INCREMENTAL": "0",
+   "CARGO_PROFILE_DEV_DEBUG": "line-tables-only",
+   "EVENT": "${{ github.event_name }}",
+   "HEAD_SHA": "${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}"
+  },
+  "jobs": {
+   "classify": {
+    "name": "Classify the range",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": null,
+      "sha": "3facce523aa8a0e2"
+     },
+     {
+      "name": "Decide whether the Rust lanes must run",
+      "sha": "5082530235612ff5"
+     },
+     {
+      "name": "Decide whether the root build inputs changed",
+      "sha": "1bd2a6140b8e10e3"
+     }
+    ]
+   },
+   "coverage": {
+    "if": "${{ inputs.coverage-threshold > 0 && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}",
+    "name": "Coverage",
+    "needs": "classify",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": null,
+      "sha": "69983d424f70d56e"
+     },
+     {
+      "name": "Install toolchain",
+      "sha": "717948cfb523641b"
+     },
+     {
+      "name": null,
+      "sha": "607796bb04bab330"
+     },
+     {
+      "name": "Install cargo-llvm-cov",
+      "sha": "42756c2ee576405b"
+     },
+     {
+      "name": "Start Podman socket",
+      "sha": "5c086abe3ed31d6e"
+     },
+     {
+      "name": "Coverage gate",
+      "sha": "9d81d983c8e6bd65"
+     }
+    ]
+   },
+   "doc": {
+    "if": "${{ !cancelled() && inputs.doc-warnings && (needs.classify.result != 'success' || needs.classify.outputs.build != 'false') }}",
+    "name": "Doc warnings",
+    "needs": "classify",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": null,
+      "sha": "69983d424f70d56e"
+     },
+     {
+      "name": "Install toolchain",
+      "sha": "ce42d5805d8f88ba"
+     },
+     {
+      "name": null,
+      "sha": "e9920a736e43d76a"
+     },
+     {
+      "name": "Build docs with warnings denied",
+      "sha": "7ddffeb879704f5a"
+     }
+    ]
+   },
+   "extra-platforms-gate": {
+    "if": "always()",
+    "name": "Extra platforms",
+    "needs": [
+     "classify",
+     "test-extra"
+    ],
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": "Reflect the extra-platform test result",
+      "sha": "68e618ad07b61420"
+     }
+    ]
+   },
+   "gate": {
+    "if": "always()",
+    "name": "Gate${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || github.event_name != 'pull_request' && github.event_name != 'merge_group' && format(' ({0})', github.event_name) || '' }}",
+    "needs": [
+     "classify",
+     "lint",
+     "test",
+     "test-extra",
+     "coverage",
+     "msrv",
+     "doc",
+     "package",
+     "semver"
+    ],
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": "Certify the plan and every skip",
+      "sha": "2057192099bfa484"
+     }
+    ]
+   },
+   "lint": {
+    "if": "${{ !cancelled() }}",
+    "name": "Format & lint",
+    "needs": "classify",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": null,
+      "sha": "69983d424f70d56e"
+     },
+     {
+      "name": "Install toolchain",
+      "sha": "1f70cf4057a9b38c"
+     },
+     {
+      "name": null,
+      "sha": "73dfb321c0b6019d"
+     },
+     {
+      "name": "rustfmt",
+      "sha": "2ae32fed31813d96"
+     },
+     {
+      "name": "clippy",
+      "sha": "bab1d5d5bc65b454"
+     },
+     {
+      "name": "no planning-note references",
+      "sha": "f653b5b91c9f845c"
+     },
+     {
+      "name": "no vetoed vocabulary",
+      "sha": "0c60e640fe378b64"
+     },
+     {
+      "name": "no private document references",
+      "sha": "bb507524ab8bfa4e"
+     },
+     {
+      "name": "folders hold at most twenty files",
+      "sha": "692fabc0038f29eb"
+     }
+    ]
+   },
+   "msrv": {
+    "if": "${{ !cancelled() && inputs.msrv != '' && (needs.classify.result != 'success' || needs.classify.outputs.build != 'false') }}",
+    "name": "MSRV (${{ inputs.msrv }})",
+    "needs": "classify",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": null,
+      "sha": "69983d424f70d56e"
+     },
+     {
+      "name": "Install MSRV toolchain",
+      "sha": "d0854b8c8def48f4"
+     },
+     {
+      "name": null,
+      "sha": "1e16df2f0e8e93d7"
+     },
+     {
+      "name": "Build on the declared MSRV",
+      "sha": "e0865c65da90b82f"
+     }
+    ]
+   },
+   "msrv-gate": {
+    "if": "always()",
+    "name": "MSRV",
+    "needs": [
+     "classify",
+     "msrv"
+    ],
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": "Reflect the MSRV result",
+      "sha": "819df689578a6a29"
+     }
+    ]
+   },
+   "package": {
+    "if": "inputs.package-check",
+    "name": "Package check",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": null,
+      "sha": "69983d424f70d56e"
+     },
+     {
+      "name": "Install toolchain",
+      "sha": "ce42d5805d8f88ba"
+     },
+     {
+      "name": "cargo publish --dry-run",
+      "sha": "28b2fb7610d3e7b2"
+     }
+    ]
+   },
+   "semver": {
+    "if": "inputs.semver-check",
+    "name": "Semver checks",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": null,
+      "sha": "69983d424f70d56e"
+     },
+     {
+      "name": "Install toolchain",
+      "sha": "ce42d5805d8f88ba"
+     },
+     {
+      "name": "Install cargo-semver-checks",
+      "sha": "3ba576693b67f485"
+     },
+     {
+      "name": "Check for public API breaks",
+      "sha": "d48751c4c3c59f93"
+     }
+    ]
+   },
+   "test": {
+    "if": "${{ !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}",
+    "name": "Test",
+    "needs": "classify",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": null,
+      "sha": "69983d424f70d56e"
+     },
+     {
+      "name": "Install toolchain",
+      "sha": "ce42d5805d8f88ba"
+     },
+     {
+      "name": null,
+      "sha": "8d78603c1c5ac30d"
+     },
+     {
+      "name": "Tests",
+      "sha": "b59f5cea6bb5177f"
+     },
+     {
+      "name": "Documentation tests",
+      "sha": "84c79d0256dca870"
+     }
+    ]
+   },
+   "test-extra": {
+    "if": "${{ inputs.extra-test-os != '[]' && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}",
+    "name": "Test (${{ matrix.os }})",
+    "needs": "classify",
+    "runs-on": "${{ matrix.os }}",
+    "steps": [
+     {
+      "name": null,
+      "sha": "69983d424f70d56e"
+     },
+     {
+      "name": "Install toolchain",
+      "sha": "ce42d5805d8f88ba"
+     },
+     {
+      "name": null,
+      "sha": "8d78603c1c5ac30d"
+     },
+     {
+      "name": "Tests",
+      "sha": "fb8c3e3e083446f1"
+     }
+    ],
+    "strategy": {
+     "fail-fast": false,
+     "matrix": {
+      "os": "${{ fromJSON(inputs.extra-test-os) }}"
+     }
+    }
+   }
+  },
+  "on": {
+   "workflow_call": {
+    "inputs": {
+     "coverage-ignore-regex": {
+      "default": "",
+      "description": "Regex of file paths to exclude from coverage (e.g. code covered only by a separate DB integration job)",
+      "type": "string"
+     },
+     "coverage-threshold": {
+      "default": 76,
+      "description": "Minimum line coverage percentage (0 disables the gate)",
+      "type": "number"
+     },
+     "doc-warnings": {
+      "default": true,
+      "description": "Build the docs with -D warnings so broken doc links fail the build",
+      "type": "boolean"
+     },
+     "extra-clippy-args": {
+      "default": "--no-default-features --features watch,completions",
+      "description": "Extra cargo clippy arguments for a second lint pass over another feature set (e.g. '--no-default-features --features watch,completions')",
+      "type": "string"
+     },
+     "extra-test-os": {
+      "default": "[\"macos-latest\", \"windows-latest\"]",
+      "description": "JSON array of extra runner images to also run tests on (e.g. '[\"macos-latest\"]')",
+      "type": "string"
+     },
+     "llvm-cov-version": {
+      "default": "0.9.1",
+      "description": "Exact version of the tool; bumped by editing this file",
+      "type": "string"
+     },
+     "msrv": {
+      "default": "1.88",
+      "description": "Minimum supported Rust version to verify a --locked build against (empty disables the check)",
+      "type": "string"
+     },
+     "package-check": {
+      "default": false,
+      "description": "Run cargo publish --dry-run on PRs to catch packaging breakage before tagging",
+      "type": "boolean"
+     },
+     "podman": {
+      "default": false,
+      "description": "Start rootless Podman socket before running the coverage job (ubuntu-latest only)",
+      "type": "boolean"
+     },
+     "semver-check": {
+      "default": false,
+      "description": "Run cargo-semver-checks to flag public API breaks against the last published release",
+      "type": "boolean"
+     },
+     "semver-checks-version": {
+      "default": "0.51.0",
+      "description": "Exact version of the tool; bumped by editing this file",
+      "type": "string"
+     },
+     "toolchain": {
+      "default": "1.100",
+      "description": "Rust toolchain to pin the build, lint and test jobs to",
+      "type": "string"
+     },
+     "working-directory": {
+      "default": ".",
+      "description": "Directory containing the Cargo workspace",
+      "type": "string"
+     }
+    }
+   }
+  },
+  "permissions": {
+   "contents": "read"
+  }
+ },
+ "workflow-lint.yml": {
+  "env": null,
+  "jobs": {
+   "workflow-lint": {
+    "uses": "./.github/workflows/reusable-workflow-lint.yml"
+   }
+  },
+  "on": {
+   "merge_group": {
+    "types": [
+     "checks_requested"
+    ]
+   },
+   "pull_request": {
+    "branches": [
+     "main",
+     "develop"
+    ]
+   },
+   "push": {
+    "branches": [
+     "main",
+     "develop"
+    ]
+   }
+  },
+  "permissions": {
+   "contents": "read"
+  }
+ }
+}

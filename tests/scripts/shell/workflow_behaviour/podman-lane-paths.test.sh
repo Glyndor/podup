@@ -38,7 +38,9 @@ for path in README.md docs/nested/page.html .github/ISSUE_TEMPLATE/bug.yml LICEN
 	tests/cli/x.rs tests/compose/parsing/y.rs tests/fixtures/data.yaml tests/hostile/podman/z.rs \
 	tests/quadlet/q.rs tests/repository/workflows/w.rs \
 	deny.toml about.toml about.hbs debian/control debian/changelog install.sh install.ps1 \
-	.github/scripts/release/sign-requirements.txt; do
+	.github/scripts/release/sign-requirements.txt \
+	.github/scripts/release/sign.py .github/scripts/checks/notes.md .github/scripts/checks/rust-ci-inputs.sh \
+	.github/scripts/hygiene/check-secrets.sh .github/scripts/hardening/check-hardening.sh; do
 	run_case 0 "$path"
 done
 # Every existing workflow except the lane has been reviewed as an independent caller.
@@ -54,11 +56,13 @@ for path in internal/x.rs Cargo.toml Cargo.lock build.rs .cargo/config.toml \
 	.github/podman_lane/known-failures-6 \
 	.github/podman_lane/baseline-tests .github/podman_lane/baseline .github/podman_lane/notes.md \
 	.github/scripts/checks/podman-lane-paths.sh .github/scripts/checks/is-version-bump.sh \
-	.github/scripts/fedora_image/fetch-fedora-image.sh .github/scripts/release/sign.py \
-	.github/scripts/checks/notes.md other.txt; do
+	.github/scripts/fedora_image/fetch-fedora-image.sh .github/scripts/podman_lane/coverage-floor.sh \
+	.github/scripts/unknown/x.sh .github/scripts/top-level.sh other.txt; do
 	run_case 1 "$path"
 done
 run_case 1 $'.github/dependabot.yml\ninternal/x.rs'
+run_case 1 $'.github/scripts/hygiene/check-secrets.sh\n.github/scripts/podman_lane/coverage-floor.sh'
+run_case 0 $'.github/scripts/hygiene/check-secrets.sh\n.github/scripts/release/sign.py'
 run_case 1 $'tests/hostile/podman/z.rs\ntests/engine/engine_integration.rs'
 run_case 0 $'tests/hostile/podman/z.rs\ntests/compose/parsing/y.rs\ndocs/commands.md'
 run_case 1 $'internal/x.rs\n.github/dependabot.yml'
@@ -104,7 +108,7 @@ export JUDGE="$script"
 decide_case() { # <event> <paths> <engine>
 	local rc=0
 	: >"$WORK/output"
-	PATH="$WORK/bin:$PATH" EVENT="$1" BASE_SHA=base HEAD_SHA=head CHANGED="$2" \
+	PATH="$WORK/bin:$PATH" EVENT="$1" BASE_REF="${BASE_REF:-develop}" BASE_SHA=base HEAD_SHA=head CHANGED="$2" \
 		GITHUB_OUTPUT="$WORK/output" bash "$WORK/decide.sh" >"$WORK/log" 2>&1 || rc=$?
 	check "decide $1 $2 exits successfully" 0 "$rc"
 	check "decide $1 $2 result" "engine=$3" "$(cat "$WORK/output")"
@@ -116,6 +120,10 @@ decide_case merge_group .github/workflows/podman-lane.yml true
 decide_case schedule .github/dependabot.yml true
 decide_case workflow_dispatch bench/timeit/Cargo.lock true
 decide_case pull_request '' true
+# A pull request into main boots the VM whatever the range says.
+BASE_REF=main decide_case pull_request .github/dependabot.yml true
+BASE_REF=main decide_case pull_request README.md true
+BASE_REF=develop decide_case pull_request .github/dependabot.yml false
 DIFF_ERROR=1 decide_case pull_request .github/dependabot.yml true
 MISSING_HELPER=1 decide_case pull_request .github/dependabot.yml true
 BUMP_RC=0 decide_case pull_request $'Cargo.toml\nCargo.lock\ndebian/changelog' false
@@ -131,10 +139,13 @@ check "tests/engine does not use the exempt test folders" 0 \
 # reusable workflow or a local action. Today its only uses are checkout.
 check "the lane has no local/reusable workflow or action calls" 0 \
 	"$(grep 'uses:' "$workflow" | grep -cvE 'uses: actions/checkout@[0-9a-f]{40}')"
-check "Nothing to boot keeps the non-engine path successful" 1 \
-	"$(grep -A2 -- '- name: Nothing to boot' "$workflow" | grep -cF "if: needs.decide.outputs.engine != 'true'")"
+# Only an explicit `false` skips the boot: an output that never arrived boots.
+check "Nothing to boot is reached only on an explicit false" 1 \
+	"$(grep -A2 -- '- name: Nothing to boot' "$workflow" | grep -cF "if: needs.decide.outputs.engine == 'false'")"
+check "no step reads the engine answer as == 'true'" 0 \
+	"$(grep -cF "outputs.engine == 'true'" "$workflow")"
 check "the required check name remains stable" 1 "$(grep -cF 'name: Supported Podman majors' "$workflow")"
-check "the required check waits for the matrix" 1 "$(grep -cF 'needs: podman-vm' "$workflow")"
+check "the required check waits for the plan and the matrix" 1 "$(grep -cF 'needs: [decide, podman-vm]' "$workflow")"
 # The lane boots one Podman major, the newest, and the identity gate reads the
 # known-failures file of the major the VM actually booted. A gate that finds no
 # file skips silently, so every major in the matrix needs its own.
@@ -155,7 +166,7 @@ awk '
 ' "$workflow" >"$WORK/result.sh"
 for result in success failure cancelled skipped; do
 	rc=0
-	RESULT="$result" bash "$WORK/result.sh" >"$WORK/result.log" 2>&1 || rc=$?
+	PLAN=success RESULT="$result" bash "$WORK/result.sh" >"$WORK/result.log" 2>&1 || rc=$?
 	if [ "$result" = success ]; then
 		check "required check accepts a successful no-boot matrix" 0 "$rc"
 	else
@@ -163,6 +174,18 @@ for result in success failure cancelled skipped; do
 		check "required check explains $result" 1 "$(grep -cF "result: $result" "$WORK/result.log")"
 	fi
 done
+# A plan that did not succeed is red even when the matrix reports success: a
+# VM that "booted nothing" because the plan never answered is not a pass.
+for plan in failure cancelled skipped ""; do
+	rc=0
+	PLAN="$plan" RESULT=success bash "$WORK/result.sh" >"$WORK/result.log" 2>&1 || rc=$?
+	check "required check refuses a successful matrix after a plan that is '$plan'" 1 "$rc"
+	check "required check says the plan did not succeed ('$plan')" 1 "$(grep -cF "the plan did not succeed" "$WORK/result.log")"
+done
+# Every step that boots reads the answer as "not false", and the matrix job
+# itself starts when the plan failed.
+check "the matrix job starts when the plan failed" 1 \
+	"$(awk '/^  podman-vm:/{f=1} f&&/if: \$\{\{ !cancelled\(\) \}\}/{c++;exit} END{print c+0}' "$workflow")"
 
 echo
 echo "passed: $pass  failed: $fail"

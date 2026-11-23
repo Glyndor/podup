@@ -99,6 +99,7 @@ jobs:
           # GitHub built for this group (the range that will land on
           # develop). Other events (schedule, workflow_dispatch) leave both
           # empty, which the engine=true short-circuit below handles.
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
@@ -111,6 +112,12 @@ jobs:
               exit 0
               ;;
           esac
+          # A pull request into main boots the VM whatever the range says.
+          if [ "$BASE_REF" = main ]; then
+            echo "engine=true" >> "$GITHUB_OUTPUT"
+            echo "a pull request into main: the VM always boots"
+            exit 0
+          fi
           # Fail closed: a diff that cannot be read boots the VM.
           if ! changed="$(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA")"; then
             echo "engine=true" >> "$GITHUB_OUTPUT"
@@ -151,6 +158,11 @@ jobs:
 
   podman-vm:
     needs: decide
+    # Starts even when `decide` failed. Its steps run on anything but an explicit
+    # `false`, so a plan that never answered boots the VM instead of leaving
+    # this job skipped, which is the one skip `Supported Podman majors` would
+    # have to tell from a decision.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     # Raised for the one-thread experiment: serialising the suite costs wall
     # clock, and a run that dies on the timeout answers nothing (#1039).
@@ -177,10 +189,10 @@ jobs:
         with:
           persist-credentials: false
       - name: Nothing to boot
-        if: needs.decide.outputs.engine != 'true'
+        if: needs.decide.outputs.engine == 'false'
         run: echo "this pull request changes nothing the VM can observe (see the decide job); reporting success without booting"
       - name: Install qemu + cloud tools
-        if: needs.decide.outputs.engine == 'true'
+        if: needs.decide.outputs.engine != 'false'
         timeout-minutes: 18
         run: |
           # apt has hung for the whole 95 min job budget on a saturated runner, and the
@@ -221,7 +233,7 @@ jobs:
           done
           exit 1
       - name: Fetch Fedora cloud image (Podman 6 = rawhide)
-        if: needs.decide.outputs.engine == 'true'
+        if: needs.decide.outputs.engine != 'false'
         run: |
           # The script lives in .github/scripts/fedora_image/ so it ships with the repo;
           # its logic lives in the script (#1978, after dl.fedoraproject.org
@@ -246,7 +258,7 @@ jobs:
           echo "VM_IMAGE=$img" >> "$GITHUB_ENV"
           qemu-img resize "$RUNNER_TEMP/vm.qcow2" 40G
       - name: Build cloud-init seed (script-file for clean RC)
-        if: needs.decide.outputs.engine == 'true'
+        if: needs.decide.outputs.engine != 'false'
         run: |
           cat > "$RUNNER_TEMP/user-data" <<'EOF'
           #cloud-config
@@ -520,7 +532,7 @@ jobs:
           sed -i "s/__LLVM__/$LLVM/" "$RUNNER_TEMP/user-data"
           cloud-localds "$RUNNER_TEMP/seed.iso" "$RUNNER_TEMP/user-data"
       - name: Boot VM (9p = repo only) + capture
-        if: needs.decide.outputs.engine == 'true'
+        if: needs.decide.outputs.engine != 'false'
         run: |
           # Raised with the job timeout for the one-thread experiment (#1039): qemu
           # has its own cap, and leaving it at 45m would kill the VM before the job
@@ -532,7 +544,7 @@ jobs:
             -virtfs local,path=${{ github.workspace }},mount_tag=repo,security_model=none,id=repo \
             -display none -serial stdio 2>&1 | tee "$RUNNER_TEMP/vm.log" || true
       - name: Verify podup core suite passed on the target Podman
-        if: needs.decide.outputs.engine == 'true'
+        if: needs.decide.outputs.engine != 'false'
         run: |
           L="$RUNNER_TEMP/vm.log"
           echo "=== key lines ==="; grep -E 'DISK_BEGIN|PODMAN_BEGIN|test result:|PODUP_TESTS_RC_BEGIN|No space' "$L" | tail -10 || true
@@ -701,14 +713,21 @@ jobs:
           echo "GREEN: podup core PASSED on Podman $VER ($PASS tests >= baseline $BASELINE; $FAIL in the nested-virt-noisy subset)."
 
   podman-majors:
-    name: Supported Podman majors
+    # The name says which kind of run produced it: nothing for a pull request into
+    # `develop` and for the merge queue, `(promotion)` for a pull request into `main`,
+    # and the event in brackets for everything else (a push, a schedule). A required
+    # check is matched by name on a commit, so the push that lands on `develop` and
+    # the pull request that promotes the same commit into `main` must not be able to
+    # answer for each other: they get different names and the ruleset of each branch
+    # requires its own.
+    name: Supported Podman majors${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || github.event_name != 'pull_request' && github.event_name != 'merge_group' && format(' ({0})', github.event_name) || '' }}
     # A required status check is matched by name, and `podman-vm (6)` carries the
     # matrix value. The lane follows the newest Podman: when Podman 7 ships, `["6"]`
     # becomes `["7"]`, and on that pull request the name `podman-vm (6)` stops being
     # emitted while a ruleset could still require it, so the pull request that carries
     # the change would block itself. This name does not move, and it keeps its
     # wording from when the lane ran two majors. See #1552.
-    needs: podman-vm
+    needs: [decide, podman-vm]
     # `needs` on its own SKIPS this job when the matrix fails, and a skipped required
     # check does not block a merge, the exact failure this job exists to prevent.
     if: always()
@@ -719,12 +738,15 @@ jobs:
     steps:
       - name: Reflect the matrix result
         env:
+          PLAN: ${{ needs.decide.result }}
           RESULT: ${{ needs.podman-vm.result }}
         run: |
           set -euo pipefail
-          # Unlike the gates in the shared rust-ci reusable, `skipped` is NOT a pass
-          # here: podman-vm carries no `if:` and runs on every pull request, so a
-          # skipped matrix means something went wrong rather than a caller opting out.
+          # A plan that did not succeed is red on its own, whatever the matrix did.
+          [ "$PLAN" = success ] || { echo "::error::the plan did not succeed (result: $PLAN)"; exit 1; }
+          # `skipped` is NOT a pass here: podman-vm runs on every event and decides
+          # inside its steps whether to boot, so a skipped matrix means something
+          # went wrong rather than a caller opting out.
           case "$RESULT" in
             success) echo "the Podman lane passed" ;;
             *) echo "::error::the Podman matrix did not pass (result: $RESULT)"; exit 1 ;;
