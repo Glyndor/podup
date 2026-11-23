@@ -46,6 +46,7 @@ FILES = {
     "reusable-dco.yml": {},
     "reusable-line-limit.yml": {},
     "reusable-main-guard.yml": {},
+    "reusable-cancel-others.yml": {},
     "podman-lane.yml": {"podman-vm": "conditions"},
 }
 

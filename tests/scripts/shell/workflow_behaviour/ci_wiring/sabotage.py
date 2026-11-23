@@ -12,7 +12,7 @@ import os
 import sys
 
 R = "reusable-rust-ci.yml"
-IF_TEST = "    if: ${{ !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}\n    runs-on: ubuntu-latest\n    # Bound: worst of the last three successful runs on 2026-09-02 was 106s"
+IF_TEST = "    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}\n    runs-on: ubuntu-latest\n    # Bound: worst of the last three successful runs on 2026-09-02 was 106s"
 
 PLANTS = [
     # 1. The run: of two suites crossed.
@@ -25,11 +25,14 @@ PLANTS = [
      "if: ${{ inputs.extra-test-os != '[]' &&", "if: ${{ inputs.coverage-threshold > 0 &&"),
     # 3. A suite handed a fixed false.
     ("a fixed false on the Linux tests", R, IF_TEST, IF_TEST.replace(
-        "if: ${{ !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}", "if: false")),
+        "if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}", "if: false")),
     ("a fixed false on the Rust pipeline in its caller", "ci.yml", "  rust:\n", "  rust:\n    if: false\n"),
     ("a duplicate `if` on the Linux tests, which PyYAML's safe_load reads as the last one", R,
      "  test:\n    name: Test\n", "  test:\n    name: Test\n    if: true\n"),
     ("a duplicate key in the gate", R, "  gate:\n", "  gate:\n    runs-on: ubuntu-latest\n"),
+    ("the cancel job running the working tree's script instead of the base copy", "reusable-cancel-others.yml",
+     'bash "$RUNNER_TEMP/others.sh"', "bash .github/scripts/ci/cancel-others.sh"),
+    ("the layers no longer waiting for lint", R, "needs: [classify, lint]\n    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}", "needs: [classify]\n    if: ${{ !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}"),
     # 4. The plan variables of two suites crossed in the gate.
     ("the run and build answers crossed in the gate", R, "RUN=$(out classify run)", "RUN=$(out classify build)"),
     ("the switches of two suites crossed in the gate", R, 'judge msrv "$MSRV_ON"', 'judge msrv "$DOC_ON"'),
@@ -81,7 +84,7 @@ PLANTS = [
     ("Supported Podman majors losing the plan", "podman-lane.yml", "needs: [decide, podman-vm]", "needs: podman-vm"),
 ]
 
-SUF = "${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || github.event_name != 'pull_request' && github.event_name != 'merge_group' && format(' ({0})', github.event_name) || '' }}"
+SUF = "${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}"
 
 # Plants that required_names.py must catch: a required name that a push, a schedule,
 # a dispatch or another workflow can also produce.
@@ -92,6 +95,11 @@ NAMES = [
     ("the DCO loses the run kind in its name", "reusable-dco.yml", "    name: Signed-off-by present on every commit" + SUF, "    name: Signed-off-by present on every commit"),
     ("the workflow lint loses the run kind in its name", "reusable-workflow-lint.yml", "    name: workflow-lint" + SUF, "    name: workflow-lint"),
     ("a second workflow produces the line limit", "commit-hygiene.yml", "jobs:\n", "jobs:\n  line-limit:\n    uses: ./.github/workflows/reusable-line-limit.yml\n"),
+    ("a pull request trigger loses `edited`", "ci.yml", "    types: [opened, synchronize, reopened, edited]\n", ""),
+    ("the Podman lane runs for any base, and `Develop` is read as develop", "podman-lane.yml", "    branches: [main, develop]\n  # Required check on develop", "  # Required check on develop"),
+    ("the workflow lint runs for any base", "workflow-lint.yml", "    branches: [main, develop]\n  # Required check", "  # Required check"),
+    ("a name with an expression nobody listed", "reusable-line-limit.yml", "    name: line limit" + SUF, "    name: line limit${{ github.ref_name }}"),
+    ("a name that only a push could not tell from the pull request's", "reusable-line-limit.yml", "format(' ({0})', github.event_name)", "''"),
     ("a push run of the line limit gets the plain name", "reusable-line-limit.yml", "format(' ({0})', github.event_name)", "''"),
     ("the Podman lane promotion name is also given to the queue", "podman-lane.yml", "github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)'", "github.event_name != 'push' && ' (promotion)'"),
 ]

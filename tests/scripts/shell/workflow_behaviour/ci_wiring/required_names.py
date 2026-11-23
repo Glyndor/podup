@@ -46,12 +46,34 @@ MAIN = [
     "Supported Podman majors (promotion)",
     "develop-only / develop-only",
 ]
-# (event, base branch) for each kind of run a workflow can have.
+# (event, base branch) for each kind of run a workflow can have. `Develop` and `MAIN`
+# are bases that differ from the protected branches only by case: a trigger's
+# `branches:` filter tells them apart, an `==` in an expression does not.
 CONTEXTS = [
-    ("pull_request", "develop"), ("pull_request", "main"), ("merge_group", ""),
+    ("pull_request", "develop"), ("pull_request", "main"), ("pull_request", "Develop"),
+    ("pull_request", "MAIN"), ("pull_request", "feature"), ("merge_group", ""),
     ("push", "develop"), ("push", "main"), ("schedule", ""), ("workflow_dispatch", ""),
 ]
-TOKEN = re.compile(r"\s*(&&|\|\||==|!=|\(|\)|,|'[^']*'|github\.event_name|github\.base_ref|format)")
+SUFFIX = ("github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || "
+          "!(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') "
+          "&& format(' ({0})', github.event_name) || ''")
+# Every expression a job name may contain. Anything else is refused: a name this
+# does not know how to resolve is a name it cannot hold to the list. The matrix and
+# input values are listed because no required name has one.
+ALLOWED = {SUFFIX, "matrix.target", "matrix.asset", "matrix.arch", "matrix.os", "inputs.msrv"}
+TOKEN = re.compile(r"\s*(&&|\|\||==|!=|!|\(|\)|,|'[^']*'|github\.event_name|github\.base_ref|format)")
+
+
+class Cs(str):
+    """A string whose `==` and `!=` ignore case, as they do in an expression."""
+
+    def __eq__(self, other):
+        return str.lower(self) == str.lower(str(other))
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    __hash__ = str.__hash__
 
 
 def evaluate(expr, event, base):
@@ -62,16 +84,20 @@ def evaluate(expr, event, base):
         if not m:
             raise ValueError(f"cannot evaluate {expr!r} at {expr[pos:pos + 20]!r}")
         tok, pos = m.group(1), m.end()
-        py += {"&&": " and ", "||": " or ", "github.event_name": repr(event),
-               "github.base_ref": repr(base), "format": "_format"}.get(tok, tok)
-    return eval(py, {"_format": lambda f, *a: f.format(*a)})  # noqa: S307  (tokens are whitelisted above)
+        if tok.startswith("'"):
+            py += f"_s({tok})"
+        else:
+            py += {"&&": " and ", "||": " or ", "!": " not ", "github.event_name": f"_s({event!r})",
+                   "github.base_ref": f"_s({base!r})", "format": "_format"}.get(tok, tok)
+    return eval(py, {"_format": lambda f, *a: Cs(str(f).format(*a)), "_s": Cs})  # noqa: S307  (tokens are whitelisted above)
 
 
 def render(name, event, base):
-    """The name with its expressions run. An expression this does not know (a
-    matrix value) is left as written: no required name has one, and a required name
-    that did would no longer match what the list holds."""
+    """The name with its expressions run. An expression that is not in ALLOWED is
+    an error; a listed one this does not evaluate (a matrix value) is left as written."""
     def one(m):
+        if m.group(1).strip() not in ALLOWED:
+            raise ValueError(f"the name {name!r} holds an expression that is not in the list of resolved patterns")
         try:
             return str(evaluate(m.group(1), event, base))
         except ValueError:
@@ -89,6 +115,8 @@ def on_of(spec):
 
 
 def runs(spec, event, base):
+    """Whether the trigger starts the workflow for this kind of run. The branch
+    filters compare exactly, with case."""
     on = on_of(spec)
     if event not in on:
         return False
@@ -99,8 +127,21 @@ def runs(spec, event, base):
     return True
 
 
+def expand(specs, spec, prefix, event, base, out, fname):
+    """Every name a workflow's jobs can emit, into the local reusables however deep.
+    A job's own `if:` is not read: a skipped job still reports its name."""
+    for job_id, job in (spec.get("jobs") or {}).items():
+        uses = job.get("uses")
+        if isinstance(uses, str) and uses.startswith("./"):
+            inner = specs.get(os.path.basename(uses), {})
+            expand(specs, inner, f"{prefix}{job_id} / ", event, base, out, fname)
+        else:
+            name = render(job.get("name", job_id), event, base)
+            out.setdefault(prefix + name, set()).add((fname, event, base))
+
+
 def produced(root):
-    """name -> set of (workflow, event, base)."""
+    """name -> set of (workflow, event, base). Raises ValueError on a name it cannot resolve."""
     specs = {}
     for path in ci_yaml.workflows_in(os.path.join(root, ".github", "workflows")):
         specs[os.path.basename(path)] = ci_yaml.load(path)
@@ -109,25 +150,33 @@ def produced(root):
         if fname.startswith("reusable-"):
             continue
         for event, base in CONTEXTS:
-            if not runs(spec, event, base):
-                continue
-            for job_id, job in (spec.get("jobs") or {}).items():
-                uses = job.get("uses")
-                if isinstance(uses, str) and uses.startswith("./"):
-                    inner = specs.get(os.path.basename(uses), {})
-                    for ijob_id, ijob in (inner.get("jobs") or {}).items():
-                        if "name" in ijob:
-                            name = f"{job_id} / {render(ijob['name'], event, base)}"
-                            out.setdefault(name, set()).add((fname, event, base))
-                else:
-                    name = render(job.get("name", job_id), event, base)
-                    out.setdefault(name, set()).add((fname, event, base))
-    return out
+            if runs(spec, event, base):
+                expand(specs, spec, "", event, base, out, fname)
+    return out, specs
 
 
 def main():
-    made = produced(ROOT)
+    try:
+        made, specs = produced(ROOT)
+    except ValueError as e:
+        print(e)
+        return 1
     problems = []
+    # A pull request trigger that feeds a required name runs again when the base changes.
+    for fname, spec in specs.items():
+        cfg = on_of(spec).get("pull_request")
+        if fname.startswith("reusable-") or cfg is None:
+            continue
+        feeds = any(f == fname and e == "pull_request" for who in made.values() for f, e, _b in who
+                    if any(n in made and (f, e, _b) in made[n] for n in DEVELOP + MAIN))
+        types = (cfg or {}).get("types") if isinstance(cfg, dict) else None
+        branches = (cfg or {}).get("branches") if isinstance(cfg, dict) else None
+        if feeds and not (branches and set(branches) <= {"develop", "main"}):
+            problems.append(f"{fname}: its pull_request trigger feeds a required name and does not limit the bases "
+                            "to `branches: [develop, main]`, which is the only filter that tells `Develop` from `develop`")
+        if feeds and not (types and "edited" in types):
+            problems.append(f"{fname}: its pull_request trigger feeds a required name but does not list `edited`, "
+                            "so changing the base of a pull request would not run the plan again")
     for name in DEVELOP:
         who = made.get(name, set())
         if not who:
@@ -135,7 +184,7 @@ def main():
             continue
         if len({w for w, _e, _b in who}) > 1:
             problems.append(f"{name}: produced by more than one workflow: {sorted({w for w, _e, _b in who})}")
-        bad = sorted((e, b) for _w, e, b in who if e not in ("pull_request", "merge_group") or b == "main")
+        bad = sorted((e, b) for _w, e, b in who if e not in ("pull_request", "merge_group") or b not in ("develop", ""))
         if bad:
             problems.append(f"{name}: also produced by {bad}; a push, a schedule, a dispatch or a pull request into main must not answer for it")
     for name in MAIN:

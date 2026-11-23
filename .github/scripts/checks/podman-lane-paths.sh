@@ -58,6 +58,7 @@ while IFS= read -r f; do
 		.github/workflows/release.yml) ;;
 		.github/workflows/repository-health.yml) ;;
 		.github/workflows/reusable-branch-health.yml) ;;
+		.github/workflows/reusable-cancel-others.yml) ;;
 		.github/workflows/reusable-dco.yml) ;;
 		.github/workflows/reusable-dependabot-freshness.yml) ;;
 		.github/workflows/reusable-installer-contract.yml) ;;

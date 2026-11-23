@@ -71,7 +71,7 @@ needs = {
 print(json.dumps(needs))
 PY
 )"
-	env NEEDS="${NEEDS_OVERRIDE:-$needs}" \
+	env NEEDS="${NEEDS_OVERRIDE:-$needs}" BASE="${BASE:-none}" \
 		EXTRA_ON="${EXTRA_ON:-true}" COVERAGE_ON="${COVERAGE_ON:-true}" MSRV_ON="${MSRV_ON:-true}" \
 		DOC_ON="${DOC_ON:-true}" PACKAGE_ON="${PACKAGE_ON:-false}" SEMVER_ON="${SEMVER_ON:-false}" \
 		bash "$WORK/gate.sh" >"$WORK/out.log" 2>&1
@@ -171,6 +171,12 @@ check "the table prints a job that ran" 1 "$(grep -cE '^test +success +ran$' "$W
 check "the table prints a certified skip" 1 "$(grep -cE '^coverage +skipped +skipped, the plan said so$' "$WORK/out.log")"
 gate $s true false true $s $k $k $k $s $s >/dev/null
 check "the table prints a skip nothing certifies" 1 "$(grep -cE '^test +skipped +SKIPPED WITHOUT A REASON$' "$WORK/out.log")"
+# The base is checked exactly, in shell: `==` in a name expression ignores case.
+check "a pull request into develop is certified" 0 "$(BASE=develop gate $s true false true $s $s $s $s $s $s)"
+check "a pull request into main is certified" 0 "$(BASE=main gate $s true false true $s $s $s $s $s $s)"
+check "a base that differs from develop by case is refused" 1 "$(BASE=Develop gate $s true false true $s $s $s $s $s $s)"
+check "a base that differs from main by case is refused" 1 "$(BASE=MAIN gate $s true false true $s $s $s $s $s $s)"
+check "any other base is refused" 1 "$(BASE=feature gate $s true false true $s $s $s $s $s $s)"
 # What the gate reads is the result of the job itself, and a job that is not there is red.
 check "a needs that is not JSON is red" 1 "$(NEEDS_OVERRIDE='not json' gate $s true false true $s $s $s $s $s $s)"
 check "a needs with no entry for the tests is red" 1 \
@@ -203,9 +209,14 @@ PY
 check "a pull request into main runs every lane, with no judge asked" \
 	"run=true,docs_only=false,ci_only=false|git:0" "$(plan_step reusable-rust-ci.yml classify decide main)"
 check "a pull request into main builds, with no judge asked" "build=true|git:0" "$(plan_step reusable-rust-ci.yml classify build main)"
+check "a pull request into a base that is not exactly develop runs every lane" \
+	"run=true,docs_only=false,ci_only=false|git:0" "$(plan_step reusable-rust-ci.yml classify decide Develop)"
+check "a pull request into another base runs every lane" \
+	"run=true,docs_only=false,ci_only=false|git:0" "$(plan_step reusable-rust-ci.yml classify decide feature)"
 check "a pull request into develop asks the judge" "|git:1" "$(plan_step reusable-rust-ci.yml classify decide develop)"
 check "the build answer for a pull request into develop asks git" "build=true|git:1" "$(plan_step reusable-rust-ci.yml classify build develop)"
 check "the workflow lint runs for a pull request into main, with no judge asked" "run=true|git:0" "$(plan_step reusable-workflow-lint.yml workflow-lint decide main)"
+check "the workflow lint runs for a base that is not exactly develop" "run=true|git:0" "$(plan_step reusable-workflow-lint.yml workflow-lint decide Develop)"
 check "the workflow lint asks the judge for a pull request into develop" "|git:1" "$(plan_step reusable-workflow-lint.yml workflow-lint decide develop)"
 
 # The two older gates still carry the names the ruleset requires until it moves

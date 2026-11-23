@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, develop]
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     branches: [main, develop]
   # Required check on develop (ruleset 17287557). The merge queue fires
   # `merge_group` on a temporary branch; without this trigger the check
@@ -23,3 +24,14 @@ concurrency:
 jobs:
   workflow-lint:
     uses: ./.github/workflows/reusable-workflow-lint.yml
+
+  # When this workflow fails on a pull request, the other runs of the same commit
+  # stop: they would spend runners on a commit that is already red. The job and
+  # the rules it follows are in reusable-cancel-others.yml.
+  cancel-others:
+    needs: workflow-lint
+    if: ${{ failure() && github.event_name == 'pull_request' }}
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/reusable-cancel-others.yml

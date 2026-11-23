@@ -17,6 +17,7 @@ on:
       - main
       - develop
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     branches:
       - main
       - develop
@@ -57,3 +58,14 @@ jobs:
       # fixtures. The day something maintained by hand lands there, the
       # exclusion is wrong and this sentence is where it says so.
       exclude-pattern: "^bench/scenarios/"
+
+  # When this workflow fails on a pull request, the other runs of the same commit
+  # stop: they would spend runners on a commit that is already red. The job and
+  # the rules it follows are in reusable-cancel-others.yml.
+  cancel-others:
+    needs: line-limit
+    if: ${{ failure() && github.event_name == 'pull_request' }}
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/reusable-cancel-others.yml

@@ -42,12 +42,14 @@ jobs:
   workflow-lint:
     # The name says which kind of run produced it: nothing for a pull request into
     # `develop` and for the merge queue, `(promotion)` for a pull request into `main`,
-    # and the event in brackets for everything else (a push, a schedule). A required
+    # and the event in brackets for everything else (a push, a schedule, a pull request
+    # on any other base). `==` in an expression ignores case, so the trigger limits the
+    # bases with `branches`, which does not, and the gate checks the base in shell. A required
     # check is matched by name on a commit, so the push that lands on `develop` and
     # the pull request that promotes the same commit into `main` must not be able to
     # answer for each other: they get different names and the ruleset of each branch
     # requires its own.
-    name: workflow-lint${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || github.event_name != 'pull_request' && github.event_name != 'merge_group' && format(' ({0})', github.event_name) || '' }}
+    name: workflow-lint${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 32s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
@@ -77,8 +79,8 @@ jobs:
       - name: Decide whether the workflow lint must run
         id: decide
         run: |
-          # A pull request into main runs the lint whatever the range says.
-          if [ "$BASE_REF" = main ]; then
+          # The plan is trusted for a pull request only when its base is exactly develop.
+          if [ "$EVENT" = pull_request ] && [ "$BASE_REF" != develop ]; then
             echo "run=true" >>"$GITHUB_OUTPUT"
           else
             git show "$BASE_SHA:.github/scripts/checks/workflow-lint-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
@@ -616,3 +618,14 @@ jobs:
         if: steps.decide.outputs.run != 'false'
         run: |
           python3 .github/scripts/checks/check-merge-group-triggers.py
+
+      # The token that can cancel other runs (`actions: write`) is held to an
+      # exact list of steps, by its effective permissions: `write-all`, a grant
+      # at the top of a workflow, and what a job inherits all count. A job that
+      # holds it may run only the steps the script lists, and the one launcher
+      # that runs a script runs the copy of the base commit, never a file of the
+      # pull request's tree. Logic lives in the script; its tests plant each way
+      # around it.
+      - name: A job that can end other runs runs only the steps the list holds
+        if: steps.decide.outputs.run != 'false'
+        run: python3 .github/scripts/ci/check-write-token-jobs.py
