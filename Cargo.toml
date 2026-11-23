@@ -455,6 +455,22 @@ name = "down_services"
 path = "tests/cli/down/down_services.rs"
 
 [[test]]
+name = "rm_stop"
+path = "tests/cli/rm/rm_stop.rs"
+
+[[test]]
+name = "down_volumes"
+path = "tests/cli/down/down_volumes.rs"
+
+[[test]]
+name = "up_remove_orphans"
+path = "tests/cli/up/up_remove_orphans.rs"
+
+[[test]]
+name = "autostart_purge"
+path = "tests/cli/autostart/autostart_purge.rs"
+
+[[test]]
 name = "quadlet_jobs"
 path = "tests/quadlet/quadlet_jobs.rs"
 

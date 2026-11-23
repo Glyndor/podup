@@ -225,6 +225,8 @@ mod cli_build_push;
 mod cli_commands;
 #[path = "engine_integration/cli/images_files/cli_cp.rs"]
 mod cli_cp;
+#[path = "engine_integration/cli/lifecycle/cli_data_removal.rs"]
+mod cli_data_removal;
 #[path = "engine_integration/cli/lifecycle/cli_down_orphans_rmi.rs"]
 mod cli_down_orphans_rmi;
 #[path = "engine_integration/cli/logs_exec/cli_exec.rs"]
