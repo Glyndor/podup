@@ -31,7 +31,7 @@
 #   build.rs                    the crate's build script
 #   tests/                      the Rust test suite the package build runs
 #   debian/                     the packaging
-#   .github/workflows/debian-build.yml, reusable-rust-debian.yml, release.yml
+#   .github/workflows/debian-build.yml, reusable-rust-debian.yml, release.yml, reusable-release-build.yml
 #                               the CI that builds the package
 #   .github/scripts/checks/debian-ci-inputs.sh   this script
 #   install.sh, install.ps1     the installers
@@ -96,7 +96,7 @@ while IFS= read -r path; do
 		tests/*) answer true "$path changes the Rust test suite" ;;
 		# The CI that builds the package: its caller, its reusable and the
 		# release workflow, which builds the same package.
-		.github/workflows/debian-build.yml | .github/workflows/reusable-rust-debian.yml | .github/workflows/release.yml)
+		.github/workflows/debian-build.yml | .github/workflows/reusable-rust-debian.yml | .github/workflows/release.yml | .github/workflows/reusable-release-build.yml)
 			answer true "$path changes the CI"
 			;;
 		# The rest of the CI. The package build runs `cargo test`, and the Rust

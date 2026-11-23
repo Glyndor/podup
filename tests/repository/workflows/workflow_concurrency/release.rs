@@ -6,25 +6,27 @@ use super::*;
 #[cfg(unix)]
 #[test]
 fn release_rejects_published_tags_before_building() {
-	let doc = workflow("release");
+	let doc = workflow("reusable-release-verify");
 	let steps = doc["jobs"]["verify"]["steps"].as_sequence().unwrap();
 	let index = steps
 		.iter()
 		.position(|s| s["name"].as_str() == Some("Refuse an already published release"))
 		.expect("release checks publication before building");
 	let step = &steps[index];
-	assert_eq!(
-		step["env"]["TAG"],
-		"${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+	assert_eq!(step["env"]["TAG"], "${{ inputs.tag }}");
+	assert!(
+		step.get("if").is_none(),
+		"a release that is already published is refused in a rehearsal as well"
 	);
 	assert_eq!(step["env"]["GH_REPO"], "${{ github.repository }}");
-	let audit = steps
-		.iter()
-		.position(|s| s["name"].as_str() == Some("Audit dependencies for known advisories"))
-		.unwrap();
+	// The audit installs a tool of other people's, so it is a job of its own that waits for this one:
+	// the publication lookup precedes it, and nothing in this job installs anything.
+	assert_eq!(doc["jobs"]["audit"]["needs"], "verify");
 	assert!(
-		index < audit,
-		"publication lookup precedes expensive checks"
+		!steps.iter().any(|s| s["run"]
+			.as_str()
+			.is_some_and(|r| r.contains("cargo install"))),
+		"the job that names the commit installs a tool"
 	);
 	let script = step["run"].as_str().unwrap();
 	use std::process::Command;
@@ -60,6 +62,9 @@ gh() {
 			String::from_utf8_lossy(&output.stderr)
 		);
 		assert!(text.contains(diagnostic), "{text}");
-		assert_eq!(fs::read_to_string(args).unwrap(), "api\n--paginate\nrepos/example/repo/releases\n--jq\n.[] | select(.draft == false) | .tag_name\n");
+		assert_eq!(
+			fs::read_to_string(args).unwrap(),
+			"api\n--paginate\nrepos/example/repo/releases\n--jq\n.[] | select(.draft == false) | .tag_name\n"
+		);
 	}
 }

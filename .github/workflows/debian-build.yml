@@ -46,6 +46,8 @@ on:
       # set never ran. A gate that does not run is indistinguishable from one
       # that passes.
       - ".github/workflows/release.yml"
+      - ".github/workflows/reusable-release-build.yml"
+      - ".github/workflows/reusable-release-verify.yml"
   pull_request:
     branches:
       - main
@@ -92,6 +94,8 @@ on:
       # set never ran. A gate that does not run is indistinguishable from one
       # that passes.
       - ".github/workflows/release.yml"
+      - ".github/workflows/reusable-release-build.yml"
+      - ".github/workflows/reusable-release-verify.yml"
 
 permissions:
   contents: read

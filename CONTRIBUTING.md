@@ -70,7 +70,7 @@ CI is split by responsibility rather than gathered in one file:
 | `podman-lane-develop-nightly.yml` | the coverage lane against Podman 6, fired nightly from `develop` |
 | `dco.yml`, `line-limit.yml`, `workflow-lint.yml` | one rule each |
 | `main-guard.yml` | `develop-only`: only the release pull request can target `main` |
-| `release.yml` | the release checks, signed binaries, GitHub Release |
+| `release.yml` | the release checks, signed binaries and packages, GitHub Release; run by hand with `dry_run` it signs with a throwaway key, makes no attestation and publishes nothing (a tag already published is refused) |
 
 Package and semver checks are disabled in `ci.yml`. Reusable workflows are local files under `.github/workflows/`.
 

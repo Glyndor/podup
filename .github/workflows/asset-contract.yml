@@ -8,6 +8,8 @@ on:
       - "install.sh"
       - "install.ps1"
       - ".github/workflows/release.yml"
+      - ".github/workflows/reusable-release-build.yml"
+      - ".github/workflows/reusable-release-verify.yml"
       - ".github/workflows/asset-contract.yml"
       # While this reusable was a pinned Glyndor/.github reference, a change
       # to it arrived as a Dependabot commit editing the line above, which
@@ -30,6 +32,8 @@ on:
       - "install.sh"
       - "install.ps1"
       - ".github/workflows/release.yml"
+      - ".github/workflows/reusable-release-build.yml"
+      - ".github/workflows/reusable-release-verify.yml"
       - ".github/workflows/asset-contract.yml"
       # While this reusable was a pinned Glyndor/.github reference, a change
       # to it arrived as a Dependabot commit editing the line above, which
@@ -63,8 +67,8 @@ concurrency:
 jobs:
   check:
     uses: ./.github/workflows/reusable-installer-contract.yml
-  # Per-asset .sig loop, three-slot regex, and ed25519 error classification
-  # regression (issue #1359). The fixture carries a release with three
+  # Per-asset .sig loop, slot regex, and ed25519 error classification
+  # regression (issue #1359). The fixture carries a release with two
   # populated rotation slots; the test verifies every .sig against the
   # slots, then exercises the install.sh's ed25519_verify directly to
   # pin the L7 error class on Linux.

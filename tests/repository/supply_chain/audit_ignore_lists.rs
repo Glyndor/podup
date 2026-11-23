@@ -1,7 +1,7 @@
 //! `cargo audit` and `cargo deny` read two different files but must agree
 //! on which RUSTSEC ids are ignored. `deny.toml` carries the cargo-deny
 //! list and `.cargo/audit.toml` carries the cargo-audit one. The release
-//! job (`release.yml`) runs `cargo audit --deny warnings` from the
+//! job (`reusable-release-verify.yml`) runs `cargo audit --deny warnings` from the
 //! repository root, so an ignore that lives only in deny.toml does not
 //! help the release gate. The two lists must be equal. This test only
 //! accepts one canonical layout per file and refuses the rest.

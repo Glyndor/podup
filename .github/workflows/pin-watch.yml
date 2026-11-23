@@ -1,7 +1,7 @@
 name: pin-watch
 # Notifies (opens an issue) when a tool version pinned in this repository has
 # drifted from upstream. Five pins are owned here and watched nowhere else:
-#   - the `debian:trixie` container digest in release.yml
+#   - the `debian:trixie` container digest in reusable-release-build.yml
 #   - `python-version` in asset-contract.yml (it appears more than once; the
 #     entries must agree, and disagreement is itself a drift)
 #   - `Standards-Version` in debian/control
@@ -68,9 +68,9 @@ jobs:
           # silently disagree with what the workflows actually use.
           #
           # There are TWO of them and they are meant to be the same image:
-          # release.yml builds the published .deb in its own `container:`, and
+          # reusable-release-build.yml (called by release.yml) builds the published .deb in its own `container:`, and
           # reusable-rust-debian.yml's `debian-image` default is what the
-          # debian-build lane exercises on every pull request. release.yml's
+          # debian-build lane exercises on every pull request. Its
           # own comment says the two should agree. Measured 2026-08-28, they do
           # not, and had not since before #1568 replaced the remote reference:
           # the release ships from a snapshot the suite never ran in. Which of
@@ -83,11 +83,11 @@ jobs:
           read_digest() { # <file> <grep pattern>
             grep -oE "$2" "$1" | head -n1 | sed 's/.*@//' || true
           }
-          RELEASE_DIGEST=$(read_digest .github/workflows/release.yml \
+          RELEASE_DIGEST=$(read_digest .github/workflows/reusable-release-build.yml \
             'container: debian:trixie@sha256:[a-f0-9]{64}')
           LANE_DIGEST=$(read_digest .github/workflows/reusable-rust-debian.yml \
             'default: "debian:trixie@sha256:[a-f0-9]{64}')
-          for pair in "release.yml:$RELEASE_DIGEST" "reusable-rust-debian.yml:$LANE_DIGEST"; do
+          for pair in "reusable-release-build.yml:$RELEASE_DIGEST" "reusable-rust-debian.yml:$LANE_DIGEST"; do
             [[ "${pair#*:}" =~ ^sha256:[a-f0-9]{64}$ ]] \
               || { echo "::error::could not parse the pinned debian:trixie digest in ${pair%%:*} (read '${pair#*:}')"; exit 1; }
           done
@@ -95,7 +95,7 @@ jobs:
           # last column says what is required, not an upstream value, because
           # for this row there is no upstream being compared against.
           [ "$RELEASE_DIGEST" = "$LANE_DIGEST" ] \
-            || add_drift "debian:trixie digest (release.yml and the debian-build lane disagree)" \
+            || add_drift "debian:trixie digest (the release build and the debian-build lane disagree)" \
                  ".github/workflows/" "$RELEASE_DIGEST, $LANE_DIGEST" "(they must agree)"
           TOKEN=$(curl -fsSL 'https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/debian:pull' \
             | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"])')
@@ -108,11 +108,11 @@ jobs:
             | tr -d '\r' | awk -F': ' 'tolower($1) == "docker-content-digest" { print $2; exit }')
           [[ "$LATEST_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] \
             || { echo "::error::registry returned an unexpected digest: '$LATEST_DIGEST'"; exit 1; }
-          # Both sites are compared, not just release.yml's. While they agree
+          # Both sites are compared, not just the release build's. While they agree
           # that is one row either way; while they do not, reporting only one
           # of them would leave the other stale with nothing saying so.
           [ "$RELEASE_DIGEST" = "$LATEST_DIGEST" ] \
-            || add_drift "debian:trixie container digest" ".github/workflows/release.yml" \
+            || add_drift "debian:trixie container digest" ".github/workflows/reusable-release-build.yml" \
                  "$RELEASE_DIGEST" "$LATEST_DIGEST"
           [ "$LANE_DIGEST" = "$LATEST_DIGEST" ] || [ "$LANE_DIGEST" = "$RELEASE_DIGEST" ] \
             || add_drift "debian:trixie image default" ".github/workflows/reusable-rust-debian.yml" \

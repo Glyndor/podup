@@ -24,7 +24,7 @@
 //!
 //! The pins are:
 //!
-//! - `.github/workflows/release.yml`, in the `build-deb` job's
+//! - `.github/workflows/reusable-release-build.yml`, in the `build-deb` job's
 //!   `RUST_TOOLCHAIN` env.
 //! - `.github/workflows/debian-build.yml`, in the `rust-toolchain:` input
 //!   to the reusable workflow.
@@ -108,8 +108,8 @@ fn cmp_version(a: &str, b: &str) -> Ordering {
 #[test]
 fn the_two_workflow_pins_declare_the_same_toolchain() {
 	let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-	let release_yml = fs::read_to_string(root.join(".github/workflows/release.yml"))
-		.expect("release.yml is readable");
+	let release_yml = fs::read_to_string(root.join(".github/workflows/reusable-release-build.yml"))
+		.expect("reusable-release-build.yml is readable");
 	let debian_build_yml = fs::read_to_string(root.join(".github/workflows/debian-build.yml"))
 		.expect("debian-build.yml is readable");
 
@@ -118,7 +118,7 @@ fn the_two_workflow_pins_declare_the_same_toolchain() {
 
 	assert_eq!(
 		deb, reusable,
-		"release.yml's build-deb job pins {deb:?} but debian-build.yml pins \
+		"reusable-release-build.yml's build-deb job pins {deb:?} but debian-build.yml pins \
 		 {reusable:?}. A drift between the two means the package is built by \
 		 a compiler CI does not validate with - that is Glyndor/podup#1487 \
 		 stated as a YAML mismatch."
@@ -128,8 +128,8 @@ fn the_two_workflow_pins_declare_the_same_toolchain() {
 #[test]
 fn the_pinned_toolchain_satisfies_the_crate_floor() {
 	let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-	let release_yml = fs::read_to_string(root.join(".github/workflows/release.yml"))
-		.expect("release.yml is readable");
+	let release_yml = fs::read_to_string(root.join(".github/workflows/reusable-release-build.yml"))
+		.expect("reusable-release-build.yml is readable");
 	let debian_build_yml = fs::read_to_string(root.join(".github/workflows/debian-build.yml"))
 		.expect("debian-build.yml is readable");
 	let manifest = fs::read_to_string(root.join("Cargo.toml")).expect("Cargo.toml is readable");

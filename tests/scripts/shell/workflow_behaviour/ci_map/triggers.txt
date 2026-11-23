@@ -45,7 +45,10 @@
 .github/scripts/packaging/stage-payload.py	debian-build,lint-shell
 .github/scripts/podman_lane/*	debian-build,lint-shell
 .github/scripts/release/check-artifact-dir.sh	debian-build,lint-shell
+.github/scripts/release/check-key-slots.py	debian-build,lint-shell
 .github/scripts/release/check-tag.sh	debian-build,lint-shell
+.github/scripts/release/expected-assets.py	debian-build,lint-shell
+.github/scripts/release/public-key-of.py	debian-build,lint-shell
 .github/scripts/release/sign-requirements.txt	asset-contract,debian-build,lint-shell
 .github/scripts/release/sign.py	asset-contract,debian-build,lint-shell
 .github/scripts/release/verify-provenance.sh	debian-build,lint-shell
@@ -82,6 +85,8 @@
 .github/workflows/reusable-line-limit.yml	lint-shell
 .github/workflows/reusable-main-guard.yml	lint-shell
 .github/workflows/reusable-powershell-ci.yml	lint-powershell
+.github/workflows/reusable-release-build.yml	asset-contract,debian-build,lint-shell,linux-hardening,windows-arm64
+.github/workflows/reusable-release-verify.yml	asset-contract,debian-build,lint-shell,linux-hardening,windows-arm64
 .github/workflows/reusable-rust-audit.yml	lint-shell
 .github/workflows/reusable-rust-ci.yml	lint-shell
 .github/workflows/reusable-rust-debian.yml	debian-build,lint-shell

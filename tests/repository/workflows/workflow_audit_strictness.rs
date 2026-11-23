@@ -49,7 +49,7 @@ fn audit_invocations(workflow: &str) -> Vec<&str> {
 
 #[test]
 fn every_cargo_audit_denies_warnings() {
-	for name in ["release.yml", "reusable-rust-audit.yml"] {
+	for name in ["reusable-release-verify.yml", "reusable-rust-audit.yml"] {
 		let body = read(name);
 		let calls = audit_invocations(&body);
 		assert!(

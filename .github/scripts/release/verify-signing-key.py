@@ -15,17 +15,28 @@ This closes the loop by verifying the produced signature against the public keys
 that ship to users, read straight out of install.sh rather than restated here -
 a copy in this file could drift from the installer and would prove nothing about
 what a user actually runs. Any populated slot may verify (rotation trusts two
-keys at once, and a third slot is the documented make-before-break target); the
-check fails only when NO embedded key accepts the signature, which is exactly
-the condition that would strand every consumer.
+keys at once); the check fails only when NO embedded key accepts the signature,
+which is exactly the condition that would strand every consumer.
+
+The number of slots is SLOT_COUNT, and it is the number the consumers verify
+against, not a wider one: a key in a slot that no installer, updater or channel
+reads would make the release pass here and be refused everywhere else. The
+installer is refused when it declares more slots than that, and
+check-key-slots.py holds the same number against install.sh, install.ps1 and
+internal/update/verify.rs. Taking a third slot into use is a change to that one
+number and to the three consumers, made together.
 
 The optional third argument points the verifier at an installer other than the
-one at the repo root - the test fixture ships a three-slot install.sh that the
-slot-regex test exercises without touching the real installer.
+one at the repo root - the test fixture ships a two-slot install.sh.
+
+PODUP_VERIFY_ONLY_KEY_B64, when set, replaces the embedded keys with that one
+key. A rehearsal of the release signs with a throwaway key that no consumer
+embeds, and verifies against it; a real release never sets it.
 
 Exit: 0 verified, 1 mismatch or malformed input.
 """
 import base64
+import os
 import re
 import sys
 from pathlib import Path
@@ -35,26 +46,42 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 DEFAULT_INSTALLER = Path(__file__).resolve().parents[3] / "install.sh"
 
-# Matches every installer slot (`PODUP_RELEASE_PUBKEY_B64`,
-# `PODUP_RELEASE_PUBKEY2_B64`, `PODUP_RELEASE_PUBKEY3_B64`, ...). The `[0-9]?`
-# accepts the no-digit form (slot 0) and any one decimal digit (slots 1-9), so
-# the third rotation slot - the documented make-before-break target - is not
-# silently dropped. The default is taken from the `${VAR:-DEFAULT}` form so CI
-# reads the same literal a user gets when the env override is unset.
-SLOT_RE = re.compile(
-	r'^PODUP_RELEASE_PUBKEY[0-9]?_B64="\$\{PODUP_RELEASE_PUBKEY[0-9]?_B64:-([^}]*)\}"$',
+# The number of key slots the consumers verify against. install.sh, install.ps1
+# and internal/update/verify.rs each have exactly this many, and
+# check-key-slots.py compares them with it.
+SLOT_COUNT = 2
+
+# The slots are `PODUP_RELEASE_PUBKEY_B64` (the first) and `PODUP_RELEASE_PUBKEY<n>_B64`
+# for n from 2 to SLOT_COUNT. Any other slot name, a third one included, is not a slot
+# the consumers read, and is refused below. The default is taken from the
+# `${VAR:-DEFAULT}` form so CI reads the same literal a user gets when the env
+# override is unset.
+DECLARED_RE = re.compile(
+	r'^PODUP_RELEASE_PUBKEY([0-9]*)_B64="\$\{PODUP_RELEASE_PUBKEY([0-9]*)_B64:-([^}]*)\}"$',
 	re.MULTILINE,
 )
+SLOT_NUMBERS = [""] + [str(n) for n in range(2, SLOT_COUNT + 1)]
 
 
 def embedded_pubkeys(installer: Path) -> list[str]:
 	"""Return the non-empty release pubkeys the installer ships, in slot order."""
 	if not installer.is_file():
 		sys.exit(f"cannot read {installer}; refusing to publish unverified")
-	slots = SLOT_RE.findall(installer.read_text(encoding="utf-8"))
-	if not slots:
+	declared = DECLARED_RE.findall(installer.read_text(encoding="utf-8"))
+	if not declared:
 		sys.exit(f"found no PODUP_RELEASE_PUBKEY*_B64 slots in {installer}")
-	return [s for s in slots if s]
+	for name, again, _value in declared:
+		if name != again:
+			sys.exit(f"{installer}: slot {name or 1} defaults from the variable of slot {again or 1}")
+	numbers = [name for name, _again, _value in declared]
+	if numbers != SLOT_NUMBERS:
+		sys.exit(
+			f"{installer} declares the slots {[n or '1' for n in numbers]}, and the consumers read "
+			f"{[n or '1' for n in SLOT_NUMBERS]}: a key in a slot nobody reads would pass here and be "
+			"refused everywhere else. Change SLOT_COUNT, install.sh, install.ps1 and "
+			"internal/update/verify.rs together."
+		)
+	return [value for _name, _again, value in declared if value]
 
 
 def main() -> None:
@@ -69,7 +96,8 @@ def main() -> None:
 	data = signed.read_bytes()
 	signature = sig.read_bytes()
 
-	keys = embedded_pubkeys(installer)
+	only = os.environ.get("PODUP_VERIFY_ONLY_KEY_B64", "")
+	keys = [only] if only else embedded_pubkeys(installer)
 	if not keys:
 		sys.exit("every embedded key slot is empty; nothing could verify this release")
 

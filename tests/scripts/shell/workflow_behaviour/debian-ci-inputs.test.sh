@@ -121,7 +121,7 @@ must_run "changes the packaging" debian/rules debian/control
 must_run "changes the Rust test suite" \
 	tests/hostile/input/parsing/hostile_compose.rs tests/fixtures/interpolation/ordinary-config.yml \
 	tests/scripts/stray.rs tests/scripts/shell/notes.md
-must_run "changes the CI" .github/workflows/debian-build.yml .github/workflows/reusable-rust-debian.yml .github/workflows/release.yml
+must_run "changes the CI" .github/workflows/debian-build.yml .github/workflows/reusable-rust-debian.yml .github/workflows/release.yml .github/workflows/reusable-release-build.yml
 must_run "changes an installer" install.sh install.ps1
 must_run "is not a script-only test change" unknown.txt README.md docs/commands.md
 

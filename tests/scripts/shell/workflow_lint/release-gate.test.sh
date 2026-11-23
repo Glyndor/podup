@@ -50,6 +50,8 @@ def before(job, prefix, new):
 exec(sys.argv[3])
 open(sys.argv[2], "w").write(yaml.safe_dump(spec, sort_keys=False, width=1000))
 PY
+	# A plant that could not be applied (a job or a step that is not there) is not a refusal.
+	if [ ! -f "$WORK/$n/release.yml" ]; then echo "the-plant-did-not-apply"; return; fi
 	python3 "$GATE" "$WORK/$n" >"$WORK/out" 2>&1
 	echo $?
 }
@@ -78,15 +80,23 @@ bump(spec['jobs'])"
 refused "the first action of the sign job renamed under the same commit" "spec['jobs']['sign']['steps'][0].update(uses='actions/cache@3d3c42e5aac5ba805825da76410c181273ba90b1')"
 refused "the first action of the release job pinned to a tag" "spec['jobs']['release']['steps'][0].update(uses='actions/checkout@v7')"
 refused "the first action of the release job with its pin removed" "spec['jobs']['release']['steps'][0].update(uses='actions/checkout')"
-# The jobs that sign the packages and seal the set are held whole as soon as they exist: a job of
-# either name that the hash list does not hold is refused, a job of another name that takes the
-# key is refused, and none of them may mint a token.
+# The jobs that sign the packages and seal the set hold the key and are held whole; the job that
+# publishes has the right to write a release and never the key, and no job has both. A key job
+# without its environment, a publisher with the key, and a sealer with the right to write each
+# say why they are refused.
 KEYJOB="{'runs-on': 'ubuntu-latest', 'steps': [{'run': 'true', 'env': KEY}]}"
-refused "a sign-packages job that the pinned list does not hold" "spec['jobs']['sign-packages'] = $KEYJOB"
-refused "a seal job that the pinned list does not hold" "spec['jobs']['seal'] = $KEYJOB"
 refused "a packager job that takes the key" "spec['jobs']['packager'] = $KEYJOB"
-refused "a seal job that can mint a token" "spec['jobs']['seal'] = {'runs-on': 'x', 'permissions': {'id-token': 'write'}, 'steps': [{'run': 'true'}]}"
-refused "a sign-packages job with the key at the workflow level of the job env" "spec['jobs']['sign-packages'] = {'runs-on': 'x', 'env': KEY, 'steps': [{'run': 'true'}]}"
+refused "a seal job that can mint a token" "spec['jobs']['seal']['permissions']['id-token'] = 'write'"
+refused "the key in the publishing job" "step('release', 'Create GitHub Release')['env'] = KEY"
+check "...which says the publishing job may not hold it" 1 "$(grep -c 'job `release`: holds the key' "$WORK/out")"
+refused "the environment taken off the signing job" "del spec['jobs']['sign']['environment']"
+check "...and says the key was read without it" 1 "$(grep -c 'job `sign`: reads the key without `environment: release`' "$WORK/out")"
+refused "the environment taken off the sealing job" "del spec['jobs']['seal']['environment']"
+refused "the environment of the package signer changed" "spec['jobs']['sign-packages']['environment'] = 'elsewhere'"
+refused "the right to write a release in the sealing job" "spec['jobs']['seal']['permissions']['contents'] = 'write'"
+check "...which says the key and the right to write are never in one job" 1 "$(grep -c 'a permission to write' "$WORK/out")"
+refused "a job of any other name that seals" "spec['jobs']['seal2'] = $KEYJOB"
+refused "the publishing job without its hash held" "spec['jobs']['release']['timeout-minutes'] = 99"
 check "the failure says which job to review and how to regenerate" 1 "$(run_gate "step('sign', 'Sign binary')['name'] = 'x'" >/dev/null; grep -c 'job `sign` changed: review the whole diff.*--print-hashes' "$WORK/out")"
 
 # --- every field of the three jobs, generated from the workflow ---------------------------
@@ -113,7 +123,7 @@ def put(job, path, fn):
     node[path[-1]] = fn(node[path[-1]])
     count += 1
     yaml.safe_dump(spec, open(f"{out}/m{count}.yml", "w"), sort_keys=False, width=1000)
-for job in ("sign", "attest", "release"):
+for job in ("sign", "sign-packages", "seal", "attest", "release"):
     for path, value in leaves(real["jobs"][job]):
         put(job, path, lambda v: (not v) if isinstance(v, bool) else v + 1 if isinstance(v, int) else str(v) + "x")
     for i in range(len(real["jobs"][job]["steps"])):
@@ -143,11 +153,11 @@ for f in "$WORK"/m*.yml; do
 	cp "$f" "$d/release.yml"
 	[ "$(gate_dir "$d")" = 1 ] || { survivors=$((survivors + 1)); echo "SURVIVED $f"; }
 done
-check "no generated change of the three jobs passes ($total of them)" 0 "$survivors"
+check "no generated change of the five jobs passes ($total of them)" 0 "$survivors"
 check "at least two hundred changes were generated" 1 "$([ "$total" -ge 200 ] && echo 1 || echo 0)"
 
 # --- the forms found in review ---------------------------------------------------------------
-for job_step in "sign:Sign binary" "attest:Check the artifacts" "release:Generate checksums"; do
+for job_step in "sign:Sign binary" "sign-packages:Sign package" "attest:Check the artifacts" "seal:Generate checksums" "release:Create GitHub Release"; do
 	job="${job_step%%:*}"
 	step="${job_step#*:}"
 	refused "a build before the step, in $job" "before('$job', '$step', {'name': 'x', 'run': 'cargo build --release'})"
@@ -166,26 +176,26 @@ refused "BASH_ENV in the environment of the workflow" "spec['env'] = {'BASH_ENV'
 refused "a different permission on the workflow" "spec['permissions'] = {'contents': 'write'}"
 
 # --- who holds the key and who mints ----------------------------------------------------------
-refused "the key on the Debian build step" "step('build-deb', 'Build the package')['env'] = KEY"
-refused "toJSON(secrets) in a build" "step('build-deb', 'Build the package')['env'] = {'ALL': '\${{ toJSON(secrets) }}'}"
-refused "a secret picked by an expression" "step('build-deb', 'Build the package')['env'] = {'K': '\${{ secrets[matrix.name] }}'}"
-refused "tojson(secrets) in lower case" "step('build-deb', 'Build the package')['env'] = {'ALL': '\${{ tojson(secrets) }}'}"
-refused "the key by an upper case context" "step('build-deb', 'Build the package')['env'] = {'K': '\${{ SECRETS.RELEASE_ED25519_KEY }}'}"
-refused "the key by a lower case name" "step('build-deb', 'Build the package')['env'] = {'K': '\${{ secrets.release_ed25519_key }}'}"
-refused "the key by a mixed case index" "step('build-deb', 'Build the package')['env'] = {'K': '\${{ Secrets[\"Release_Ed25519_Key\"] }}'}"
-refused "toJSON in parentheses" "step('build-deb', 'Build the package')['env'] = {'ALL': '\${{ toJSON((secrets)) }}'}"
-refused "the context with spaces around the dot" "step('build-deb', 'Build the package')['env'] = {'K': '\${{ secrets . ANY_NAME }}'}"
-refused "the context after a tab" "step('build-deb', 'Build the package')['env'] = {'K': '\${{\tsecrets.ANY_NAME }}'}"
-refused "the context after a newline" "step('build-deb', 'Build the package')['env'] = {'K': '\${{\nsecrets.ANY_NAME }}'}"
-refused "the context in a key" "step('build-deb', 'Build the package')['env'] = {'\${{ secrets.ANY_NAME }}': 'x'}"
-refused "the context through a function" "step('build-deb', 'Build the package')['env'] = {'K': '\${{ format(\"{0}\", secrets) }}'}"
-refused "secrets: inherit on a job" "spec['jobs']['build-deb']['secrets'] = 'inherit'"
+refused "the key on the Debian build step" "step('attest', 'Check the artifacts')['env'] = KEY"
+refused "toJSON(secrets) in a build" "step('attest', 'Check the artifacts')['env'] = {'ALL': '\${{ toJSON(secrets) }}'}"
+refused "a secret picked by an expression" "step('attest', 'Check the artifacts')['env'] = {'K': '\${{ secrets[matrix.name] }}'}"
+refused "tojson(secrets) in lower case" "step('attest', 'Check the artifacts')['env'] = {'ALL': '\${{ tojson(secrets) }}'}"
+refused "the key by an upper case context" "step('attest', 'Check the artifacts')['env'] = {'K': '\${{ SECRETS.RELEASE_ED25519_KEY }}'}"
+refused "the key by a lower case name" "step('attest', 'Check the artifacts')['env'] = {'K': '\${{ secrets.release_ed25519_key }}'}"
+refused "the key by a mixed case index" "step('attest', 'Check the artifacts')['env'] = {'K': '\${{ Secrets[\"Release_Ed25519_Key\"] }}'}"
+refused "toJSON in parentheses" "step('attest', 'Check the artifacts')['env'] = {'ALL': '\${{ toJSON((secrets)) }}'}"
+refused "the context with spaces around the dot" "step('attest', 'Check the artifacts')['env'] = {'K': '\${{ secrets . ANY_NAME }}'}"
+refused "the context after a tab" "step('attest', 'Check the artifacts')['env'] = {'K': '\${{\tsecrets.ANY_NAME }}'}"
+refused "the context after a newline" "step('attest', 'Check the artifacts')['env'] = {'K': '\${{\nsecrets.ANY_NAME }}'}"
+refused "the context in a key" "step('attest', 'Check the artifacts')['env'] = {'\${{ secrets.ANY_NAME }}': 'x'}"
+refused "the context through a function" "step('attest', 'Check the artifacts')['env'] = {'K': '\${{ format(\"{0}\", secrets) }}'}"
+refused "secrets: inherit on a job" "spec['jobs']['builds']['secrets'] = 'inherit'"
 refused "the key in the environment of the workflow" "spec['env'] = KEY"
-refused "the signing step moved into the build job" "spec['jobs']['build']['steps'].append({'name': 'Sign', 'env': KEY, 'run': 'python3 .github/scripts/release/sign.py x'})"
-refused "id-token on the build job" "spec['jobs']['build']['permissions']['id-token'] = 'write'"
-refused "attestations: write on the build job" "spec['jobs']['build']['permissions']['attestations'] = 'write'"
-refused "write-all on a job" "spec['jobs']['sbom']['permissions'] = 'write-all'"
-refused "a reusable workflow called with the key" "spec['jobs']['sbom'] = {'uses': './.github/workflows/signer.yml', 'secrets': {'KEY': '\${{ secrets.GLYNDOR_RELEASE_ED25519_KEY }}'}}"
+refused "the signing step moved into a job of another name" "spec['jobs']['extra'] = {'runs-on': 'ubuntu-latest', 'steps': [{'name': 'Sign', 'env': KEY, 'run': 'python3 .github/scripts/release/sign.py x'}]}"
+refused "id-token on the builds job" "spec['jobs']['builds']['permissions']['id-token'] = 'write'"
+refused "attestations: write on the builds job" "spec['jobs']['builds']['permissions']['attestations'] = 'write'"
+refused "write-all on a job" "spec['jobs']['builds']['permissions'] = 'write-all'"
+refused "a reusable workflow called with the key" "spec['jobs']['builds'] = {'uses': './.github/workflows/signer.yml', 'secrets': {'KEY': '\${{ secrets.GLYNDOR_RELEASE_ED25519_KEY }}'}}"
 mkdir -p "$WORK/other"
 printf 'jobs:\n  b:\n    runs-on: x\n    steps:\n      - run: echo\n        env:\n          K: ${{ secrets.GLYNDOR_RELEASE_ED25519_KEY }}\n' >"$WORK/other/other.yml"
 check "the key in a job of another workflow" 1 "$(gate_dir "$WORK/other")"
@@ -196,12 +206,11 @@ check "a cloud deployment workflow with its own OIDC token is not the gate's bus
 printf 'jobs:\n  b:\n    runs-on: x\n    steps:\n      - run: |\n          # secrets.GLYNDOR_RELEASE_ED25519_KEY is used only by release.yml\n          echo ok\n' >"$WORK/other/other.yml"
 check "a comment in another workflow that names the key" 0 "$(gate_dir "$WORK/other")"
 
-# --- what is outside the three jobs stays accepted -------------------------------------------
-accepted "a build step with its own variables in the build job" "spec['jobs']['build']['steps'].append({'name': 'x', 'env': {'PATH': 'x'}, 'run': 'cargo build --release'})"
-accepted "a change in the Debian build job" "spec['jobs']['build-deb']['timeout-minutes'] = 99"
-accepted "a change in the SBOM job" "spec['jobs']['sbom']['steps'].append({'name': 'x', 'run': 'echo hi'})"
-accepted "a defaults block on a job that is not pinned" "spec['jobs']['build']['defaults'] = {'run': {'shell': 'bash'}}"
-accepted "the job token in a build job" "step('build-deb', 'Build the package')['env'] = {'GH_TOKEN': '\${{ secrets.GITHUB_TOKEN }}'}"
+# --- what is outside the five jobs stays accepted -------------------------------------------
+accepted "a change in the call of the verification" "spec['jobs']['verify']['name'] = 'check'"
+accepted "a defaults block on a job that is not pinned" "spec['jobs']['builds']['defaults'] = {'run': {'shell': 'bash'}}"
+accepted "a change in the call of the builds" "spec['jobs']['builds']['name'] = 'compile'"
+accepted "the job token in a job that is not pinned" "spec['jobs']['builds']['with'] = {'token': '\${{ secrets.GITHUB_TOKEN }}'}"
 
 echo
 echo "$pass passed, $fail failed"

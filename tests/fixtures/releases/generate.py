@@ -8,9 +8,9 @@ release assets the verifier must check at release time:
   podup-windows-x86_64.exe, podup_1.0.0_amd64.deb, podup.cdx.json,
   NOTICES.html.
 
-The fixture install.sh carries THREE rotation slots so the SLOT_RE fix is
-exercised end-to-end: the test key lives in slot 3 only, and the fixture
-fails to verify if the verifier drops anything past slot 2.
+The fixture install.sh carries the TWO rotation slots the consumers read: the
+test key lives in slot 2 only, so the fixture fails to verify if the verifier
+drops anything past slot 1. A third slot is refused (see scripts/test.sh).
 
 Run from the repo root:
   python3 tests/fixtures/releases/generate.py
@@ -57,7 +57,6 @@ def main() -> int:
 	sigs.mkdir(exist_ok=True)
 
 	slot1 = pubkey_b64(SLOT1_SEED)
-	slot2 = pubkey_b64(SLOT2_SEED)
 	test_pk = pubkey_b64(TEST_SEED)
 	test_pk_padded = pubkey_b64_padded(TEST_SEED)
 
@@ -88,27 +87,23 @@ def main() -> int:
 		(out / name).write_bytes(body)
 		(sigs / f"{name}.sig").write_bytes(sign(TEST_SEED, body))
 
-	# install.sh is the special case: it's a *fixture* install.sh with three
+	# install.sh is the special case: it's a *fixture* install.sh with the two
 	# rotation slots, NOT a copy of the real install.sh. The verifier reads
 	# the slot defaults from this file, so its contents must match the
-	# SLOT_RE pattern. Keeping it self-contained (no copy of the real one)
-	# ensures exactly three matches - the head of the real install.sh carries
-	# its own two slot lines, and copying it would yield four matches and a
-	# noisy "verified against slot 3" output.
+	# slot pattern. Keeping it self-contained (no copy of the real one)
+	# ensures exactly two matches - the head of the real install.sh carries
+	# its own two slot lines, and copying it would yield four matches.
 	fixture_install = (
 		"#!/usr/bin/env bash\n"
 		"# Fixture install.sh for the release-signing regression test.\n"
-		"# Three rotation slots so the SLOT_RE change in verify-signing-key.py\n"
-		"# is exercised end-to-end. Slot 1 and slot 2 hold keypairs that do NOT\n"
-		"# match the test signatures; slot 3 holds the test key that signs every\n"
-		"# other asset in this directory.\n"
+		"# Two rotation slots, the number the consumers read. Slot 1 holds a keypair\n"
+		"# that does NOT match the test signatures; slot 2 holds the test key that\n"
+		"# signs every other asset in this directory.\n"
 		f'\nPODUP_RELEASE_PUBKEY_B64="${{PODUP_RELEASE_PUBKEY_B64:-{slot1}}}"\n'
-		f'PODUP_RELEASE_PUBKEY2_B64="${{PODUP_RELEASE_PUBKEY2_B64:-{slot2}}}"\n'
-		f'PODUP_RELEASE_PUBKEY3_B64="${{PODUP_RELEASE_PUBKEY3_B64:-{test_pk}}}"\n'
+		f'PODUP_RELEASE_PUBKEY2_B64="${{PODUP_RELEASE_PUBKEY2_B64:-{test_pk}}}"\n'
 		"\nPUBKEYS=()\n"
 		'[[ -n "$PODUP_RELEASE_PUBKEY_B64"  ]] && PUBKEYS+=("$PODUP_RELEASE_PUBKEY_B64")\n'
 		'[[ -n "$PODUP_RELEASE_PUBKEY2_B64" ]] && PUBKEYS+=("$PODUP_RELEASE_PUBKEY2_B64")\n'
-		'[[ -n "$PODUP_RELEASE_PUBKEY3_B64" ]] && PUBKEYS+=("$PODUP_RELEASE_PUBKEY3_B64")\n'
 	)
 	(out / "install.sh").write_text(fixture_install, encoding="utf-8")
 	(sigs / "install.sh.sig").write_bytes(sign(TEST_SEED, fixture_install.encode("utf-8")))
@@ -119,8 +114,7 @@ def main() -> int:
 
 	print(f"generated fixture under {out}")
 	print(f"  slot 1 pubkey (mismatch): {slot1}")
-	print(f"  slot 2 pubkey (mismatch): {slot2}")
-	print(f"  slot 3 pubkey (matches) : {test_pk}")
+	print(f"  slot 2 pubkey (matches) : {test_pk}")
 	return 0
 
 
