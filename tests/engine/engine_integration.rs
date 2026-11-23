@@ -84,6 +84,8 @@ mod top_images;
 #[path = "engine_integration/workload/recreate/up_recreate.rs"]
 mod up_recreate;
 
+#[path = "engine_integration/host_files/copy/cp_link_target.rs"]
+mod cp_link_target;
 #[cfg(all(unix, feature = "test-helpers"))]
 #[path = "engine_integration/host_files/copy/cp_sparse.rs"]
 mod cp_sparse;
@@ -258,6 +260,8 @@ mod lifecycle_output;
 
 // Unix only, with the test helpers: it reaches the Podman socket through
 // `podman_socket_url`, which is exported under the same condition.
+#[path = "engine_integration/workload/lifecycle/down_rmi_in_use.rs"]
+mod down_rmi_in_use;
 #[cfg(all(unix, feature = "test-helpers"))]
 #[path = "engine_integration/workload/lifecycle/healthcheck_inherits_image.rs"]
 mod healthcheck_inherits_image;

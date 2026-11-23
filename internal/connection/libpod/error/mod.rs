@@ -333,20 +333,12 @@ impl PodmanError {
 	/// container. A non-force `down --rmi` must skip such an image (matching
 	/// docker compose) instead of force-removing it and cascading the deletion of
 	/// every dependent container, including ones owned by other projects. Podman
-	/// returns this as a 409 conflict, or on some versions a 500 whose message
-	/// names the in-use cause.
+	/// 6.2.0 answers `DELETE /libpod/images/{name}` with a 409 conflict whenever
+	/// a container uses the image (measured 2026-11-23: its handler turns the
+	/// in-use exit code into 409, and the 500 of older versions is gone). A 500
+	/// is a real failure and is not read as "in use" from its message.
 	pub fn is_image_in_use(&self) -> bool {
-		match self {
-			Self::Api { status: 409, .. } => true,
-			Self::Api {
-				status: 500,
-				message,
-			} => {
-				let m = message.to_ascii_lowercase();
-				m.contains("in use") || m.contains("being used") || m.contains("used by")
-			}
-			_ => false,
-		}
+		matches!(self, Self::Api { status: 409, .. })
 	}
 
 	/// True if this API error reports a network that cannot be removed because

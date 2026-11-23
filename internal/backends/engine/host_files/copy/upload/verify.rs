@@ -234,13 +234,11 @@ pub(in crate::backends::engine::host_files::copy) fn sent_entries(
 
 /// What the destination's stat said about the entry that was sent.
 ///
-/// The four-way result exists so the link confirmation's log can distinguish
-/// "confirmed because the target matched" from "confirmed because the
-/// runtime did not send a target, so we fell back to the type check we used
-/// to live on". The pre-#1808 check satisfied any link on `is_symlink`; a
-/// runtime that returns `linkTarget: ""` puts us back on that check, and
-/// the operator looking at the log should be able to tell which side of
-/// the line they are on.
+/// A link is confirmed only by its target: a stat that carries no `linkTarget`
+/// refuses it instead of accepting it as a link of any destination. Podman
+/// 6.2.0, the floor, sends the field for every stat (measured 2026-11-23 for
+/// relative, absolute, dangling, directory-bound and chained links), so a stat
+/// without it is an answer this code does not know.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LinkCheck {
 	/// The destination matched what was sent exactly (size, kind, and for
@@ -255,14 +253,6 @@ pub(crate) enum LinkCheck {
 	/// header even on a 200. The caller turns this into `Mismatch { stat:
 	/// None }` so the user-facing message names the missing stat.
 	Absent,
-	/// The runtime answered a stat, but without a `linkTarget` to compare
-	/// against (an older Podman, or a Podman that stops sending the field
-	/// in a future release). The link is still confirmed, because refusing
-	/// every link on a missing field would turn a runtime change into a
-	/// fleet-wide copy failure. The reason string the caller logs must say
-	/// "fallback", so the operator can tell this confirmation from one
-	/// backed by a real target match.
-	Fallback,
 }
 
 /// Whether the destination's stat is the entry that was sent.
@@ -276,9 +266,8 @@ pub(crate) enum LinkCheck {
 /// a directory, a symlink, a named pipe, a socket, a device or any other
 /// non-regular kind reports a size that says nothing about what the upload
 /// put there, so the size comparison on its own is not enough. A link is
-/// confirmed only when its target text matches and its byte length matches,
-/// or the runtime sent no `linkTarget` and the link is at least a link at
-/// the destination.
+/// confirmed only when its target text matches and its byte length matches;
+/// a link whose stat carries no `linkTarget` is refused.
 pub(in crate::backends::engine::host_files::copy) fn entry_landed(
 	sent: SentKind,
 	entry_path: &str,
@@ -307,10 +296,7 @@ pub(in crate::backends::engine::host_files::copy) fn entry_landed(
 				return LinkCheck::Refused;
 			}
 			if stat.link_target.is_empty() {
-				// Runtime did not send `linkTarget`; fall back to the
-				// pre-#1808 type check. The caller logs this as a
-				// fallback, not a confirmation by target.
-				return LinkCheck::Fallback;
+				return LinkCheck::Refused;
 			}
 			let normalized = normalize_link_target(&sent_target, entry_path);
 			let target_bytes = sent_target.len();
@@ -536,13 +522,6 @@ impl Engine {
 			match stat {
 				Ok(post) => match entry_landed(entry.kind.clone(), &abs_path, post.as_ref()) {
 					LinkCheck::Confirmed => {}
-					LinkCheck::Fallback => {
-						tracing::debug!(
-							"cp: {} in {dir} is a symlink at the destination; confirmed by type \
-							 because the runtime sent no linkTarget: {post:?}",
-							entry.path,
-						);
-					}
 					LinkCheck::Refused => {
 						tracing::debug!(
 							"cp: {} in {dir} is not what was uploaded ({:?}): {post:?}",
