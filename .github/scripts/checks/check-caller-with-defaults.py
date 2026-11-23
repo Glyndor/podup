@@ -48,7 +48,7 @@ import yaml
 REQUIRED_REUSABLES = {
     "reusable-rust-ci.yml": [
         "Format & lint", "Test", "Coverage", "Doc warnings",
-        "MSRV", "Extra platforms",
+        "MSRV", "Extra platforms", "Gate",
     ],
     "reusable-dco.yml": [
         "Signed-off-by present on every commit",

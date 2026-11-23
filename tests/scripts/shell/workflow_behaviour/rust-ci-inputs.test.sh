@@ -217,21 +217,21 @@ check "an empty range is not documentation only" false \
 check "an empty range exits 1" 1 "$(judge pull_request "$base" "$base" | sed -n 4p)"
 
 # The workflow reads the judge from the reviewed base, never from the pull
-# request's own tree. Two jobs ask it: `classify`, whose answer the jobs
-# skipped whole read, and `lint`, which skips only its heavy steps.
+# request's own tree. One job asks it, `classify`, and every other job reads
+# its answer: the jobs skipped whole and the heavy steps of `lint`.
 # shellcheck disable=SC2016
-check "two jobs read the judge from the base" 2 \
+check "one job reads the judge from the base" 1 \
 	"$(grep -c 'git show "\$BASE_SHA:.github/scripts/checks/rust-ci-inputs.sh"' "$workflow")"
 check "the judge is never read from the working tree" 0 \
 	"$(grep -c 'bash .github/scripts/checks/rust-ci-inputs.sh' "$workflow")"
 # shellcheck disable=SC2016
 check "the range comes from the event" 1 \
 	"$(grep -c '^  BASE_SHA: \${{ github.event.pull_request.base.sha' "$workflow")"
-check "a missing step decision runs the lanes" 4 \
+check "no step decides for itself" 0 \
 	"$(grep -c "steps.decide.outputs.run != 'false'" "$workflow")"
-check "a missing job decision runs the lanes" 3 \
+check "a missing decision runs the lanes (three jobs and four steps)" 7 \
 	"$(grep -c "needs.classify.outputs.run != 'false'" "$workflow")"
-check "a classifier that failed runs the lanes" 3 \
+check "a classifier that failed runs the lanes" 5 \
 	"$(grep -c "needs.classify.result != 'success'" "$workflow")"
 
 # The third answer has to reach the jobs that read it.
@@ -239,7 +239,7 @@ check "a classifier that failed runs the lanes" 3 \
 check "the classifier exposes the documentation answer" 1 \
 	"$(grep -c 'docs_only: ${{ steps.decide.outputs.docs_only }}' "$workflow")"
 check "the lint job's heavy steps skip a documentation-only range" 4 \
-	"$(grep -c "steps.decide.outputs.run != 'false' && !(steps.decide.outputs.run == 'true' && steps.decide.outputs.docs_only == 'true')" "$workflow")"
+	"$(grep -c "needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true')" "$workflow")"
 check "the matrix and the coverage skip a documentation-only range" 2 \
 	"$(grep -c "needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}" "$workflow")"
 check "the full suite runs unless a healthy classifier said documentation only" 1 \

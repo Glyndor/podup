@@ -51,6 +51,10 @@ pub const REQUIRED_ON_MAIN: &[&str] = &[
 	"rust / Doc warnings",
 	"rust / MSRV",
 	"rust / Extra platforms",
+	// The gate that certifies every skip of the Rust pipeline. The six names
+	// above it are the suites it covers; the ruleset moves to the gate once
+	// this job is on `develop`, and the suites leave this list then.
+	"rust / Gate",
 	"Supported Podman majors",
 	"line-limit / line limit",
 	"dco / Signed-off-by present on every commit",
