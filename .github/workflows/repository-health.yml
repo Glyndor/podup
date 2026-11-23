@@ -80,8 +80,8 @@ jobs:
   #
   # Its output is an observation, not a gate: it reports the coverage of
   # `develop` under Podman 6 against a floor that no pull request can move,
-  # since the gate a pull request answers to is the 76 per cent threshold on
-  # `rust / Coverage`. A watcher would then report the staleness of a number
+  # since the gate a pull request answers to is the 76 per cent threshold of
+  # the coverage suite, which `rust / Gate` reads. A watcher would then report the staleness of a number
   # nobody is required to keep fresh.
   #
   # And a watcher added today would be born red. The guard reads the newest

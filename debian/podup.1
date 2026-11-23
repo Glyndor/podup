@@ -71,6 +71,15 @@ Suppress the host-binding and privilege-escalation warnings printed during
 Additional env file loaded into the variable map used for interpolation. May be
 given multiple times; later files win. The process environment and a project
 \fB.env\fR still take precedence.
+.TP
+.BR \-\-dry\-run
+Show what a command would do and change nothing. A request that is not a read
+never reaches Podman and nothing is written on the host. The commands that only
+read (\fBps\fR, \fBconfig\fR, \fBls\fR, \fBimages\fR, \fBvolumes\fR, \fBaudit\fR,
+\fBversion\fR, \fBport\fR, \fBlogs\fR, \fBevents\fR, \fBstats\fR,
+\fBgenerate quadlet\fR to standard output and \fBautostart status\fR) run as
+usual, and \fBautostart install\fR prints the unit and the actions it would run.
+Every other command refuses, naming itself, and exits 2.
 .SH COMMANDS
 .TP
 .B up

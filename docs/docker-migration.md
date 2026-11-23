@@ -38,20 +38,20 @@ The following Compose fields are translated onto Podman's libpod API. Fields out
 | Category | Keys |
 |---|---|
 | Images / build | `image`, `build` (context, dockerfile, args, target, cache_from, cache_to, secrets, labels, network), `pull_policy` (time policies map to `newer`), `pull_refresh_after` (strict syntax only) |
-| Execution | `command`, `entrypoint`, `working_dir`, `user`, `umask`, `platform`, `tty`, `stdin_open` |
+| Execution | `command`, `entrypoint`, `working_dir`, `user`, `umask`, `platform`, `tty`, `stdin_open`, `init`, `runtime`, `stop_signal` |
 | Environment | `environment`, `env_file` (dotenv format, or `format: raw`; see the note below the table), variable substitution (`${VAR:-default}`) |
 | Networking | `ports`, `expose`, `networks`, `network_mode`, `hostname`, `dns`, `dns_opt`, `dns_search`, `extra_hosts` |
 | Volumes | `volumes` (bind, named, tmpfs, npipe; a long-form bind with `create_host_path: false` fails `up` naming the service and the missing path instead of creating it), `tmpfs`, `volumes_from` |
 | Secrets / configs | `secrets`, `configs` (file, inline content, environment source, and `external: true` Podman-native secrets) |
 | Dependencies | `depends_on` (with `condition:` set to `service_started`, `service_healthy` or `service_completed_successfully`) |
-| Health checks | `healthcheck` (test, interval, timeout, retries, start_period, disable) |
+| Health checks | `healthcheck` (test, interval, timeout, retries, start_period, disable; `start_interval` is accepted and not honored, see [Other parsed-but-ignored fields](#other-parsed-but-ignored-fields)) |
 | Lifecycle hooks | `pre_start` (ephemeral init containers), `post_start`, `pre_stop` |
 | Restart policies | `restart`, `deploy.restart_policy` (`condition`, `max_attempts`) |
 | Replicas / scale | `deploy.replicas`, `scale:` |
-| Resource limits | `deploy.resources`, `mem_limit`, `cpus`, `cpu_shares`, `cpu_quota`, `pids_limit`, `ulimits`, `blkio_config` |
+| Resource limits | `deploy.resources`, `mem_limit`, `memswap_limit`, `cpus`, `cpu_shares`, `cpu_quota`, `cpu_period`, `cpuset`, `pids_limit`, `ulimits`, `blkio_config`, `oom_score_adj` |
 | Devices | `devices`, `device_cgroup_rules` |
 | GPU | `deploy.resources.reservations.devices`, `gpus:`; see the note below |
-| Security | `cap_add`, `cap_drop`, `security_opt`, `read_only`, `privileged`, `userns_mode` |
+| Security | `cap_add`, `cap_drop`, `security_opt`, `read_only`, `privileged`, `userns_mode`, `group_add`, `sysctls` |
 | Namespaces | `pid`, `ipc`, `uts`, `cgroup`, `shm_size` |
 | Metadata | `labels`, `annotations`, `container_name`, `profiles` |
 | Logging | `logging` (driver + options) |
@@ -447,6 +447,9 @@ The `[Build]` keys `Annotation=`, `Volume=` and `DNS=` have no compose `build:` 
 | `pull_refresh_after` | strictly validated after interpolation, syntax only; no last-pull clock is available, so it has no runtime effect |
 | `attach` | Honoured by `up`: a service with `attach: false` is never followed. Ignored only by `generate quadlet`, where there is no log following |
 | `use_api_socket` | no podup equivalent |
+| `healthcheck.start_interval` | Podman probes at `healthcheck.interval` during the start period, so `up --wait` can take that long to see the service healthy; `up` reports it |
+| `domainname` | Podman 6.2.0 has no setting for a container's domain name (the `kernel.domainname` sysctl is refused by `podman run` and fails at start through the API); `up` reports it |
+| `external_links` | Podman has no link option, and a container outside the project cannot be given another name; `up` reports it |
 | `provider:` / top-level `models:` | podup runs no model runner; the service/model is not honored |
 | volume long-form `driver_config` | not forwarded to Podman |
 | `networks.*.enable_ipv4` | Podman networks enable IPv4 by default and expose no toggle |
@@ -479,7 +482,7 @@ podup ships for Linux, macOS and Windows, each x86_64/arm64. Install paths are i
 
 ### Engine and transport
 
-podup needs a Podman 6.2.0 or newer engine and sets no upper bound: a newer release is accepted. The libpod client compares the engine's reported version (major, minor and patch) with `MIN_PODMAN_VERSION` (6.2.0), and the engine version is checked on the first request that contacts Podman. Commands that contact Podman check the version. `config --resolve-image-digests` and `autostart uninstall --purge` also contact it.
+podup needs a Podman 6.2.0 or newer engine and sets no upper bound: a newer release is accepted. On Debian and Ubuntu the [README](../README.md#install) shows how to install just that Podman. The libpod client compares the engine's reported version (major, minor and patch) with `MIN_PODMAN_VERSION` (6.2.0), and the engine version is checked on the first request that contacts Podman. Commands that contact Podman check the version. `config --resolve-image-digests` and `autostart uninstall --purge` also contact it.
 
 The transport is local-only. Only `unix://` (or `npipe://` on Windows) is accepted, from `--socket`, `PODMAN_SOCKET`, `DOCKER_HOST`, or auto-detection; remote `tcp://`/`ssh://`/`http(s)://`/`fd://` schemes are rejected before any connection. This applies to `podman machine` as well. Driving a remote engine over TCP or SSH is not supported; run podup beside the engine.
 

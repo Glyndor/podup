@@ -15,6 +15,8 @@
 
 One host, one run (2026-09-29). Tables and the chart use the same data; compare tools within this run, not across runs.
 
+> The run used podup 5.10.8 and Podman 5.7.0. podup now requires Podman 6.2.0 or newer and refuses an older engine, so these figures describe an engine podup no longer runs on. They are kept as a record of the method and of the comparison between tools, and have to be measured again with Podman 6.2.0.
+
 ## What was measured
 
 - podup 5.10.8 (published `podup-linux-x86_64` asset, static musl, verified against `SHA256SUMS`).

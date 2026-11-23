@@ -6,7 +6,7 @@ Install on Debian/Ubuntu with the [README](../README.md) bootstrap. Packages and
 
 | Dependency | What it is for |
 |---|---|
-| `podman (>= 6.2.0)` | Installed Podman 6.2.0 or newer; configure its API socket separately. |
+| `podman (>= 6.2.0)` | Installed Podman 6.2.0 or newer; configure its API socket separately. To install only Podman from the same archive, see [Install](../README.md#install). |
 | `unattended-upgrades` | Automatic-update software; scheduling and allowed origins still need enabling. |
 | `glyndor-archive-keyring` | Glyndor archive key, source and allowed-origin configuration. |
 
