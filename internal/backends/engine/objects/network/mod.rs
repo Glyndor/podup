@@ -13,6 +13,7 @@ mod isolation;
 mod link_aliases;
 mod mode;
 mod names;
+mod order;
 mod per_network_options;
 
 pub(crate) use isolation::apply_default_isolation;
@@ -23,3 +24,5 @@ pub(in crate::backends::engine) use mode::{
 };
 pub(in crate::backends::engine) use names::default_network_name;
 pub use names::resolve_network_name;
+pub(crate) use order::by_priority;
+pub(in crate::backends::engine) use order::network_order;

@@ -9,6 +9,7 @@ mod logging;
 mod memory;
 mod mounts;
 mod namespaces;
+mod network_attachment;
 mod networks;
 mod normalized_paths;
 mod resources;

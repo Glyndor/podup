@@ -7,7 +7,7 @@ use crate::quadlet::is_no_warn_set;
 
 use super::super::super::pod::{PodField, PodFields};
 use super::super::super::shared_values::network_values;
-use super::super::{unit_stem, ExternalNames, Section};
+use super::super::{sorted_label_pairs, unit_stem, ExternalNames, Section};
 
 /// Emit a `Network=` line per declared network the service attaches to, unless
 /// the pod carries the attachment instead.
@@ -26,7 +26,7 @@ pub(in super::super) fn emit_networks(
 	// `container:`/`service:`) is the one exception: those are
 	// namespace modes, not network attachments.
 	if !in_pod {
-		for net in service.networks.names() {
+		for net in attachment_order(service) {
 			// A declared (non-external) network is backed by a generated `.network`
 			// unit; an external network is referenced by its existing name directly,
 			// since no unit is emitted for it.
@@ -117,14 +117,54 @@ pub(in super::super) fn emit_network_mode(
 	}
 }
 
+/// The service's networks in the order the `Network=` lines are written.
+///
+/// Podman connects them in the order of the `--network` flags, and the first
+/// one holds `eth0`. Compose `priority` asks for the highest first, which is
+/// what `up` sends as `networkOrder` (`network_order`), so a service that sets
+/// one is written the same way: priority descending, then by name, the order
+/// libpod uses when it is told none. A service with no priority keeps the
+/// order its networks are declared in, as it always has.
+fn attachment_order(service: &Service) -> Vec<String> {
+	let names = service.networks.names();
+	let priority = |net: &str| {
+		service
+			.networks
+			.config_for(net)
+			.and_then(|c| c.priority)
+			.unwrap_or(0)
+	};
+	if names.iter().any(|net| priority(net) != 0) {
+		crate::engine::network_by_priority(names, priority)
+	} else {
+		names
+	}
+}
+
+/// The options Podman reads itself in a `--network` option list. A driver
+/// option with one of these names would be read as that option, not handed to
+/// the network backend, so it is not written.
+const RESERVED_OPTIONS: [&str; 5] = ["alias", "ip", "ip6", "mac", "interface_name"];
+
+/// Whether `text` can sit in a `Network=` option list as it is: no separator,
+/// no blank, no control character, nothing that systemd or the list could read
+/// as more than one thing.
+fn is_plain_option_text(text: &str) -> bool {
+	text.chars()
+		.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ':' | '/' | '@' | '+'))
+}
+
 /// The options of one network attachment, the way `up` builds them
 /// (`build_per_network_options`): the service name as an alias so siblings
-/// resolve it, the aliases declared for this network, and its static
-/// addresses. Podman reads them after the network name, so each one is scoped
-/// to that network instead of to every network the container joins.
+/// resolve it, the aliases declared for this network, its static addresses, its
+/// interface name and its driver options. Podman reads them after the network
+/// name, so each one is scoped to that network instead of to every network the
+/// container joins.
 ///
-/// The value is a comma-separated option list, so an alias that could break it
-/// is left out and reported, and an address is written only once it parses.
+/// The value is a comma-separated option list, so an alias, an interface name
+/// or a driver option that could break it is left out and reported, and an
+/// address is written only once it parses. Podman hands every name it does not
+/// know to the network backend, which is how a driver option travels.
 fn attachment_options(name: &str, service: &Service, net: &str) -> Vec<String> {
 	let config = service.networks.config_for(net);
 	let declared = config.and_then(|c| c.aliases.clone()).unwrap_or_default();
@@ -139,10 +179,12 @@ fn attachment_options(name: &str, service: &Service, net: &str) -> Vec<String> {
 			.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
 		{
 			options.push(format!("alias={alias}"));
-		} else if !is_no_warn_set() {
-			tracing::warn!(
-				"service \"{name}\": network alias {alias:?} on {net:?} is not exported; \
-				 it holds a character the Network= option list cannot carry"
+		} else {
+			not_exported(
+				name,
+				net,
+				&format!("network alias {alias:?}"),
+				"it holds a character the Network= option list cannot carry",
 			);
 		}
 	}
@@ -157,7 +199,48 @@ fn attachment_options(name: &str, service: &Service, net: &str) -> Vec<String> {
 	if let Some(ip6) = address(config.and_then(|c| c.ipv6_address.as_ref())) {
 		options.push(format!("ip6={ip6}"));
 	}
+	if let Some(interface) = config.and_then(|c| c.interface_name.as_ref()) {
+		if !interface.is_empty() && is_plain_option_text(interface) {
+			options.push(format!("interface_name={interface}"));
+		} else {
+			not_exported(
+				name,
+				net,
+				&format!("interface_name {interface:?}"),
+				"it is empty or holds a character the Network= option list cannot carry",
+			);
+		}
+	}
+	let driver_opts = config
+		.map(|c| sorted_label_pairs(c.driver_opts.clone()))
+		.unwrap_or_default();
+	for (key, value) in driver_opts {
+		if RESERVED_OPTIONS.contains(&key.as_str()) {
+			not_exported(
+				name,
+				net,
+				&format!("driver option {key:?}"),
+				"Podman reads that name as one of its own network options",
+			);
+		} else if !key.is_empty() && is_plain_option_text(&key) && is_plain_option_text(&value) {
+			options.push(format!("{key}={value}"));
+		} else {
+			not_exported(
+				name,
+				net,
+				&format!("driver option {key:?}"),
+				"its name or value holds a character the Network= option list cannot carry",
+			);
+		}
+	}
 	options
+}
+
+/// Say that a network setting is not written to the unit, unless warnings are off.
+fn not_exported(name: &str, net: &str, what: &str, why: &str) {
+	if !is_no_warn_set() {
+		tracing::warn!("service \"{name}\": {what} on {net:?} is not exported; {why}");
+	}
 }
 
 /// In a pod, emit a `--network-alias` podman arg per network alias and the first

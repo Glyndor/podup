@@ -153,6 +153,11 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "HashMap::is_empty", default)]
 	pub networks: HashMap<String, PerNetworkOptions>,
 
+	/// The order the networks are connected in, which fixes their interface
+	/// names (the first is `eth0`). Names exactly the keys of `networks`.
+	#[serde(rename = "networkOrder", skip_serializing_if = "Option::is_none")]
+	pub network_order: Option<Vec<String>>,
+
 	/// Network namespace mode.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub netns: Option<Namespace>,

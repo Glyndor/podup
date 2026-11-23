@@ -79,7 +79,7 @@ fn per_network_mac_takes_precedence_over_fallback() {
 }
 
 #[test]
-fn per_network_ipv6_and_link_local_become_static_ips() {
+fn per_network_ipv4_and_ipv6_become_static_ips_and_link_local_does_not() {
 	use crate::compose::types::ServiceNetworkConfig;
 	let cfg = ServiceNetworkConfig {
 		ipv4_address: Some("10.0.0.5".to_string()),
@@ -88,10 +88,13 @@ fn per_network_ipv6_and_link_local_become_static_ips() {
 		..Default::default()
 	};
 	let opts = build_per_network_options("web", Some(&cfg), None, &[]);
-	// All three address forms are folded into the static-IP list.
-	assert!(opts.static_ips.contains(&"10.0.0.5".to_string()));
-	assert!(opts.static_ips.contains(&"2001:db8::5".to_string()));
-	assert!(opts.static_ips.contains(&"169.254.0.1".to_string()));
+	// The two addresses of the container are static IPs. A link-local address
+	// is an extra one on the interface, which Podman cannot add; as a static IP
+	// it fails at start when it lies outside the subnet.
+	assert_eq!(
+		opts.static_ips,
+		vec!["10.0.0.5".to_string(), "2001:db8::5".to_string()]
+	);
 }
 
 #[test]
@@ -122,6 +125,8 @@ fn per_network_priority_alone_sends_no_driver_opts() {
 	};
 	let opts = build_per_network_options("web", Some(&cfg), None, &[]);
 	assert!(opts.driver_opts.is_none());
+	// It travels on the attachment so `network_order` can use it.
+	assert_eq!(opts.priority, Some(7));
 }
 
 #[test]
