@@ -71,7 +71,9 @@ def holds_key(value):
 
 def digest(spec, job):
     shared = {k: spec.get(k) for k in ("env", "defaults", "permissions")}
-    blob = json.dumps({"job": spec["jobs"][job], "workflow": shared}, sort_keys=True, separators=(",", ":"), default=str)
+    # The commit an action is pinned to is what Dependabot moves, so it is not part of the
+    # definition held here; the action, that it is pinned and every other property are.
+    blob = json.dumps({"job": ci_yaml.normalize_pins(spec["jobs"][job]), "workflow": shared}, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(blob.encode()).hexdigest()
 
 

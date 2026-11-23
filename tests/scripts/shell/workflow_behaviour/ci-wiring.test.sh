@@ -94,6 +94,60 @@ while [ "$i" -lt "$count" ]; do
 	i=$((i + 1))
 done
 
+# The pins an automatic update moves are not part of the contract; everything else about
+# an action reference is. A Dependabot pull request moves the commit an action is pinned
+# to and its version comment and nothing else, and it cannot run this test's --update: so
+# those cases must pass, and a different action, no pin, a tag, a branch or a hash that is
+# not a full commit must still fail.
+i=0
+count="$(python3 "$sabotages" pins --count)"
+while [ "$i" -lt "$count" ]; do
+	fresh
+	python3 "$sabotages" pins "$i" "$WORK/tree" || check "pin case $i finds its text" planted "not found"
+	want=1
+	[ "$(python3 "$sabotages" pins --passes "$i")" = yes ] && want=0
+	check "$([ "$want" = 0 ] && echo 'moves the pin and passes' || echo 'is refused'): $(python3 "$sabotages" pins --describe "$i")" "$want" "$(verdict)"
+	i=$((i + 1))
+done
+# An image digest is a pin of the same kind; the container and services of a job are held.
+check "a new image digest does not change a job's shape" same "$(python3 - "$HERE/.github/scripts/lib" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import ci_yaml
+a = {"container": {"image": "debian:trixie@sha256:" + "1" * 64}, "steps": [{"uses": "docker://alpine@sha256:" + "2" * 64}]}
+b = {"container": {"image": "debian:trixie@sha256:" + "3" * 64}, "steps": [{"uses": "docker://alpine@sha256:" + "4" * 64}]}
+print("same" if ci_yaml.normalize_pins(a) == ci_yaml.normalize_pins(b) else "different")
+PY
+)"
+check "an image with its digest removed is a different shape" different "$(python3 - "$HERE/.github/scripts/lib" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import ci_yaml
+a = {"container": {"image": "debian:trixie@sha256:" + "1" * 64}}
+b = {"container": {"image": "debian:trixie"}}
+print("same" if ci_yaml.normalize_pins(a) == ci_yaml.normalize_pins(b) else "different")
+PY
+)"
+check "an image that changes name is a different shape" different "$(python3 - "$HERE/.github/scripts/lib" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import ci_yaml
+a = {"container": {"image": "debian:trixie@sha256:" + "1" * 64}}
+b = {"container": {"image": "ubuntu:24.04@sha256:" + "1" * 64}}
+print("same" if ci_yaml.normalize_pins(a) == ci_yaml.normalize_pins(b) else "different")
+PY
+)"
+
+# A tool pinned by version and sha256 in an input default is edited by hand (pin-watch only
+# files an issue; Dependabot does not read it), so its update path is the one the failure
+# names: review the diff and run --update in the same pull request.
+fresh
+edit reusable-rust-audit.yml 's.replace("0.23.0", "0.99.0").replace("4f01c74ed84b2dffd0b1d37012a62cdf2a92c96e25bdf8eec7fcc0d4d3eb7811", "'"$(printf 'e%.0s' $(seq 64))"'")'
+check "a tool bumped by hand, version and sum, goes red until the snapshot is regenerated" 1 "$(verdict)"
+check "the failure names the command that regenerates it" 1 "$(mentions -- '--update')"
+WIRING_ROOT="$WORK/tree" WIRING_SNAPSHOT="$WORK/snapshot.json" python3 "$shape" --update >/dev/null 2>&1
+check "regenerated in the same change, it passes" 0 "$(WIRING_ROOT="$WORK/tree" WIRING_SNAPSHOT="$WORK/snapshot.json" python3 "$shape" --check >/dev/null 2>&1; echo $?)"
+
 # The messages say where.
 fresh
 j=0

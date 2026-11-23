@@ -23,7 +23,8 @@
     "steps": [
      {
       "name": "Dispatch audit.yml on develop and wait for it",
-      "sha": "27fe53f615eac159"
+      "sha": "27fe53f615eac159",
+      "uses": null
      }
     ],
     "timeout-minutes": 150
@@ -51,7 +52,8 @@
     "steps": [
      {
       "name": "Open a single tracking issue and update it on each failure",
-      "sha": "92958f7ad35add9e"
+      "sha": "92958f7ad35add9e",
+      "uses": null
      }
     ],
     "timeout-minutes": 10
@@ -171,7 +173,8 @@
     "if": "${{ failure() && github.event_name == 'pull_request' }}",
     "needs": [
      "commit-identity",
-     "secret-scan"
+     "secret-scan",
+     "pin-values"
     ],
     "permissions": {
      "actions": "write",
@@ -188,14 +191,49 @@
     "runs-on": "ubuntu-latest",
     "steps": [
      {
-      "sha": "4479651561d7cd54"
+      "sha": "3454c500a3dbc3ff",
+      "uses": "actions/checkout@<commit>"
      },
      {
       "name": "Every commit uses a GitHub noreply address",
-      "sha": "b7d24e81172718d0"
+      "sha": "b7d24e81172718d0",
+      "uses": null
      }
     ],
     "timeout-minutes": 5
+   },
+   "pin-values": {
+    "env": {
+     "BASE": "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
+     "HEAD": "${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}"
+    },
+    "name": "pin values${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
+    "permissions": {
+     "contents": "read"
+    },
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "d47e05bc7dd10448",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "sha": "2c2cfb428f4fb43a",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Take the judge from the base commit",
+      "sha": "65b4bd3420587ac0",
+      "uses": null
+     },
+     {
+      "name": "Every pin is the commit of its tag",
+      "sha": "e2da0f34d605fa6c",
+      "uses": null,
+      "working-directory": "${{ runner.temp }}"
+     }
+    ],
+    "timeout-minutes": 10
    },
    "secret-scan": {
     "name": "secret scan${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
@@ -205,11 +243,13 @@
     "runs-on": "ubuntu-latest",
     "steps": [
      {
-      "sha": "4479651561d7cd54"
+      "sha": "3454c500a3dbc3ff",
+      "uses": "actions/checkout@<commit>"
      },
      {
       "name": "The change adds no credential-shaped line",
-      "sha": "5be532038711c909"
+      "sha": "5be532038711c909",
+      "uses": null
      }
     ],
     "timeout-minutes": 5
@@ -388,11 +428,13 @@
     "runs-on": "ubuntu-latest",
     "steps": [
      {
-      "sha": "3facce523aa8a0e2"
+      "sha": "753e982e1c332bfd",
+      "uses": "actions/checkout@<commit>"
      },
      {
       "name": "List the changed files against the base",
-      "sha": "eb10bb057d6a1cc4"
+      "sha": "eb10bb057d6a1cc4",
+      "uses": null
      }
     ],
     "timeout-minutes": 10
@@ -408,7 +450,8 @@
     "steps": [
      {
       "name": "Reflect the matrix result",
-      "sha": "592dce7e8361a23e"
+      "sha": "592dce7e8361a23e",
+      "uses": null
      }
     ],
     "timeout-minutes": 10
@@ -502,11 +545,13 @@
     "runs-on": "ubuntu-latest",
     "steps": [
      {
-      "sha": "d52a24e6b943d929"
+      "sha": "6661403ee47251dc",
+      "uses": "actions/checkout@<commit>"
      },
      {
       "name": "Run the base commit's copy of the cancel script",
-      "sha": "466c469c207f224b"
+      "sha": "466c469c207f224b",
+      "uses": null
      }
     ],
     "timeout-minutes": 5
@@ -529,15 +574,18 @@
     "runs-on": "ubuntu-latest",
     "steps": [
      {
-      "sha": "3facce523aa8a0e2"
+      "sha": "753e982e1c332bfd",
+      "uses": "actions/checkout@<commit>"
      },
      {
       "name": "Verify Signed-off-by trailers",
-      "sha": "86ecbccfa4c26aae"
+      "sha": "86ecbccfa4c26aae",
+      "uses": null
      },
      {
       "name": "Detect evil merges",
-      "sha": "18918cfe74f52e64"
+      "sha": "18918cfe74f52e64",
+      "uses": null
      }
     ],
     "timeout-minutes": 10
@@ -562,11 +610,13 @@
     "runs-on": "ubuntu-latest",
     "steps": [
      {
-      "sha": "69983d424f70d56e"
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
      },
      {
       "name": "Check file lengths",
-      "sha": "b00249359f27ebd2"
+      "sha": "b00249359f27ebd2",
+      "uses": null
      }
     ],
     "timeout-minutes": 10
@@ -616,7 +666,8 @@
     "steps": [
      {
       "name": "Require develop as source branch",
-      "sha": "2e45dc73745fadd3"
+      "sha": "2e45dc73745fadd3",
+      "uses": null
      }
     ],
     "timeout-minutes": 10
@@ -644,19 +695,23 @@
     "runs-on": "ubuntu-latest",
     "steps": [
      {
-      "sha": "69983d424f70d56e"
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
      },
      {
       "name": "Install toolchain",
-      "sha": "ce42d5805d8f88ba"
+      "sha": "ce42d5805d8f88ba",
+      "uses": null
      },
      {
       "name": "Download cargo-audit and check its sum",
-      "sha": "14396717b487a351"
+      "sha": "14396717b487a351",
+      "uses": null
      },
      {
       "name": "Run cargo audit",
-      "sha": "02bfd00c6b63fdc2"
+      "sha": "02bfd00c6b63fdc2",
+      "uses": null
      }
     ],
     "timeout-minutes": 30
@@ -671,19 +726,23 @@
     "runs-on": "ubuntu-latest",
     "steps": [
      {
-      "sha": "69983d424f70d56e"
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
      },
      {
       "name": "Install toolchain",
-      "sha": "ce42d5805d8f88ba"
+      "sha": "ce42d5805d8f88ba",
+      "uses": null
      },
      {
       "name": "Download cargo-deny and check its sum",
-      "sha": "95d948f30c2df174"
+      "sha": "95d948f30c2df174",
+      "uses": null
      },
      {
       "name": "Run cargo deny",
-      "sha": "bfec559426c3b59b"
+      "sha": "bfec559426c3b59b",
+      "uses": null
      }
     ],
     "timeout-minutes": 30
@@ -755,15 +814,18 @@
     "runs-on": "ubuntu-latest",
     "steps": [
      {
-      "sha": "3facce523aa8a0e2"
+      "sha": "753e982e1c332bfd",
+      "uses": "actions/checkout@<commit>"
      },
      {
       "name": "Decide whether the Rust lanes must run",
-      "sha": "11c0dd1fd775f020"
+      "sha": "11c0dd1fd775f020",
+      "uses": null
      },
      {
       "name": "Decide whether the root build inputs changed",
-      "sha": "62d358a5610c5b3d"
+      "sha": "62d358a5610c5b3d",
+      "uses": null
      }
     ],
     "timeout-minutes": 10
@@ -784,27 +846,33 @@
     "runs-on": "ubuntu-latest",
     "steps": [
      {
-      "sha": "69983d424f70d56e"
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
      },
      {
       "name": "Install toolchain",
-      "sha": "717948cfb523641b"
+      "sha": "717948cfb523641b",
+      "uses": null
      },
      {
-      "sha": "607796bb04bab330"
+      "sha": "b02c501fa795a627",
+      "uses": "actions/cache@<commit>"
      },
      {
       "name": "Install cargo-llvm-cov",
-      "sha": "42756c2ee576405b"
+      "sha": "42756c2ee576405b",
+      "uses": null
      },
      {
       "if": "inputs.podman",
       "name": "Start Podman socket",
-      "sha": "5c086abe3ed31d6e"
+      "sha": "5c086abe3ed31d6e",
+      "uses": null
      },
      {
       "name": "Coverage gate",
-      "sha": "9d81d983c8e6bd65"
+      "sha": "9d81d983c8e6bd65",
+      "uses": null
      }
     ],
     "timeout-minutes": 30
@@ -824,18 +892,22 @@
     "runs-on": "ubuntu-latest",
     "steps": [
      {
-      "sha": "69983d424f70d56e"
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
      },
      {
       "name": "Install toolchain",
-      "sha": "ce42d5805d8f88ba"
+      "sha": "ce42d5805d8f88ba",
+      "uses": null
      },
      {
-      "sha": "e9920a736e43d76a"
+      "sha": "68e10bd5c2b0debe",
+      "uses": "actions/cache@<commit>"
      },
      {
       "name": "Build docs with warnings denied",
-      "sha": "7ddffeb879704f5a"
+      "sha": "7ddffeb879704f5a",
+      "uses": null
      }
     ],
     "timeout-minutes": 10
@@ -851,7 +923,8 @@
     "steps": [
      {
       "name": "Reflect the extra-platform test result",
-      "sha": "68e618ad07b61420"
+      "sha": "68e618ad07b61420",
+      "uses": null
      }
     ],
     "timeout-minutes": 10
@@ -874,7 +947,8 @@
     "steps": [
      {
       "name": "Certify the plan and every skip",
-      "sha": "b55bf627dcb8fccf"
+      "sha": "b55bf627dcb8fccf",
+      "uses": null
      }
     ],
     "timeout-minutes": 10
@@ -891,45 +965,54 @@
     "runs-on": "ubuntu-latest",
     "steps": [
      {
-      "sha": "69983d424f70d56e"
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
      },
      {
       "if": "needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true'))",
       "name": "Install toolchain",
-      "sha": "1f70cf4057a9b38c"
+      "sha": "1f70cf4057a9b38c",
+      "uses": null
      },
      {
       "if": "needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true'))",
-      "sha": "73dfb321c0b6019d"
+      "sha": "4e58b8e5cafb9102",
+      "uses": "actions/cache@<commit>"
      },
      {
       "if": "needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true'))",
       "name": "rustfmt",
-      "sha": "2ae32fed31813d96"
+      "sha": "2ae32fed31813d96",
+      "uses": null
      },
      {
       "if": "needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true'))",
       "name": "clippy",
-      "sha": "bab1d5d5bc65b454"
+      "sha": "bab1d5d5bc65b454",
+      "uses": null
      },
      {
       "name": "no planning-note references",
       "sha": "f653b5b91c9f845c",
+      "uses": null,
       "working-directory": "."
      },
      {
       "name": "no vetoed vocabulary",
       "sha": "0c60e640fe378b64",
+      "uses": null,
       "working-directory": "."
      },
      {
       "name": "no private document references",
       "sha": "bb507524ab8bfa4e",
+      "uses": null,
       "working-directory": "."
      },
      {
       "name": "folders hold at most twenty files",
       "sha": "692fabc0038f29eb",
+      "uses": null,
       "working-directory": "."
      }
     ],
@@ -950,18 +1033,22 @@
     "runs-on": "ubuntu-latest",
     "steps": [
      {
-      "sha": "69983d424f70d56e"
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
      },
      {
       "name": "Install MSRV toolchain",
-      "sha": "d0854b8c8def48f4"
+      "sha": "d0854b8c8def48f4",
+      "uses": null
      },
      {
-      "sha": "1e16df2f0e8e93d7"
+      "sha": "8b02d9782d90ee59",
+      "uses": "actions/cache@<commit>"
      },
      {
       "name": "Build on the declared MSRV",
-      "sha": "e0865c65da90b82f"
+      "sha": "e0865c65da90b82f",
+      "uses": null
      }
     ],
     "timeout-minutes": 15
@@ -977,7 +1064,8 @@
     "steps": [
      {
       "name": "Reflect the MSRV result",
-      "sha": "819df689578a6a29"
+      "sha": "819df689578a6a29",
+      "uses": null
      }
     ],
     "timeout-minutes": 10
@@ -993,15 +1081,18 @@
     "runs-on": "ubuntu-latest",
     "steps": [
      {
-      "sha": "69983d424f70d56e"
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
      },
      {
       "name": "Install toolchain",
-      "sha": "ce42d5805d8f88ba"
+      "sha": "ce42d5805d8f88ba",
+      "uses": null
      },
      {
       "name": "cargo publish --dry-run",
-      "sha": "28b2fb7610d3e7b2"
+      "sha": "28b2fb7610d3e7b2",
+      "uses": null
      }
     ],
     "timeout-minutes": 20
@@ -1017,19 +1108,23 @@
     "runs-on": "ubuntu-latest",
     "steps": [
      {
-      "sha": "69983d424f70d56e"
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
      },
      {
       "name": "Install toolchain",
-      "sha": "ce42d5805d8f88ba"
+      "sha": "ce42d5805d8f88ba",
+      "uses": null
      },
      {
       "name": "Install cargo-semver-checks",
-      "sha": "3ba576693b67f485"
+      "sha": "3ba576693b67f485",
+      "uses": null
      },
      {
       "name": "Check for public API breaks",
-      "sha": "d48751c4c3c59f93"
+      "sha": "d48751c4c3c59f93",
+      "uses": null
      }
     ],
     "timeout-minutes": 20
@@ -1049,24 +1144,29 @@
     "runs-on": "ubuntu-latest",
     "steps": [
      {
-      "sha": "69983d424f70d56e"
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
      },
      {
       "name": "Install toolchain",
-      "sha": "ce42d5805d8f88ba"
+      "sha": "ce42d5805d8f88ba",
+      "uses": null
      },
      {
-      "sha": "8d78603c1c5ac30d"
+      "sha": "dd45e120d31d35d1",
+      "uses": "actions/cache@<commit>"
      },
      {
       "if": "${{ !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}",
       "name": "Tests",
-      "sha": "b59f5cea6bb5177f"
+      "sha": "b59f5cea6bb5177f",
+      "uses": null
      },
      {
       "if": "needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true'",
       "name": "Documentation tests",
-      "sha": "84c79d0256dca870"
+      "sha": "84c79d0256dca870",
+      "uses": null
      }
     ],
     "timeout-minutes": 20
@@ -1088,18 +1188,22 @@
     "runs-on": "${{ matrix.os }}",
     "steps": [
      {
-      "sha": "69983d424f70d56e"
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
      },
      {
       "name": "Install toolchain",
-      "sha": "ce42d5805d8f88ba"
+      "sha": "ce42d5805d8f88ba",
+      "uses": null
      },
      {
-      "sha": "8d78603c1c5ac30d"
+      "sha": "dd45e120d31d35d1",
+      "uses": "actions/cache@<commit>"
      },
      {
       "name": "Tests",
-      "sha": "fb8c3e3e083446f1"
+      "sha": "fb8c3e3e083446f1",
+      "uses": null
      }
     ],
     "strategy": {

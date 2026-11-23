@@ -41,6 +41,7 @@ DEVELOP = [
     "audit / cargo deny",
     "commit identity",
     "secret scan",
+    "pin values",
 ]
 MAIN = [
     "rust / Gate (promotion)",
@@ -52,6 +53,7 @@ MAIN = [
     "audit / cargo deny (promotion)",
     "commit identity (promotion)",
     "secret scan (promotion)",
+    "pin values (promotion)",
     "develop-only / develop-only",
 ]
 # (event, base branch) for each kind of run a workflow can have. `Develop` and `MAIN`

@@ -56,7 +56,7 @@ KNOWN = {
     ("reusable-cancel-others.yml", "cancel"): (
         "c58e46bd3d54af68894abe234cf7a63bc17a7ead913b90b632645d4724e55d96",
         [
-            "d52a24e6b943d9298499b27f83edef10691c7be1830fc7c01947d6d1497f083e",
+            "6661403ee47251dc5f13970c4e65a674ae92ec3c7ebb74f64be84bf1bb7c1ce6",
             "466c469c207f224b857fe3d7576fb5ce038117f94de4331245c52508dc2af6ce",
         ],
     ),
@@ -86,7 +86,8 @@ def holds(perms):
 
 
 def fingerprint(step):
-    body = {k: v for k, v in step.items() if k != "name"}
+    # The commit an action is pinned to is what Dependabot moves; the rest is held.
+    body = ci_yaml.normalize_pins({k: v for k, v in step.items() if k != "name"})
     if "run" in body:
         body["run"] = str(body["run"]).strip()
     blob = json.dumps(body, sort_keys=True, separators=(",", ":"))

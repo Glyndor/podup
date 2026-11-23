@@ -2,8 +2,8 @@
 # (job + workflow env/defaults/permissions). Regenerate in the same pull request
 # as any change to them: python3 .github/scripts/checks/signing-key-isolation.py --print-hashes
 # sign: signs each binary with the key, one job per asset
-sign 9d282a1f6ba19a5a6d0fded38406d4d2886f2e8c1b88693bd24497d6a193437c
+sign 0b34763252ecb8fd193da958e0035691a916a8b6bb5e7d23ec2a966fe67ca182
 # attest: the only job that mints a token; attests build provenance
-attest 93aa322a2c7094341babd1bcc040d9fb7e064859a0476f154badb7a159981768
+attest 75f546ce6bc7e865ae42bb84abc598310425c5a6fc4f12245e581dd7ce84ed71
 # release: signs the checksums with the key and publishes
-release b12b4567e11edb5c3888cc3064bd1794b1d7e1f30f71538d0126828e55c89a19
+release 14188c684d9cf779b82699da3681ed026f1b2017088f4abcea6f6b4a41af1c5b

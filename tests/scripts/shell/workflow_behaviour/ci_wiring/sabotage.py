@@ -85,6 +85,10 @@ PLANTS = [
     ("a condition on the line limit", "reusable-line-limit.yml", "  line-limit:\n", "  line-limit:\n    if: github.event_name == 'push'\n"),
     ("a condition on the DCO", "reusable-dco.yml", "jobs:\n  dco:\n", "jobs:\n  dco:\n    if: github.event_name == 'push'\n"),
     ("a condition on the secret scan", "commit-hygiene.yml", "  secret-scan:\n", "  secret-scan:\n    if: github.event_name == 'push'\n"),
+    ("a condition on the pin values check", "commit-hygiene.yml", "  pin-values:\n", "  pin-values:\n    if: github.event_name == 'push'\n"),
+    ("the pin judge taken from the change instead of the base", "commit-hygiene.yml", 'install -m 0644 "base/$f"', 'install -m 0644 "head/$f"'),
+    ("the pin judge run without isolating Python", "commit-hygiene.yml", "python3 -I judge/check-pins.py", "python3 judge/check-pins.py"),
+    ("the pin judge run from the tree of the change", "commit-hygiene.yml", "python3 -I judge/check-pins.py", "python3 -I head/.github/scripts/hygiene/check-pins.py"),
     ("a condition on the commit identity check", "commit-hygiene.yml", "  commit-identity:\n", "  commit-identity:\n    if: github.event_name == 'push'\n"),
     # 10. The podman lane: the plan and the certification.
     ("the VM answer read as == 'true'", "podman-lane.yml",
@@ -108,6 +112,7 @@ NAMES = [
     ("a required name that keeps a matrix value", "reusable-dco.yml", "    name: Signed-off-by present on every commit" + SUF, "    name: Signed-off-by present on every commit ${{ matrix.os }}"),
     ("the audit loses the run kind in its name", "reusable-rust-audit.yml", "    name: cargo audit" + SUF, "    name: cargo audit"),
     ("the secret scan loses the run kind in its name", "commit-hygiene.yml", "    name: secret scan" + SUF, "    name: secret scan"),
+    ("the pin values lose the run kind in their name", "commit-hygiene.yml", "    name: pin values" + SUF, "    name: pin values"),
     ("the audit does not run in the merge queue", "audit.yml", "  merge_group:\n    types: [checks_requested]\n", ""),
     ("the commit hygiene does not run in the merge queue", "commit-hygiene.yml", "  merge_group:\n    types: [checks_requested]\n", ""),
     ("the audit cancelled by a newer run", "audit.yml", "  cancel-in-progress: false", "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}"),
@@ -123,7 +128,44 @@ NAMES = [
 ]
 
 
+# What a Dependabot pull request does to a workflow, and what it must not be able to
+# do. (description, file, old text, new text, replace every occurrence, must pass)
+CK = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+BUMP = "actions/checkout@" + "a" * 40
+PINS = [
+    ("a new commit for an action, with its new version comment", R, CK + " # v7.0.1", BUMP + " # v7.0.2", True, True),
+    ("a new commit for another action, the cache", R, "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0", "actions/cache@" + "b" * 40 + " # v6.2.0", True, True),
+    ("a new commit for the checkout in the hygiene workflow", "commit-hygiene.yml", CK + " # v7.0.1", BUMP + " # v7.0.2", True, True),
+    ("a new commit for the checkout in the cancel workflow", "reusable-cancel-others.yml", CK + " # v7.0.1", BUMP + " # v7.0.2", True, True),
+    ("the action renamed, with the same commit", R, CK, "actions/cache@3d3c42e5aac5ba805825da76410c181273ba90b1", True, False),
+    ("the pin removed", R, CK + " # v7.0.1", "actions/checkout", True, False),
+    ("a tag in place of the commit", R, CK + " # v7.0.1", "actions/checkout@v7", True, False),
+    ("a short hash in place of the commit", R, CK + " # v7.0.1", "actions/checkout@" + "3d3c42e5" + "a" * 31, True, False),
+    ("an upper-case hash in place of the commit", R, CK + " # v7.0.1", "actions/checkout@" + "3D3C42E5AAC5BA805825DA76410C181273BA90B1", True, False),
+    ("a branch in place of the commit", R, CK + " # v7.0.1", "actions/checkout@main", True, False),
+    ("a different action under the same pin on one step only", R, CK + " # v7.0.1", "actions/setup-go@" + "3d3c42e5aac5ba805825da76410c181273ba90b1", False, False),
+]
+
+
 def main():
+    if sys.argv[1] == "pins":
+        if sys.argv[2] == "--count":
+            print(len(PINS))
+            return 0
+        if sys.argv[2] == "--describe":
+            print(PINS[int(sys.argv[3])][0])
+            return 0
+        if sys.argv[2] == "--passes":
+            print("yes" if PINS[int(sys.argv[3])][5] else "no")
+            return 0
+        _d, name, old, new, every, _p = PINS[int(sys.argv[2])]
+        path = os.path.join(sys.argv[3], ".github", "workflows", name)
+        text = open(path).read()
+        if old not in text:
+            print(f"the pin plant {sys.argv[2]} does not find its text in {name}", file=sys.stderr)
+            return 2
+        open(path, "w").write(text.replace(old, new) if every else text.replace(old, new, 1))
+        return 0
     if sys.argv[1] == "names":
         which = NAMES
         if sys.argv[2] == "--count":

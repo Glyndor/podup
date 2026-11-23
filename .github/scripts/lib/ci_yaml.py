@@ -49,6 +49,31 @@ def check_name(name):
     return re.sub(r"\s*\$\{\{.*\}\}\s*$", "", name) if isinstance(name, str) else name
 
 
+SHA_REF = re.compile(r"@[0-9a-f]{40}$")
+IMAGE_DIGEST = re.compile(r"@sha256:[0-9a-f]{64}")
+
+
+def normalize_pins(value, key=None):
+    """The value with the pins an automatic update moves replaced by a marker.
+
+    A Dependabot pull request moves the commit an action is pinned to (and the digest
+    of an image) and changes nothing else, so a contract that held the value would
+    be red on every one of them for good. What is kept is what an update does not
+    move: the name of the action, that it is pinned and that the pin is a full 40
+    character commit (a tag, a branch, a short hash or no pin at all stays as it is
+    and so differs), and for an image that it is pinned by a sha256 digest.
+    """
+    if isinstance(value, dict):
+        return {k: normalize_pins(v, k) for k, v in value.items()}
+    if isinstance(value, list):
+        return [normalize_pins(v, key) for v in value]
+    if isinstance(value, str):
+        if key == "uses":
+            value = SHA_REF.sub("@<commit>", value)
+        return IMAGE_DIGEST.sub("@sha256:<digest>", value)
+    return value
+
+
 def load(path):
     """The parsed file, or raises yaml.YAMLError (a duplicate key is one)."""
     with open(path) as fh:

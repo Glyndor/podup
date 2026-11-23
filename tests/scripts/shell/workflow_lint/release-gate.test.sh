@@ -60,6 +60,24 @@ gate_dir() { python3 "$GATE" "$1" >/dev/null 2>&1; echo $?; }
 check "the shipped workflows pass" 0 "$(gate_dir "$HERE/.github/workflows")"
 accepted "release.yml loaded and written back unchanged" "pass"
 check "the hashes are reproducible" "$(grep -v '^#' "$HERE/.github/scripts/checks/release-pinned.txt")" "$(python3 "$GATE" --print-hashes "$HERE/.github/workflows")"
+# A Dependabot pull request moves the commit an action is pinned to; that must not need a
+# new hash here, while another action, a tag or no pin at all must.
+accepted "a new commit for every action of the release jobs passes" "
+import re
+def bump(node):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == 'uses' and isinstance(v, str):
+                node[k] = re.sub(r'@[0-9a-f]{40}\$', '@' + 'c' * 40, v)
+            else:
+                bump(v)
+    elif isinstance(node, list):
+        for v in node:
+            bump(v)
+bump(spec['jobs'])"
+refused "the first action of the sign job renamed under the same commit" "spec['jobs']['sign']['steps'][0].update(uses='actions/cache@3d3c42e5aac5ba805825da76410c181273ba90b1')"
+refused "the first action of the release job pinned to a tag" "spec['jobs']['release']['steps'][0].update(uses='actions/checkout@v7')"
+refused "the first action of the release job with its pin removed" "spec['jobs']['release']['steps'][0].update(uses='actions/checkout')"
 check "the failure says which job to review and how to regenerate" 1 "$(run_gate "step('sign', 'Sign binary')['name'] = 'x'" >/dev/null; grep -c 'job `sign` changed: review the whole diff.*--print-hashes' "$WORK/out")"
 
 # --- every field of the three jobs, generated from the workflow ---------------------------

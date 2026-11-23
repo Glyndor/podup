@@ -34,7 +34,7 @@ import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.environ.get("WIRING_ROOT") or os.path.abspath(os.path.join(HERE, "..", "..", "..", "..", ".."))
-SNAPSHOT = os.path.join(HERE, "snapshot.json")
+SNAPSHOT = os.environ.get("WIRING_SNAPSHOT") or os.path.join(HERE, "snapshot.json")
 sys.path.insert(0, os.path.join(HERE, "..", "..", "..", "..", "..", ".github", "scripts", "lib"))
 import ci_yaml  # noqa: E402  (the one loader: it refuses a duplicate key)
 
@@ -71,10 +71,10 @@ def step_shape(step, mode):
     surface = {k: v for k, v in surface.items() if v is not None}
     if mode == "conditions":
         return surface
-    body = {k: v for k, v in step.items() if k != "name"}
+    body = ci_yaml.normalize_pins({k: v for k, v in step.items() if k != "name"})
     if "run" in body:
         body["run"] = str(body["run"]).strip()
-    return {**surface, "sha": digest(body)}
+    return {**surface, "uses": ci_yaml.normalize_pins(step.get("uses"), "uses"), "sha": digest(body)}
 
 
 def job_shape(job, mode):
@@ -82,7 +82,7 @@ def job_shape(job, mode):
     by name is held all the same, which is how an unknown one is refused (it shows up
     as a difference). `defaults`, `continue-on-error`, `timeout-minutes`, `container`,
     `services`, `outputs`, `concurrency` and the rest all change what runs."""
-    shape = {k: v for k, v in job.items() if k != "steps"}
+    shape = ci_yaml.normalize_pins({k: v for k, v in job.items() if k != "steps"})
     shape["steps"] = [step_shape(s, mode) for s in job.get("steps") or []]
     return shape
 
@@ -129,6 +129,8 @@ def main():
     problems = list(diff(want, have))
     for p in problems:
         print(p)
+    if problems:
+        print("if the change is meant (a tool bumped by hand, a job changed), review it and run: python3 " + os.path.relpath(__file__) + " --update")
     return 1 if problems else 0
 
 

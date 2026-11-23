@@ -78,6 +78,7 @@ DIRECT_EMITTER_NAMES = {
     "Supported Podman majors",
     "commit identity",
     "secret scan",
+    "pin values",
 }
 
 

@@ -259,6 +259,7 @@ jobs:
               "Supported Podman majors",
               "commit identity",
               "secret scan",
+              "pin values",
           }
 
           # `if: always()` is the only `if:` value allowed on a caller of

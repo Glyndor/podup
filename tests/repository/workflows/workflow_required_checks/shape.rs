@@ -61,6 +61,7 @@ pub const REQUIRED_ON_MAIN: &[&str] = &[
 	"audit / cargo deny",
 	"commit identity",
 	"secret scan",
+	"pin values",
 	// What a pull request into `main` is asked for. The same commit has just been
 	// through the merge queue and a push to `develop`, whose runs carry a plan that
 	// looked at a narrower range; the promotion has its own names, produced only by
@@ -69,6 +70,7 @@ pub const REQUIRED_ON_MAIN: &[&str] = &[
 	"audit / cargo deny (promotion)",
 	"commit identity (promotion)",
 	"secret scan (promotion)",
+	"pin values (promotion)",
 	"rust / Gate (promotion)",
 	"line-limit / line limit (promotion)",
 	"workflow-lint / workflow-lint (promotion)",
@@ -94,6 +96,7 @@ const MAIN_ONLY: &[&str] = &[
 	"audit / cargo deny (promotion)",
 	"commit identity (promotion)",
 	"secret scan (promotion)",
+	"pin values (promotion)",
 	"rust / Gate (promotion)",
 	"line-limit / line limit (promotion)",
 	"workflow-lint / workflow-lint (promotion)",
