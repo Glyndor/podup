@@ -25,7 +25,14 @@ on Linux, macOS and Windows (x86_64 and arm64).
 Current Debian and Ubuntu releases ship an older Podman of their own. The apt
 repository below carries Podman 6.2.0 for Debian 13 and Ubuntu 24.04 and 26.04,
 and installing podup from it installs that Podman too; see
-[Platforms](docs/docker-migration.md#platforms).
+[Platforms](docs/docker-migration.md#platforms). To install only Podman 6.2.0
+there, use the same installer with the package name `podman`:
+
+```sh
+curl -fsSL https://apt.glyndor.net/install/podman | sudo sh
+```
+
+The command for podup itself:
 
 ```sh
 curl -fsSL https://apt.glyndor.net/install/podup | sudo sh
@@ -59,7 +66,8 @@ enabled can block it. [Migrating from Compose](docs/docker-migration.md#windows)
 describes running the Linux binary inside `podman-machine-default` instead.
 
 **Other Linux distributions** (needs `curl`, `sha256sum`, Python 3 with
-`cryptography` to verify the download, a local Podman 6.2.0 or newer, and write
+`cryptography` to verify the download, a local Podman 6.2.0 or newer (on Debian
+and Ubuntu, the `podman` installer [above](#install) provides it), and write
 access or `sudo` for `/usr/local/bin`):
 
 ```sh
@@ -73,7 +81,7 @@ current.
 
 ### Verify what you installed
 
-- **apt:** the installer checks the archive key against the fingerprint
+- **apt:** the installer, for `podup` and for `podman` alike, checks the archive key against the fingerprint
   published in the [apt repository](https://github.com/Glyndor/apt#verify-the-signing-key),
   a second place that does not depend on the website, and apt verifies every
   package signature.

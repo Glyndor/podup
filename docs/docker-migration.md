@@ -474,7 +474,7 @@ podup ships for Linux, macOS and Windows, each x86_64/arm64. Install paths are i
 
 ### Engine and transport
 
-podup needs a Podman 6.2.0 or newer engine and sets no upper bound: a newer release is accepted. The libpod client compares the engine's reported version (major, minor and patch) with `MIN_PODMAN_VERSION` (6.2.0), and the engine version is checked on the first request that contacts Podman. Commands that contact Podman check the version. `config --resolve-image-digests` and `autostart uninstall --purge` also contact it.
+podup needs a Podman 6.2.0 or newer engine and sets no upper bound: a newer release is accepted. On Debian and Ubuntu the [README](../README.md#install) shows how to install just that Podman. The libpod client compares the engine's reported version (major, minor and patch) with `MIN_PODMAN_VERSION` (6.2.0), and the engine version is checked on the first request that contacts Podman. Commands that contact Podman check the version. `config --resolve-image-digests` and `autostart uninstall --purge` also contact it.
 
 The transport is local-only. Only `unix://` (or `npipe://` on Windows) is accepted, from `--socket`, `PODMAN_SOCKET`, `DOCKER_HOST`, or auto-detection; remote `tcp://`/`ssh://`/`http(s)://`/`fd://` schemes are rejected before any connection. This applies to `podman machine` as well. Driving a remote engine over TCP or SSH is not supported; run podup beside the engine.
 
