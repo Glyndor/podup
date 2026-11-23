@@ -121,16 +121,18 @@ must_run "changes the packaging" debian/rules debian/control
 must_run "changes the Rust test suite" \
 	tests/hostile/input/parsing/hostile_compose.rs tests/fixtures/interpolation/ordinary-config.yml \
 	tests/scripts/stray.rs tests/scripts/shell/notes.md
-must_run "changes the CI" .github/workflows/ci.yml .github/workflows/reusable-rust-debian.yml
-must_run "changes the checks CI runs" .github/scripts/checks/check-planning-words.sh
+must_run "changes the CI" .github/workflows/debian-build.yml .github/workflows/reusable-rust-debian.yml .github/workflows/release.yml
 must_run "changes an installer" install.sh install.ps1
 must_run "is not a script-only test change" unknown.txt README.md docs/commands.md
 
 # One path that may be skipped does not excuse one that may not.
 mixed "changes the crate" tests/scripts/shell/workflow_behaviour/debian-ci-inputs.test.sh internal/lib.rs
-mixed "changes the CI" tests/scripts/powershell/install-python-isolation.Tests.ps1 .github/workflows/ci.yml
+mixed "changes the CI" tests/scripts/powershell/install-python-isolation.Tests.ps1 .github/workflows/release.yml
 
-# Skip: the shell and PowerShell test suites, which cargo compiles no part of.
+# Skip: the shell and PowerShell test suites, which cargo compiles no part of,
+# and the CI that does not build the package.
+may_skip .github/workflows/ci.yml .github/workflows/podman-lane.yml .github/workflows/lint-shell.yml \
+	.github/scripts/checks/check-planning-words.sh .github/scripts/release/sign.py .github/scripts/hygiene/check-secrets.sh
 may_skip tests/scripts/shell/workflow_behaviour/debian-ci-inputs.test.sh \
 	tests/scripts/shell/workflow_behaviour/rust-ci-inputs.test.sh \
 	tests/scripts/powershell/install-python-isolation.Tests.ps1 \
