@@ -112,8 +112,14 @@ async fn cp_preserves_the_host_uid_gid() {
 		}
 	};
 	down(&socket, &_dir, &name);
+	// The owner of the file on the host is whoever runs the suite, which is
+	// uid 1000 on a workstation and another number on a hosted runner.
+	// SAFETY: getuid and getgid take no arguments and cannot fail.
+	let host_owner = format!("{}:{}", unsafe { libc::getuid() }, unsafe {
+		libc::getgid()
+	});
 	assert_eq!(
-		archive_header, "1000:1000",
+		archive_header, host_owner,
 		"`podup cp` must preserve the host UID/GID (libpod `copyUIDGID=false`): got {archive_header:?}"
 	);
 }

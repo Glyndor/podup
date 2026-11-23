@@ -6,10 +6,12 @@ name: podman-lane
 # workflow-lint job is unaffected because it runs actionlint with its own flags.
 # Live-Podman integration for podup.
 # Support policy: podup requires Podman 6.2.0 or newer and sets no upper bound, so
-# the lane runs the newest Podman there is. Every engine PR runs the integration
-# suite on it, inside a Fedora qemu VM booted in the runner (nested-virt: the
-# ubuntu-24.04 runner exposes /dev/kvm) with full systemd, as a rootless user.
-# Podman 6 = Fedora rawhide.
+# the lane runs the Podman users install and the newest one there is. A pull
+# request and the merge queue run the engine suite on the runner, against the
+# Podman 6.2.0 of apt.glyndor.net (`podman-native`). The schedule and a dispatch
+# run it inside a Fedora qemu VM booted in the runner (nested-virt: the
+# ubuntu-24.04 runner exposes /dev/kvm) with full systemd, as a rootless user,
+# which carries the newest Podman there is (Podman 6 = Fedora rawhide).
 
 # Three triggers, three questions:
 # workflow_dispatch: starts the lane on demand.
@@ -158,13 +160,16 @@ jobs:
             echo "nothing in this range can reach the VM; the legs below run and boot nothing"
           fi
 
+  # The VM, on the schedule and on a dispatch only: it is the lane that follows the
+  # newest Podman there is (Fedora rawhide) with full systemd and SELinux, which a
+  # pull request does not need to repeat on every push.
   podman-vm:
     needs: decide
     # Starts even when `decide` failed. Its steps run on anything but an explicit
     # `false`, so a plan that never answered boots the VM instead of leaving
     # this job skipped, which is the one skip `Supported Podman majors` would
     # have to tell from a decision.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
     runs-on: ubuntu-24.04
     # Raised for the one-thread experiment: serialising the suite costs wall
     # clock, and a run that dies on the timeout answers nothing (#1039).
@@ -714,6 +719,185 @@ jobs:
           fi
           echo "GREEN: podup core PASSED on Podman $VER ($PASS tests >= baseline $BASELINE; $FAIL in the nested-virt-noisy subset)."
 
+  # The same engine suite as `podman-vm`, run directly on the runner against the
+  # Podman 6.2 that the Glyndor apt repository serves for Ubuntu 24.04, instead of
+  # inside a Fedora rawhide VM (a ~500 MB image, dnf, a build inside the VM and a
+  # one-thread suite). It is NOT part of `Supported Podman majors` and nothing
+  # requires it: the first runs say how long it takes and whether it is stable,
+  # and a failure here is red on purpose (no continue-on-error), to be read.
+  #
+  # What it does not replace: rawhide validates the newest Podman before any
+  # distribution packages it; this job validates the Podman podup tells people to
+  # install. Same path filter as the VM: the `decide` job says whether the change
+  # can reach the engine.
+  # The lane of a pull request and of the merge queue: the engine suite on the runner,
+  # against the Podman 6.2.0 that apt.glyndor.net serves, which is the one a Debian or
+  # Ubuntu user installs. It reads the repository and writes nothing: `contents: read`
+  # and no secret, while it builds and runs the code of the change.
+  podman-native:
+    needs: decide
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.decide.outputs.engine != 'false' }}
+    runs-on: ubuntu-24.04
+    # Install a few minutes, build ~10, suite one thread (the VM's one-thread
+    # suite is the long pole); 60 leaves room for a first run and stays far below
+    # the six-hour default a hang would cost.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      # Fingerprint of the Glyndor archive key, published in the apt repository's
+      # README and not on apt.glyndor.net itself: a tampered archive cannot vouch
+      # for its own key. A rotation lists both until the old key is retired.
+      GLYNDOR_APT_FPR: 9ADF04EA8C3139CDB67303CFA6705C2EA153F3D6
+      PODMAN_FLOOR: 6.2.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Podman from the Glyndor apt repository
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          start=$SECONDS
+          PHASES="$RUNNER_TEMP/phases.txt"
+          echo "PHASES=$PHASES" >> "$GITHUB_ENV"
+          dl() { # <max-filesize> <url> <output>
+            curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 10 \
+              --max-time 120 --retry 3 --retry-delay 5 --max-filesize "$1" -o "$3" "$2"
+          }
+          work="$RUNNER_TEMP/glyndor-keyring"
+          mkdir -p "$work"
+          dl 8388608 https://apt.glyndor.net/glyndor-archive-keyring.deb "$work/keyring.deb"
+          dl 65536 https://apt.glyndor.net/glyndor-archive-keyring.deb.asc "$work/keyring.deb.asc"
+          # Nothing from the package runs: its files are unpacked into a scratch
+          # directory (refusing a package that declares more than 8 MiB), the key
+          # inside is compared with the pinned fingerprint, and the detached
+          # signature over the whole package is checked with that key. Only then
+          # is the key copied into place; the repository file is written here, so
+          # whatever the package ships as sources is never used.
+          dpkg-deb --fsys-tarfile "$work/keyring.deb" | tar -t -v --numeric-owner |
+            awk '$3 !~ /^[0-9]+$/ { bad = 1 } { total += $3 } END { exit (bad || total > 8 * 1024 * 1024) }'
+          dpkg-deb -x "$work/keyring.deb" "$work/extracted"
+          key="$work/extracted/usr/share/keyrings/glyndor.gpg"
+          if [ ! -f "$key" ] || [ -L "$key" ]; then
+            echo "::error::the keyring package has no regular glyndor.gpg"; exit 1
+          fi
+          fprs="$(gpg --show-keys --with-colons "$key" | awk -F: '/^pub:/{want=1;next} /^fpr:/{if(want){print $10;want=0}}')"
+          [ -n "$fprs" ] || { echo "::error::the keyring carries no key"; exit 1; }
+          for f in $fprs; do
+            [ "$f" = "$GLYNDOR_APT_FPR" ] || { echo "::error::the keyring carries a key that is not the pinned one ($f)"; exit 1; }
+          done
+          GNUPGHOME="$(mktemp -d)" gpg --no-default-keyring --keyring "$key" \
+            --verify "$work/keyring.deb.asc" "$work/keyring.deb"
+          sudo install -D -m 0644 "$key" /etc/apt/keyrings/glyndor.gpg
+          printf 'Types: deb\nURIs: https://apt.glyndor.net\nSuites: stable\nComponents: main\nSigned-By: /etc/apt/keyrings/glyndor.gpg\n' |
+            sudo tee /etc/apt/sources.list.d/glyndor.sources >/dev/null
+          export DEBIAN_FRONTEND=noninteractive
+          apt_opts=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::ForceIPv4=true)
+          sudo timeout 120 apt-get -q "${apt_opts[@]}" update
+          sudo timeout 600 apt-get -q "${apt_opts[@]}" install -y podman
+          ver="$(podman --version | awk '{print $3}')"
+          echo "podman: $ver"
+          if [ "$(printf '%s\n%s\n' "$ver" "$PODMAN_FLOOR" | LC_ALL=C sort -V | head -1)" != "$PODMAN_FLOOR" ]; then
+            echo "::error::the runner has Podman $ver, below the $PODMAN_FLOOR floor podup requires"
+            exit 1
+          fi
+          echo "podman=$ver" >> "$PHASES"
+          echo "install=$((SECONDS - start))" >> "$PHASES"
+      - name: Install the Rust toolchain
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup default 1.100.0
+      - name: Build the engine test binaries
+        run: |
+          start=$SECONDS
+          cargo test --locked --features test-helpers --test engine_integration --test integration_leak_scan --no-run
+          echo "build=$((SECONDS - start))" >> "$PHASES"
+      - name: Start the user Podman socket
+        run: |
+          set -euo pipefail
+          # pasta and netavark work under the runtime directory logind creates
+          # for the user (/run/user/<uid>) and nowhere else: pasta's AppArmor
+          # profile refuses a network namespace under any other path. Lingering
+          # makes logind create that directory and start the user manager for
+          # an account that never logged in.
+          uid=$(id -u)
+          sudo loginctl enable-linger "$(id -un)"
+          for _ in $(seq 1 30); do
+            [ -S "/run/user/$uid/bus" ] && break
+            sleep 1
+          done
+          [ -S "/run/user/$uid/bus" ] || { echo "::error::logind did not start a user manager for uid $uid"; exit 1; }
+          export XDG_RUNTIME_DIR="/run/user/$uid"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          mkdir -p "$XDG_RUNTIME_DIR/podman"
+          # Started directly and with no idle timeout: the socket-activated
+          # unit stops after five idle seconds, in the middle of a suite.
+          nohup podman system service --time=0 "unix://$XDG_RUNTIME_DIR/podman/podman.sock" >"$RUNNER_TEMP/podman-service.log" 2>&1 &
+          for _ in $(seq 1 30); do
+            [ -S "$XDG_RUNTIME_DIR/podman/podman.sock" ] && break
+            sleep 1
+          done
+          [ -S "$XDG_RUNTIME_DIR/podman/podman.sock" ] || { echo "::error::the Podman socket did not appear"; cat "$RUNNER_TEMP/podman-service.log"; exit 1; }
+          {
+            echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
+            echo "PODMAN_SOCKET=$XDG_RUNTIME_DIR/podman/podman.sock"
+            echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"
+          } >> "$GITHUB_ENV"
+          podman info --format '{{.Host.Security.Rootless}} {{.Version.Version}}'
+      - name: Run the engine suite and the leak scan
+        env:
+          PODUP_REQUIRE_PODMAN: "1"
+          RUST_LOG: podup=warn
+        run: |
+          start=$SECONDS
+          rc=0
+          cargo test --locked --features test-helpers --test engine_integration || rc=$?
+          scan=0
+          if [ -s target/podup-leak-scan-pid ]; then
+            PODUP_LEAK_SCAN_PID="$(cat target/podup-leak-scan-pid)" \
+              cargo test --locked --features test-helpers --test integration_leak_scan || scan=$?
+          else
+            echo "::error::engine_integration never wrote target/podup-leak-scan-pid; the leak scan had nothing to look for"
+            scan=1
+          fi
+          echo "tests=$((SECONDS - start))" >> "$PHASES"
+          [ "$rc" -eq 0 ] && [ "$scan" -eq 0 ]
+      - name: Run the Quadlet tests against the generator of this Podman
+        # They skip where the generator is older than the minimum, which is
+        # every stock runner; here its absence is a failure.
+        if: always()
+        env:
+          PODUP_REQUIRE_QUADLET_GENERATOR: "1"
+        run: |
+          start=$SECONDS
+          rc=0
+          cargo test --locked --features test-helpers --lib quadlet:: || rc=$?
+          cargo test --locked --features test-helpers --test hostile_quadlet_units || rc=$?
+          echo "quadlet=$((SECONDS - start))" >> "$PHASES"
+          [ "$rc" -eq 0 ]
+      - name: Show what AppArmor refused
+        # A stop that fails with `kill network process: permission denied` is a
+        # confined pasta refusing a signal, and only the kernel log says which
+        # profile and which rule.
+        if: always()
+        run: |
+          if pasta_bin=$(command -v pasta); then
+            echo "$pasta_bin"
+            dpkg -S "$pasta_bin" || true
+          fi
+          find /etc/apparmor.d -maxdepth 1 \( -name '*pasta*' -o -name '*passt*' -o -name '*podman*' \) -print
+          sudo aa-status 2>/dev/null | grep -E 'pasta|passt|podman' || true
+          sudo dmesg | grep 'apparmor="DENIED"' | sed -E 's/^\[[^]]*\] //; s/pid=[0-9]+ //; s/audit\([^)]*\): //' | sort | uniq -c | sort -rn | head -20 || true
+      - name: Report the phases
+        if: always()
+        run: |
+          {
+            echo "### Podman native lane"
+            echo ""
+            [ -f "$PHASES" ] && sed -E 's/^([a-z]+)=([0-9]+)$/- \1: \2 s/; s/^podman=(.*)$/- podman: \1/' "$PHASES"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   podman-majors:
     # The name says which kind of run produced it: nothing for a pull request into
     # `develop` and for the merge queue, `(promotion)` for a pull request into `main`,
@@ -731,7 +915,7 @@ jobs:
     # emitted while a ruleset could still require it, so the pull request that carries
     # the change would block itself. This name does not move, and it keeps its
     # wording from when the lane ran two majors. See #1552.
-    needs: [decide, podman-vm]
+    needs: [decide, podman-vm, podman-native]
     # `needs` on its own SKIPS this job when the matrix fails, and a skipped required
     # check does not block a merge, the exact failure this job exists to prevent.
     if: always()
@@ -743,18 +927,32 @@ jobs:
       - name: Reflect the matrix result
         env:
           PLAN: ${{ needs.decide.result }}
-          RESULT: ${{ needs.podman-vm.result }}
+          ENGINE: ${{ needs.decide.outputs.engine }}
+          VM: ${{ needs.podman-vm.result }}
+          NATIVE: ${{ needs.podman-native.result }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          # A plan that did not succeed is red on its own, whatever the matrix did.
-          [ "$PLAN" = success ] || { echo "::error::the plan did not succeed (result: $PLAN)"; exit 1; }
-          # `skipped` is NOT a pass here: podman-vm runs on every event and decides
-          # inside its steps whether to boot, so a skipped matrix means something
-          # went wrong rather than a caller opting out.
-          case "$RESULT" in
-            success) echo "the Podman lane passed" ;;
-            *) echo "::error::the Podman matrix did not pass (result: $RESULT)"; exit 1 ;;
+          fail() { echo "::error::$1"; exit 1; }
+          [ "$PLAN" = success ] || fail "the plan did not succeed (result: $PLAN)"
+          echo "plan: engine='$ENGINE', event $EVENT; native: $NATIVE, vm: $VM"
+          # A pull request and the merge queue use the native lane and never the VM; the
+          # schedule and a dispatch use the VM and never the native lane. The lane that
+          # is not theirs is skipped, and only the plan's explicit `false` excuses the
+          # one that is.
+          case "$EVENT" in
+            pull_request | merge_group)
+              [ "$VM" = skipped ] || fail "the VM ran for a $EVENT (result: $VM)"
+              case "$NATIVE" in
+                success) ;;
+                skipped) [ "$ENGINE" = false ] || fail "the native lane was skipped and the plan did not say so" ;;
+                *) fail "the native lane did not pass (result: $NATIVE)" ;;
+              esac ;;
+            *)
+              [ "$NATIVE" = skipped ] || fail "the native lane ran for a $EVENT (result: $NATIVE)"
+              [ "$VM" = success ] || fail "the VM did not pass (result: $VM)" ;;
           esac
+          echo "the Podman lane passed"
 
   # When this workflow fails on a pull request, the other runs of the same commit
   # stop: they would spend runners on a commit that is already red. The job and

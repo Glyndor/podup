@@ -148,7 +148,7 @@ check "Nothing to boot is reached only on an explicit false" 1 \
 check "no step reads the engine answer as == 'true'" 0 \
 	"$(grep -cF "outputs.engine == 'true'" "$workflow")"
 check "the required check name remains stable" 1 "$(grep -cF 'name: Supported Podman majors' "$workflow")"
-check "the required check waits for the plan and the matrix" 1 "$(grep -cF 'needs: [decide, podman-vm]' "$workflow")"
+check "the required check waits for the plan and both lanes" 1 "$(grep -cF 'needs: [decide, podman-vm, podman-native]' "$workflow")"
 # The lane boots one Podman major, the newest, and the identity gate reads the
 # known-failures file of the major the VM actually booted. A gate that finds no
 # file skips silently, so every major in the matrix needs its own.
@@ -161,35 +161,40 @@ for major in $majors; do
 		"$([ -f "$HERE/.github/podman_lane/known-failures-$major" ] && echo 1 || echo 0)"
 done
 check "the lane does not boot a Fedora release image" 0 "$(grep -cE 'releases/[0-9]+/Cloud' "$workflow" "$HERE/.github/scripts/fedora_image/fetch-fedora-image.sh" | awk -F: '{s+=$NF} END {print s+0}')"
-# Execute the required check's actual result handler too.
+# Execute the required check's actual result handler too, for each kind of run.
 awk '
  /      - name: Reflect the matrix result/ { step=1 }
  step && /        run: \|/ { body=1; next }
  body && /^  [a-z-]+:/ { exit }
  body { sub(/^          /, ""); print }
 ' "$workflow" >"$WORK/result.sh"
-for result in success failure cancelled skipped; do
-	rc=0
-	PLAN=success RESULT="$result" bash "$WORK/result.sh" >"$WORK/result.log" 2>&1 || rc=$?
-	if [ "$result" = success ]; then
-		check "required check accepts a successful no-boot matrix" 0 "$rc"
-	else
-		check "required check refuses $result" 1 "$rc"
-		check "required check explains $result" 1 "$(grep -cF "result: $result" "$WORK/result.log")"
-	fi
+lane() { # <event> <plan> <engine> <vm> <native> -> exit status
+	PLAN="$2" ENGINE="$3" VM="$4" NATIVE="$5" EVENT="$1" bash "$WORK/result.sh" >"$WORK/result.log" 2>&1
+	echo $?
+}
+check "a pull request passes on the native lane" 0 "$(lane pull_request success true skipped success)"
+check "the merge queue passes on the native lane" 0 "$(lane merge_group success true skipped success)"
+check "a pull request whose plan said nothing to run passes with the native lane skipped" 0 "$(lane pull_request success false skipped skipped)"
+check "a native lane skipped without the plan saying so is refused" 1 "$(lane pull_request success true skipped skipped)"
+check "...and so is one skipped on an empty plan answer" 1 "$(lane pull_request success '' skipped skipped)"
+check "a pull request on which the VM ran is refused" 1 "$(lane pull_request success true success success)"
+for result in failure cancelled; do
+	check "a native lane that $result is refused" 1 "$(lane pull_request success true skipped $result)"
+	check "the schedule's VM that $result is refused" 1 "$(lane schedule success true $result skipped)"
 done
-# A plan that did not succeed is red even when the matrix reports success: a
-# VM that "booted nothing" because the plan never answered is not a pass.
+check "the schedule passes on the VM" 0 "$(lane schedule success true success skipped)"
+check "a dispatch passes on the VM" 0 "$(lane workflow_dispatch success true success skipped)"
+check "a schedule on which the native lane ran is refused" 1 "$(lane schedule success true success success)"
+check "a schedule whose VM was skipped is refused" 1 "$(lane schedule success true skipped skipped)"
 for plan in failure cancelled skipped ""; do
-	rc=0
-	PLAN="$plan" RESULT=success bash "$WORK/result.sh" >"$WORK/result.log" 2>&1 || rc=$?
-	check "required check refuses a successful matrix after a plan that is '$plan'" 1 "$rc"
-	check "required check says the plan did not succeed ('$plan')" 1 "$(grep -cF "the plan did not succeed" "$WORK/result.log")"
+	check "a plan that is '$plan' is refused on a pull request, whatever the lane did" 1 "$(lane pull_request "$plan" true skipped success)"
+	check "a plan that is '$plan' is refused on a schedule, whatever the lane did" 1 "$(lane schedule "$plan" true success skipped)"
 done
-# Every step that boots reads the answer as "not false", and the matrix job
-# itself starts when the plan failed.
-check "the matrix job starts when the plan failed" 1 \
-	"$(awk '/^  podman-vm:/{f=1} f&&/if: \$\{\{ !cancelled\(\) \}\}/{c++;exit} END{print c+0}' "$workflow")"
+check "the refusal says the plan did not succeed" 1 "$(lane pull_request failure true skipped success >/dev/null; grep -c 'the plan did not succeed' "$WORK/result.log")"
+check "the native lane job runs only for a pull request and the queue" 1 \
+	"$(awk '/^  podman-native:/{f=1} f&&/github.event_name == .pull_request. \|\| github.event_name == .merge_group./{c++;exit} END{print c+0}' "$workflow")"
+check "the VM job never runs for a pull request or the queue" 1 \
+	"$(awk '/^  podman-vm:/{f=1} f&&/github.event_name != .pull_request. && github.event_name != .merge_group./{c++;exit} END{print c+0}' "$workflow")"
 
 echo
 echo "passed: $pass  failed: $fail"
