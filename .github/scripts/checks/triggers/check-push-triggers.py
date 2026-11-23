@@ -18,7 +18,7 @@ Usage: check-push-triggers.py [<root>]   (exit 1 on any finding)
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "lib"))
 import ci_yaml  # noqa: E402
 
 # workflow file -> why it still runs on a push to develop

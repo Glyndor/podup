@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# .github/scripts/checks/check-push-triggers.py: the merge queue runs a workflow on the
+# .github/scripts/checks/triggers/check-push-triggers.py: the merge queue runs a workflow on the
 # commit that lands in develop, so a workflow with a push to develop either does not
 # exist (when it is also in the queue) or is on a short list with its reason. Each rule is
 # attacked in both directions: a change that must be refused, and the change just inside
@@ -11,7 +11,7 @@
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-GATE="$HERE/.github/scripts/checks/check-push-triggers.py"
+GATE="$HERE/.github/scripts/checks/triggers/check-push-triggers.py"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -170,7 +170,7 @@ printf 'on:\n  push:\n    branches: [develop]\n  push:\n    branches: [main]\njo
 check "a duplicate key cannot hide a push to develop" 1 "$(verdict)"
 
 # The reasons are not empty.
-check "an entry of the list with no reason is refused" 1 "$(python3 - "$HERE/.github/scripts/checks" "$HERE" <<'PY' >/dev/null 2>&1; echo $?
+check "an entry of the list with no reason is refused" 1 "$(python3 - "$HERE/.github/scripts/checks/triggers" "$HERE" <<'PY' >/dev/null 2>&1; echo $?
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("gate", sys.argv[1] + "/check-push-triggers.py")
 gate = importlib.util.module_from_spec(spec)

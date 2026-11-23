@@ -123,7 +123,7 @@ must_run "changes a workflow the lint reads" \
 	.github/workflows/ci.yml .github/workflows/reusable-workflow-lint.yml
 must_run "changes a check the lint runs" \
 	.github/scripts/checks/check-caller-with-defaults.py \
-	.github/scripts/checks/check-merge-group-triggers.py \
+	.github/scripts/checks/triggers/check-merge-group-triggers.py \
 	.github/scripts/checks/check-local-reusables.py
 must_run "changes the actionlint configuration" \
 	.github/actionlint.yaml .github/actionlint.yml

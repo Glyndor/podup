@@ -617,12 +617,12 @@ jobs:
       # A workflow that emits a develop-required check must trigger on
       # merge_group (with checks_requested in types:), and no other
       # workflow may carry the trigger. Logic lives in
-      # .github/scripts/checks/check-merge-group-triggers.py because this file
+      # .github/scripts/checks/triggers/check-merge-group-triggers.py because this file
       # is near the 500-code-line hard limit already.
       - name: A workflow that emits a check required on develop must trigger on merge_group
         if: steps.decide.outputs.run != 'false'
         run: |
-          python3 .github/scripts/checks/check-merge-group-triggers.py
+          python3 .github/scripts/checks/triggers/check-merge-group-triggers.py
 
       # The token that can cancel other runs (`actions: write`) is held to an
       # exact list of steps, by its effective permissions: `write-all`, a grant
@@ -640,4 +640,4 @@ jobs:
       # tree. A workflow with a push to develop is on a short list, with its reason.
       - name: No workflow repeats on a push to develop what the queue ran
         if: steps.decide.outputs.run != 'false'
-        run: python3 .github/scripts/checks/check-push-triggers.py
+        run: python3 .github/scripts/checks/triggers/check-push-triggers.py
