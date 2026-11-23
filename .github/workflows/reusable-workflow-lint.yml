@@ -245,6 +245,9 @@ jobs:
               "reusable-workflow-lint.yml": [
                   "workflow-lint",
               ],
+              "reusable-rust-audit.yml": [
+                  "cargo audit", "cargo deny",
+              ],
           }
 
           # Required check names emitted directly by a job in this
@@ -254,6 +257,8 @@ jobs:
           # incidental.
           DIRECT_EMITTER_NAMES = {
               "Supported Podman majors",
+              "commit identity",
+              "secret scan",
           }
 
           # `if: always()` is the only `if:` value allowed on a caller of

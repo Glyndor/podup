@@ -46,6 +46,18 @@ fn runs_on_pull_request(doc: &Value) -> bool {
 	}
 }
 
+/// A group that belongs to one run alone: it carries the run id and nothing a newer
+/// run of the same ref would share.
+fn is_run_group(block: &Value) -> bool {
+	block
+		.get("group")
+		.and_then(Value::as_str)
+		.is_some_and(|g| g.contains("github.run_id") && !g.contains("github.ref"))
+}
+
+/// The workflows whose result is a security result. They never cancel.
+const SECURITY: [&str; 2] = ["audit", "commit-hygiene"];
+
 /// `Err` carries the reason a workflow breaks the rule; `Ok` also covers the
 /// workflows that do not run on `pull_request` and so owe nothing.
 fn check(doc: &Value) -> Result<(), String> {
@@ -57,6 +69,9 @@ fn check(doc: &Value) -> Result<(), String> {
 	};
 	let cancel = match block.get("cancel-in-progress") {
 		Some(Value::String(s)) => s.clone(),
+		// A security result is never cancelled by a newer run: it never cancels, and its
+		// group is the run itself, so nothing is superseded or dropped either.
+		Some(Value::Bool(false)) if is_run_group(block) => return Ok(()),
 		Some(other) => {
 			return Err(format!(
 				"`cancel-in-progress` is the literal {other:?}; it must be an expression \
@@ -157,6 +172,17 @@ const RUN_DISCRIMINANT: &str =
 const CANCEL_EXPRESSION: &str = "${{ github.event_name == 'pull_request' }}";
 
 fn check_reusable(doc: &Value, prefix: &str, suffix: &str) -> Result<(), String> {
+	if prefix == "rust-audit" {
+		// The dependency audit is a security result: its group is the run, and it never cancels.
+		let expected =
+			format!("{prefix}-${{{{ github.workflow }}}}-${{{{ github.run_id }}}}{suffix}");
+		if doc["concurrency"]["group"].as_str() != Some(&expected)
+			|| doc["concurrency"]["cancel-in-progress"].as_bool() != Some(false)
+		{
+			return Err("the audit reusable must never cancel and must group by run".into());
+		}
+		return Ok(());
+	}
 	let expected = format!("{prefix}-${{{{ github.workflow }}}}-{RUN_DISCRIMINANT}{suffix}");
 	if doc["concurrency"]["group"].as_str() != Some(&expected) {
 		return Err(format!("reusable group must be {expected}"));
@@ -290,3 +316,21 @@ fn publishers_and_watchers_serialize_without_cancelling() {
 
 #[path = "workflow_concurrency/release.rs"]
 mod release;
+
+/// The audit and the commit hygiene workflows never cancel, and their group is the run.
+#[test]
+fn the_security_workflows_never_cancel_and_group_by_run() {
+	for name in SECURITY {
+		let doc = workflow(name);
+		let block = &doc["concurrency"];
+		assert_eq!(
+			block["cancel-in-progress"].as_bool(),
+			Some(false),
+			"{name} cancels a run in progress; a security result is never cancelled"
+		);
+		assert!(
+			is_run_group(block),
+			"{name}'s concurrency group is shared between runs of one ref"
+		);
+	}
+}

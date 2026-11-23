@@ -42,13 +42,17 @@ on:
 permissions:
   contents: read
 
+# A security result is never cancelled by a newer push: the group is the run itself.
 concurrency:
-  group: rust-audit-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ inputs.working-directory }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: rust-audit-${{ github.workflow }}-${{ github.run_id }}-${{ inputs.working-directory }}
+  cancel-in-progress: false
 
 jobs:
   audit:
-    name: cargo audit
+    # Required on develop and on main. The name carries the kind of run, as the other
+    # required names do (see reusable-dco.yml), and this check is also asked of the merge
+    # queue: a security result is not advisory.
+    name: cargo audit${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}
     runs-on: ubuntu-latest
     # Bound: the download and the check take seconds now; the audit itself is the rest. Never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
@@ -87,7 +91,10 @@ jobs:
         run: cargo audit --deny warnings
 
   deny:
-    name: cargo deny
+    # Required on develop and on main. The name carries the kind of run, as the other
+    # required names do (see reusable-dco.yml), and this check is also asked of the merge
+    # queue: a security result is not advisory.
+    name: cargo deny${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 137s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
