@@ -81,6 +81,17 @@ fn job(spec: &Value, id: &str) -> Value {
 	spec["jobs"][id].clone()
 }
 
+fn needs_of(job: &Value) -> Vec<String> {
+	match &job["needs"] {
+		Value::String(one) => vec![one.clone()],
+		Value::Sequence(many) => many
+			.iter()
+			.filter_map(|v| v.as_str().map(str::to_string))
+			.collect(),
+		_ => Vec::new(),
+	}
+}
+
 fn steps(job: &Value) -> Vec<Value> {
 	job["steps"].as_sequence().cloned().unwrap_or_default()
 }
@@ -203,9 +214,8 @@ fn the_jobs_skipped_whole_take_their_decision_from_classify_and_ask_nothing_them
 	let spec = reusable();
 	for (id, _) in JOB_GOVERNED {
 		let job = job(&spec, id);
-		assert_eq!(
-			job["needs"].as_str(),
-			Some("classify"),
+		assert!(
+			needs_of(&job).contains(&"classify".to_string()),
 			"{id} does not wait for the classifier"
 		);
 		for step in steps(&job) {
@@ -360,9 +370,8 @@ fn msrv_and_doc_skip_only_on_an_explicit_false_from_the_plan() {
 	let spec = reusable();
 	for id in ["msrv", "doc"] {
 		let job = job(&spec, id);
-		assert_eq!(
-			job["needs"].as_str(),
-			Some("classify"),
+		assert!(
+			needs_of(&job).contains(&"classify".to_string()),
 			"{id} does not wait for the plan"
 		);
 		let cond = job["if"].as_str().unwrap_or_default();
@@ -498,4 +507,44 @@ fn the_private_document_scan_runs_in_lint_whatever_the_classifier_says() {
 		scans[0].get("continue-on-error").is_none(),
 		"the private-document scan must be able to fail the job"
 	);
+}
+
+/// The suites are layered so that the first failure stops the expensive ones:
+/// the cheap job first, the Linux suite after it, and only then coverage and the
+/// other platforms. The ordering is applied on pull requests only, it names the
+/// real gates and never the plan, and it uses `!= 'failure'` so a skipped or
+/// cancelled gate does not hold the next layer back.
+#[test]
+fn the_layers_wait_for_the_cheap_jobs_on_pull_requests_only() {
+	let spec = reusable();
+	for (id, gates) in [
+		("test", vec!["lint"]),
+		("msrv", vec!["lint"]),
+		("doc", vec!["lint"]),
+		("coverage", vec!["lint", "test"]),
+		("test-extra", vec!["lint", "test"]),
+	] {
+		let job = job(&spec, id);
+		let needs = needs_of(&job);
+		let cond = job["if"].as_str().unwrap_or_default();
+		for gate in &gates {
+			assert!(
+				needs.contains(&gate.to_string()),
+				"{id} does not wait for {gate}"
+			);
+			assert!(
+				cond.contains(&format!("needs.{gate}.result != 'failure'")),
+				"{id} is not held back by a failed {gate}: {cond:?}"
+			);
+		}
+		assert!(
+			cond.contains("github.event_name != 'pull_request' ||"),
+			"{id} applies the ordering outside pull requests: {cond:?}"
+		);
+		assert!(
+			!cond.contains("needs.classify.result == 'failure'")
+				&& !cond.contains("contains(needs.*.result"),
+			"{id} lets the plan order the layers: {cond:?}"
+		);
+	}
 }

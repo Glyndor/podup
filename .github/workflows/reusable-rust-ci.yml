@@ -310,8 +310,8 @@ jobs:
     # this job: a job whose `needs` failed is skipped by default, a skipped job
     # reports a pass to a required check, and that would turn a broken checkout
     # into a green suite. A classifier that did not answer runs the job.
-    needs: classify
-    if: ${{ !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}
+    needs: [classify, lint]
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 106s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
@@ -363,18 +363,20 @@ jobs:
 
   test-extra:
     name: Test (${{ matrix.os }})
-    needs: classify
+    needs: [classify, lint, test]
     # The macOS and Windows legs are the expensive ones and they are about the
     # crate: a document cannot fail a test that only runs on Windows. A
     # documentation-only range skips the matrix, and the aggregate gate below
     # still reports `rust / Extra platforms`.
-    if: ${{ inputs.extra-test-os != '[]' && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}
+    if: ${{ inputs.extra-test-os != '[]' && !cancelled() && (github.event_name != 'pull_request' || (needs.lint.result != 'failure' && needs.test.result != 'failure')) && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}
     runs-on: ${{ matrix.os }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 205s; the slowest leg is windows-latest. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
     timeout-minutes: 35
     strategy:
-      fail-fast: false
+      # One leg red is a red pull request, and the other leg's minutes answer
+      # nothing more. The gate still sees the matrix as failed.
+      fail-fast: true
       matrix:
         os: ${{ fromJSON(inputs.extra-test-os) }}
     defaults:
@@ -456,12 +458,12 @@ jobs:
 
   coverage:
     name: Coverage
-    needs: classify
+    needs: [classify, lint, test]
     # The coverage gate measures the crate, and a documentation-only range
     # changes no line of it: the gate would read the same number it read
     # yesterday. The job is skipped, and a job skipped by its own `if:`
     # reports `skipped`, which the required check `rust / Coverage` accepts.
-    if: ${{ inputs.coverage-threshold > 0 && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}
+    if: ${{ inputs.coverage-threshold > 0 && !cancelled() && (github.event_name != 'pull_request' || (needs.lint.result != 'failure' && needs.test.result != 'failure')) && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 166s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
@@ -529,8 +531,8 @@ jobs:
     # Skipped whole when the plan says the range reaches nothing `cargo build`
     # reads. Only an explicit `false` skips it: a plan that failed or answered
     # nothing builds, and the gate below fails any other skip.
-    needs: classify
-    if: ${{ !cancelled() && inputs.msrv != '' && (needs.classify.result != 'success' || needs.classify.outputs.build != 'false') }}
+    needs: [classify, lint]
+    if: ${{ !cancelled() && inputs.msrv != '' && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.build != 'false') }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 62s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
@@ -653,8 +655,8 @@ jobs:
     name: Doc warnings
     # Same plan and the same rule as `msrv`: skipped whole on an explicit
     # `false` and run on anything else.
-    needs: classify
-    if: ${{ !cancelled() && inputs.doc-warnings && (needs.classify.result != 'success' || needs.classify.outputs.build != 'false') }}
+    needs: [classify, lint]
+    if: ${{ !cancelled() && inputs.doc-warnings && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.build != 'false') }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 56s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
