@@ -57,15 +57,12 @@ fn newly_unresolved(file: &str, planted: &str) -> Vec<String> {
 fn a_renamed_caller_job_id_is_reported_by_name() {
 	let dir = workflows_dir();
 	let ci = read_workflow(&dir.join("ci.yml"));
-	let needle = "  rust:\n    uses: ./.github/workflows/reusable-rust-ci.yml";
+	let needle = "  rust:\n";
 	assert!(
 		ci.contains(needle),
 		"ci.yml no longer carries the caller `rust:` this case plants against"
 	);
-	let planted = ci.replace(
-		needle,
-		"  rustx:\n    uses: ./.github/workflows/reusable-rust-ci.yml",
-	);
+	let planted = ci.replace(needle, "  rustx:\n");
 	assert_ne!(planted, ci, "the plant must change the file it plants into");
 
 	let gone = newly_unresolved("ci.yml", &planted);

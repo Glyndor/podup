@@ -41,8 +41,8 @@ import sys
 import yaml
 
 spec = yaml.safe_load(open(sys.argv[1]))
-steps = spec["jobs"]["gate"]["steps"]
-assert len(steps) == 1, "the gate is one step"
+steps = [s for s in spec["jobs"]["gate"]["steps"] if s.get("name") == "Certify the plan and every skip"]
+assert len(steps) == 1, "the gate has one step that certifies"
 print(steps[0]["run"])
 PY
 check "the gate step was read from the workflow" yes "$([ -s "$WORK/gate.sh" ] && echo yes || echo no)"
@@ -202,7 +202,7 @@ print(step["run"])
 PY
 	: >"$WORK/gh-out"
 	: >"$WORK/git.log"
-	env PATH="$WORK/fake:$PATH" GIT_LOG="$WORK/git.log" GITHUB_OUTPUT="$WORK/gh-out" BASE_REF="$4" EVENT=pull_request \
+	env PATH="$WORK/fake:$PATH" GIT_LOG="$WORK/git.log" GITHUB_OUTPUT="$WORK/gh-out" BASE_REF="$4" EVENT="${EVENT:-pull_request}" \
 		BASE_SHA=base HEAD_SHA=head bash "$WORK/step.sh" >/dev/null 2>&1
 	printf '%s|git:%s' "$(paste -sd, "$WORK/gh-out")" "$(wc -l <"$WORK/git.log" | tr -d ' ')"
 }
@@ -215,45 +215,13 @@ check "a pull request into another base runs every lane" \
 	"run=true,docs_only=false,ci_only=false|git:0" "$(plan_step reusable-rust-ci.yml classify decide feature)"
 check "a pull request into develop asks the judge" "|git:1" "$(plan_step reusable-rust-ci.yml classify decide develop)"
 check "the build answer for a pull request into develop asks git" "build=true|git:1" "$(plan_step reusable-rust-ci.yml classify build develop)"
+# The queue asks the judge like a pull request into develop does: nothing is skipped on
+# the word of another run.
+check "the queue asks the judge for the plan" "|git:1" "$(EVENT=merge_group plan_step reusable-rust-ci.yml classify decide "")"
+check "the queue asks git for the build answer" "build=true|git:1" "$(EVENT=merge_group plan_step reusable-rust-ci.yml classify build "")"
 check "the workflow lint runs for a pull request into main, with no judge asked" "run=true|git:0" "$(plan_step reusable-workflow-lint.yml workflow-lint decide main)"
 check "the workflow lint runs for a base that is not exactly develop" "run=true|git:0" "$(plan_step reusable-workflow-lint.yml workflow-lint decide Develop)"
 check "the workflow lint asks the judge for a pull request into develop" "|git:1" "$(plan_step reusable-workflow-lint.yml workflow-lint decide develop)"
-
-# The two older gates still carry the names the ruleset requires until it moves
-# to `rust / Gate`. A skip is a pass for them only when the caller switched the
-# check off or a plan that succeeded said so out loud.
-for id in extra-platforms-gate msrv-gate; do
-	python3 - "$workflow" "$id" >"$WORK/$id.sh" <<'PY'
-import sys
-import yaml
-
-spec = yaml.safe_load(open(sys.argv[1]))
-print(spec["jobs"][sys.argv[2]]["steps"][0]["run"])
-PY
-done
-old_gate() { # <id> <plan> <run> <docs> <build> <result> <switch>
-	local id="$1"
-	env PLAN="$2" RUN="$3" DOCS="$4" CI_ONLY="${CI_ONLY:-false}" BUILD="$5" RESULT="$6" EXTRA_ON="$7" MSRV_ON="$7" bash "$WORK/$id.sh" >/dev/null 2>&1
-	echo $?
-}
-check "extra platforms: success is green" 0 "$(old_gate extra-platforms-gate $s true false true $s true)"
-check "extra platforms: skipped on run=false is green" 0 "$(old_gate extra-platforms-gate $s false false false $k true)"
-check "extra platforms: skipped on docs only is green" 0 "$(old_gate extra-platforms-gate $s true true false $k true)"
-check "extra platforms: skipped when switched off is green" 0 "$(old_gate extra-platforms-gate failure "" "" "" $k false)"
-check "extra platforms: skipped after a failed plan is red" 1 "$(old_gate extra-platforms-gate failure false false false $k true)"
-check "extra platforms: skipped on an empty answer is red" 1 "$(old_gate extra-platforms-gate $s "" "" "" $k true)"
-check "extra platforms: skipped while the plan said to run is red" 1 "$(old_gate extra-platforms-gate $s true false true $k true)"
-check "extra platforms: failure is red" 1 "$(old_gate extra-platforms-gate $s true false true failure true)"
-check "extra platforms: cancelled is red" 1 "$(old_gate extra-platforms-gate $s true false true cancelled true)"
-check "extra platforms: skipped on a CI-only range is green" 0 "$(CI_ONLY=true old_gate extra-platforms-gate $s true false false $k true)"
-check "extra platforms: ci_only after a failed plan is red" 1 "$(CI_ONLY=true old_gate extra-platforms-gate failure true false false $k true)"
-check "msrv: success is green" 0 "$(old_gate msrv-gate $s true false true $s true)"
-check "msrv: skipped on build=false is green" 0 "$(old_gate msrv-gate $s true false false $k true)"
-check "msrv: skipped when switched off is green" 0 "$(old_gate msrv-gate failure "" "" "" $k false)"
-check "msrv: skipped after a failed plan is red" 1 "$(old_gate msrv-gate failure true false false $k true)"
-check "msrv: skipped on an empty build answer is red" 1 "$(old_gate msrv-gate $s true false "" $k true)"
-check "msrv: skipped while the build answer was true is red" 1 "$(old_gate msrv-gate $s true false true $k true)"
-check "msrv: failure is red" 1 "$(old_gate msrv-gate $s true false true failure true)"
 
 # Wiring: the gate waits for every job it certifies, runs on every outcome, and
 # carries the name the ruleset requires.
@@ -269,7 +237,7 @@ if gate.get("if") != "always()":
     problems.append("gate-if")
 if not str(gate.get("name")).startswith("Gate"):
     problems.append("gate-name")
-certified = [j for j in jobs if j not in ("gate", "extra-platforms-gate", "msrv-gate")]
+certified = [j for j in jobs if j != "gate"]
 for job in certified:
     if job not in gate["needs"]:
         problems.append("needs-" + job)

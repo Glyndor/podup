@@ -189,7 +189,7 @@ check "the judge is read from the base" 1 \
 	"$(grep -c 'git show "\$BASE_SHA:.github/scripts/checks/workflow-lint-inputs.sh"' "$workflow")"
 check "the judge is never read from the working tree" 0 \
 	"$(grep -c 'bash .github/scripts/checks/workflow-lint-inputs.sh' "$workflow")"
-check "every step behind the guard carries it" 12 \
+check "every step behind the guard carries it" 13 \
 	"$(grep -c "steps.decide.outputs.run != 'false'" "$workflow")"
 check "the checkout fetches the history the judge reads" 1 \
 	"$(grep -c 'fetch-depth: 0' "$workflow")"

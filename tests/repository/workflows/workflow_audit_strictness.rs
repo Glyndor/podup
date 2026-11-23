@@ -69,11 +69,11 @@ fn every_cargo_audit_denies_warnings() {
 }
 
 #[test]
-fn the_audit_runs_on_every_pull_request_and_every_push_to_develop() {
+fn the_audit_runs_on_every_pull_request_and_in_the_merge_queue() {
 	let spec: serde_yaml::Value =
 		serde_yaml::from_str(&read("audit.yml")).expect("audit.yml parses");
 	let on = &spec["on"];
-	for event in ["pull_request", "push"] {
+	for event in ["pull_request", "merge_group"] {
 		assert!(
 			on.get(event).is_some(),
 			"audit.yml does not run on {event}: an advisory published today would wait for the \
@@ -85,10 +85,10 @@ fn the_audit_runs_on_every_pull_request_and_every_push_to_develop() {
 			 file changing, so the audit cannot be conditioned on paths"
 		);
 	}
-	assert_eq!(
-		on["push"]["branches"],
-		serde_yaml::from_str::<serde_yaml::Value>("[develop]").unwrap(),
-		"the push audit is for develop"
+	assert!(
+		on.get("push").is_none(),
+		"audit.yml runs on a push to develop as well as in the merge queue, which already ran \
+		 the commit that lands; the push repeats it"
 	);
 	assert!(
 		on.get("schedule").is_some(),

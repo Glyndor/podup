@@ -141,10 +141,9 @@ jobs:
   # themselves, and `test` reads it to run the focused lane instead of the
   # whole suite.
   #
-  # Skipping a job is only safe where the required name survives it. A job
-  # skipped by its own `if:` reports `skipped`, which a required check accepts,
-  # and the matrix jobs are never required themselves: `Extra platforms` is an
-  # aggregate that always runs and reads the matrix result. `lint` stays whole
+  # A job skipped by its own `if:` reports `skipped`, which a required check
+  # accepts, so none of these is required by name: `rust / Gate` is, and it
+  # reads each result and certifies each skip. `lint` stays whole
   # because it also runs the checks that must see documentation-only changes.
   classify:
     name: Classify the range
@@ -174,8 +173,11 @@ jobs:
           # The plan is trusted for a pull request only when its base is exactly
           # develop. Into main, which promotes what develop holds, or into anything
           # else, every lane runs whatever the range says.
-          [ "$EVENT" = pull_request ] && [ "$BASE_REF" != develop ] && printf 'run=true\ndocs_only=false\nci_only=false\n' >>"$GITHUB_OUTPUT" ||
+          if [ "$EVENT" = pull_request ] && [ "$BASE_REF" != develop ]; then
+            printf 'run=true\ndocs_only=false\nci_only=false\n' >>"$GITHUB_OUTPUT"
+          else
             git show "$BASE_SHA:.github/scripts/checks/rust-ci-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
+          fi
 
       # The second answer, the one `msrv` and `doc` used to work out each for
       # itself: whether the range reaches anything `cargo build` and
@@ -373,8 +375,7 @@ jobs:
     needs: [classify, lint, test]
     # The macOS and Windows legs are the expensive ones and they are about the
     # crate: a document cannot fail a test that only runs on Windows. A
-    # documentation-only range skips the matrix, and the aggregate gate below
-    # still reports `rust / Extra platforms`.
+    # documentation-only range skips the matrix, and the gate certifies that.
     if: ${{ inputs.extra-test-os != '[]' && !cancelled() && (github.event_name != 'pull_request' || (needs.lint.result != 'failure' && needs.test.result != 'failure')) && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}
     runs-on: ${{ matrix.os }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 205s; the slowest leg is windows-latest. Ten times that, rounded up, never under ten
@@ -419,49 +420,6 @@ jobs:
 
       - name: Tests
         run: cargo test --locked --all-features --workspace
-
-  extra-platforms-gate:
-    name: Extra platforms
-    # A required status check is matched by name, so a name carrying a value makes
-    # the pull request that changes the value block itself: the job emits a new
-    # name, the ruleset still requires the old one, and nothing emits it. This job
-    # carries a name that cannot move, so a ruleset gates on "the extra-platform
-    # tests passed" without naming which platforms those are. Glyndor/podup#1552.
-    needs: [classify, test-extra]
-    # A matrix skipped whole by the classifier arrives here as `skipped`, which is
-    # a pass below; this job is the only one of the pair a ruleset names, so it
-    # must keep running whatever the matrix did.
-    # `needs` on its own SKIPS this job when the dependency fails, and a skipped
-    # required check does not block a merge - which is the exact failure this job
-    # exists to prevent. `if: always()` plus an explicit result check is what makes
-    # it a gate rather than a decoration.
-    if: always()
-    runs-on: ubuntu-latest
-    # Bound: worst of the last three successful runs on 2026-09-02 was 4s. Ten times that, rounded up, never under ten
-    # minutes; the six-hour default is what a hang would otherwise cost.
-    timeout-minutes: 10
-    steps:
-      - name: Reflect the extra-platform test result
-        env:
-          PLAN: ${{ needs.classify.result }}
-          RUN: ${{ needs.classify.outputs.run }}
-          DOCS: ${{ needs.classify.outputs.docs_only }}
-          CI_ONLY: ${{ needs.classify.outputs.ci_only }}
-          RESULT: ${{ needs.test-extra.result }}
-          EXTRA_ON: ${{ inputs.extra-test-os != '[]' }}
-        run: |
-          set -euo pipefail
-          # `skipped` is a pass only when the caller asked for no extra platforms
-          # or a plan that succeeded said so out loud (`run=false`, or `run=true`
-          # with `docs_only=true`). A matrix skipped for any other reason, a failed
-          # plan included, is red.
-          ok=no
-          [ "$RESULT" = success ] && ok=yes
-          if [ "$RESULT" = skipped ]; then
-            [ "$EXTRA_ON" = false ] && ok=yes
-            [ "$PLAN" = success ] && { [ "$RUN" = false ] || { [ "$RUN" = true ] && { [ "$DOCS" = true ] || [ "$CI_ONLY" = true ]; }; }; } && ok=yes
-          fi
-          [ "$ok" = yes ] || { echo "::error::extra-platform tests: $RESULT, and nothing certifies it (plan: $PLAN, run: '$RUN', docs_only: '$DOCS', ci_only: '$CI_ONLY')"; exit 1; }
 
   coverage:
     name: Coverage
@@ -571,37 +529,6 @@ jobs:
 
       - name: Build on the declared MSRV
         run: cargo build --locked --all-features
-
-  msrv-gate:
-    name: MSRV
-    # Same reason as extra-platforms-gate: `MSRV (1.88)` moves the day the MSRV
-    # moves, and takes the gate with it. MSRV is the worse of the two because it is
-    # not a matrix - a single job interpolating an input into its own name. The
-    # number stays visible in the job log and in the `MSRV (x.y)` job itself.
-    needs: [classify, msrv]
-    if: always()
-    runs-on: ubuntu-latest
-    # Bound: worst of the last three successful runs on 2026-09-02 was 4s. Ten times that, rounded up, never under ten
-    # minutes; the six-hour default is what a hang would otherwise cost.
-    timeout-minutes: 10
-    steps:
-      - name: Reflect the MSRV result
-        env:
-          PLAN: ${{ needs.classify.result }}
-          BUILD: ${{ needs.classify.outputs.build }}
-          RESULT: ${{ needs.msrv.result }}
-          MSRV_ON: ${{ inputs.msrv != '' }}
-        run: |
-          set -euo pipefail
-          # `skipped` is a pass only when the caller switched the check off or a
-          # plan that succeeded said `build=false` out loud; anything else is red.
-          ok=no
-          [ "$RESULT" = success ] && ok=yes
-          if [ "$RESULT" = skipped ]; then
-            [ "$MSRV_ON" = false ] && ok=yes
-            [ "$PLAN" = success ] && [ "$BUILD" = false ] && ok=yes
-          fi
-          [ "$ok" = yes ] || { echo "::error::MSRV: $RESULT, and nothing certifies it (plan: $PLAN, build: '$BUILD')"; exit 1; }
 
   package:
     name: Package check

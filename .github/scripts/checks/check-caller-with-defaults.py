@@ -49,8 +49,7 @@ import ci_yaml  # noqa: E402  (the one loader and enumerator; run from the repos
 # from both lists or the two steps drift in what they consider required.
 REQUIRED_REUSABLES = {
     "reusable-rust-ci.yml": [
-        "Format & lint", "Test", "Coverage", "Doc warnings",
-        "MSRV", "Extra platforms", "Gate",
+        "Format & lint", "Test", "Coverage", "Doc warnings", "Gate",
     ],
     "reusable-dco.yml": [
         "Signed-off-by present on every commit",

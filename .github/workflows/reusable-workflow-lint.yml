@@ -230,8 +230,7 @@ jobs:
           # pulled by reading the live ruleset, not by guessing.
           REQUIRED_REUSABLES = {
               "reusable-rust-ci.yml": [
-                  "Format & lint", "Test", "Coverage", "Doc warnings",
-                  "MSRV", "Extra platforms", "Gate",
+                  "Format & lint", "Test", "Coverage", "Doc warnings", "Gate",
               ],
               "reusable-dco.yml": [
                   "Signed-off-by present on every commit",
@@ -635,3 +634,10 @@ jobs:
       - name: A job that can end other runs runs only the steps the list holds
         if: steps.decide.outputs.run != 'false'
         run: python3 .github/scripts/ci/check-write-token-jobs.py
+
+      # The merge queue runs a workflow on the commit that lands in develop, so a
+      # workflow with both a queue trigger and a push to develop runs twice on one
+      # tree. A workflow with a push to develop is on a short list, with its reason.
+      - name: No workflow repeats on a push to develop what the queue ran
+        if: steps.decide.outputs.run != 'false'
+        run: python3 .github/scripts/checks/check-push-triggers.py

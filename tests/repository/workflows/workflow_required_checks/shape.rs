@@ -49,11 +49,10 @@ pub const REQUIRED_ON_MAIN: &[&str] = &[
 	"rust / Test",
 	"rust / Coverage",
 	"rust / Doc warnings",
-	"rust / MSRV",
-	"rust / Extra platforms",
-	// The gate that certifies every skip of the Rust pipeline. The six names
-	// above it are the suites it covers; the ruleset moves to the gate once
-	// this job is on `develop`, and the suites leave this list then.
+	// The gate that certifies every skip of the Rust pipeline. `develop` requires
+	// it and not the four names above, which `main` keeps requiring until its
+	// ruleset moves to the promotion names. `rust / MSRV` and `rust / Extra
+	// platforms` left this list with the two small gates that emitted them.
 	"rust / Gate",
 	// The security results are required too, and in the queue: the dependency audit and
 	// the two hygiene checks. They are not part of the Rust gate.

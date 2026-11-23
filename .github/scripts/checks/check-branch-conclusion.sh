@@ -87,6 +87,9 @@ filter='[.workflow_runs[]? | select(.head_sha=="'"$head_sha"'" and .event=="push
 	   (.html_url // "")]
 	| @tsv'
 
+queue_url="repos/${repo}/actions/workflows/${workflow}/runs?head_sha=${head_sha}&event=merge_group&per_page=30"
+queue_filter="${filter//.event==\"push\"/.event==\"merge_group\"}"
+
 run=""
 for attempt in $(seq 1 "$max_attempts"); do
 	# A failed `gh api` is treated as "no answer this attempt" and the
@@ -104,6 +107,15 @@ for attempt in $(seq 1 "$max_attempts"); do
 		gh_rc=$?
 		echo "::warning::gh api call failed on attempt ${attempt} (exit ${gh_rc}); treating as no answer this attempt and polling on."
 		run=""
+	fi
+	# `develop` takes no push run of this workflow: the merge queue ran it on the
+	# very commit that landed, and a push would repeat that. The verdict for the
+	# head of the queue's branch is the queue's run for that commit.
+	if [ "$branch" = develop ]; then
+		IFS=$'\t' read -r pushed _ <<<"$run"
+		if [ -z "$pushed" ] || [ "$pushed" = null ]; then
+			run="$(gh api "$queue_url" --jq "$queue_filter" 2>/dev/null)" || run=""
+		fi
 	fi
 	if [ -n "$run" ]; then
 		IFS=$'\t' read -r id status _ <<<"$run"

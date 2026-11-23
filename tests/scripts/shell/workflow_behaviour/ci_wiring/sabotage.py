@@ -43,6 +43,10 @@ PLANTS = [
     ("a timeout that cuts a suite short", R, "    timeout-minutes: 20\n    defaults:", "    timeout-minutes: 1\n    defaults:"),
     ("a container that runs a job in another image", "reusable-line-limit.yml", "  line-limit:\n", "  line-limit:\n    container: alpine\n"),
     ("a property nobody listed on a job", "reusable-dco.yml", "jobs:\n  dco:\n", "jobs:\n  dco:\n    environment: elsewhere\n"),
+    # The push to develop repeats nothing the queue ran.
+    ("CI running again on a push to develop", "ci.yml", "  push:\n    branches: [main]\n", "  push:\n    branches: [main, develop]\n"),
+    ("the audit running again on a push to develop", "audit.yml", "  merge_group:\n    types: [checks_requested]\n", "  merge_group:\n    types: [checks_requested]\n  push:\n    branches:\n      - develop\n"),
+    ("the line limit running again on a push to develop", "line-limit.yml", "  push:\n    branches:\n      - main\n", "  push:\n    branches:\n      - main\n      - develop\n"),
     # 4. The plan variables of two suites crossed in the gate.
     ("the run and build answers crossed in the gate", R, "RUN=$(out classify run)", "RUN=$(out classify build)"),
     ("the switches of two suites crossed in the gate", R, 'judge msrv "$MSRV_ON"', 'judge msrv "$DOC_ON"'),

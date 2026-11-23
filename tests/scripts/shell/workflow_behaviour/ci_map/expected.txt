@@ -16,6 +16,7 @@
 .github/scripts/checks/check-merge-group-triggers.py	C N N R N
 .github/scripts/checks/check-planning-words.sh	C N N R N
 .github/scripts/checks/check-private-document-references.sh	C N N R N
+.github/scripts/checks/check-push-triggers.py	C N N R N
 .github/scripts/checks/check-tooling-isolation.py	C N N R N
 .github/scripts/checks/debian-ci-inputs.sh	C N B R N
 .github/scripts/checks/dependabot_security_watch.py	C N N R N
@@ -127,6 +128,7 @@ tests/scripts/shell/workflow_behaviour/rust-gate.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/workflow-lint-inputs.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/write-token-jobs.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/check-pins.test.sh	N N N R N
+tests/scripts/shell/workflow_lint/push-triggers.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-gate.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-least-privilege.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-wiring.test.sh	N N N R N
