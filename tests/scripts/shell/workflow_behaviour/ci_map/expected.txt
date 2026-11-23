@@ -28,7 +28,7 @@
 .github/scripts/checks/signing-key-isolation.py	C N N R N
 .github/scripts/checks/triggers/*	C N N R N
 .github/scripts/checks/workflow-lint-inputs.sh	C N N R N
-.github/scripts/ci/*	C B N R V
+.github/scripts/ci/*	C B N R N
 .github/scripts/fedora_image/*	C B N R V
 .github/scripts/hardening/*	C B N R N
 .github/scripts/hygiene/*	C B N R N
@@ -62,6 +62,7 @@
 .github/workflows/reusable-cancel-others.yml	C N N R N
 .github/workflows/reusable-dco.yml	C N N R N
 .github/workflows/reusable-dependabot-freshness.yml	C N N R N
+.github/workflows/reusable-deprecation-notices.yml	C B N R N
 .github/workflows/reusable-installer-contract.yml	C N N R N
 .github/workflows/reusable-line-limit.yml	C N N R N
 .github/workflows/reusable-main-guard.yml	C N N R N
@@ -132,6 +133,7 @@ tests/scripts/shell/workflow_behaviour/workflow-lint-inputs.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/write-token-jobs.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/check-pins.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/lint-shell-covers-the-contract.test.sh	N N N R N
+tests/scripts/shell/workflow_lint/no-deprecation-notices.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/push-triggers.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-gate.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-least-privilege.test.sh	N N N R N

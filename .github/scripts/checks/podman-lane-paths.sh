@@ -20,12 +20,12 @@ while IFS= read -r f; do
 		.github/scripts/release/sign-requirements.txt) ;;
 		# What the VM reads from here: the image fetcher, the coverage floor, and
 		# the two helpers that decide whether it boots at all. Every other script
-		# under checks/, hygiene/, hardening/ and release/ is something a CI job
+		# under checks/, ci/, hygiene/, hardening/ and release/ is something a CI job
 		# runs, and nothing the VM does reads it. A directory nobody named stays
 		# closed: an unknown path boots.
 		.github/scripts/fedora_image/* | .github/scripts/podman_lane/*) no "$f" ;;
 		.github/scripts/checks/is-version-bump.sh | .github/scripts/checks/podman-lane-paths.sh) no "$f" ;;
-		.github/scripts/checks/* | .github/scripts/hygiene/* | .github/scripts/hardening/* | .github/scripts/release/*) ;;
+		.github/scripts/checks/* | .github/scripts/ci/* | .github/scripts/hygiene/* | .github/scripts/hardening/* | .github/scripts/release/*) ;;
 		.github/scripts/*) no "$f" ;;
 		*.md | docs/* | .github/ISSUE_TEMPLATE/* | LICENSE | .editorconfig) ;;
 		.github/dependabot.yml | .github/CODEOWNERS) ;;
@@ -60,6 +60,7 @@ while IFS= read -r f; do
 		.github/workflows/reusable-branch-health.yml) ;;
 		.github/workflows/reusable-cancel-others.yml) ;;
 		.github/workflows/reusable-dco.yml) ;;
+		.github/workflows/reusable-deprecation-notices.yml) ;;
 		.github/workflows/reusable-dependabot-freshness.yml) ;;
 		.github/workflows/reusable-installer-contract.yml) ;;
 		.github/workflows/reusable-line-limit.yml) ;;

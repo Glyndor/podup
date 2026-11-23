@@ -1,0 +1,64 @@
+name: Deprecation notices (reusable)
+
+# Fails the run when a job of it carries a warning that something it uses is
+# deprecated or is going away: a Node runtime an action still runs on, a command
+# GitHub retired. The warning is an annotation on the job, and a run that is green
+# with one is a run that stops working on a date nobody wrote down. Rust already
+# fails on its own warnings (`-D warnings`); this is the same rule for Actions.
+#
+# It reads, it does not write: the token holds `actions: read` and `checks: read`
+# and nothing else. The script is the base commit's copy, never a file of the change,
+# so a pull request cannot make its own warning pass; a base that does not have it
+# (the pull request that introduces it) is told apart from one that cannot be read,
+# which fails.
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  notices:
+    # The name says which kind of run produced it: nothing for a pull request into
+    # `develop` and for the merge queue, `(promotion)` for a pull request into `main`,
+    # and the event in brackets for everything else, as the other required names do.
+    name: no deprecation notices${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}
+    runs-on: ubuntu-latest
+    # Bound: one listing and one read per job, a few seconds each. Never under ten
+    # minutes; the six-hour default is what a hang would otherwise cost.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    env:
+      BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          path: base
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: head
+          persist-credentials: false
+
+      - name: Take the check from the base commit
+        run: |
+          f=.github/scripts/ci/no-deprecation-notices.sh
+          mkdir -p "$RUNNER_TEMP/judge"
+          listing="$(git -C base ls-tree --name-only HEAD -- "$f")" || exit 1
+          if [ -n "$listing" ]; then
+            git -C base show "HEAD:$f" >"$RUNNER_TEMP/judge/no-deprecation-notices.sh" || exit 1
+          else
+            echo "::notice::$f is not in the base commit; the copy of the change is used"
+            cp "head/$f" "$RUNNER_TEMP/judge/no-deprecation-notices.sh"
+          fi
+
+      - name: Read the annotations of every job of this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: bash "$RUNNER_TEMP/judge/no-deprecation-notices.sh"

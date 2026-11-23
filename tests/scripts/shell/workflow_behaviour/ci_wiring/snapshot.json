@@ -112,6 +112,17 @@
     "steps": [],
     "uses": "./.github/workflows/reusable-cancel-others.yml"
    },
+   "deprecations": {
+    "if": "always()",
+    "needs": "rust",
+    "permissions": {
+     "actions": "read",
+     "checks": "read",
+     "contents": "read"
+    },
+    "steps": [],
+    "uses": "./.github/workflows/reusable-deprecation-notices.yml"
+   },
    "rust": {
     "steps": [],
     "uses": "./.github/workflows/reusable-rust-ci.yml",
@@ -631,6 +642,48 @@
   "permissions": {
    "contents": "read"
   },
+  "true": {
+   "workflow_call": null
+  }
+ },
+ "reusable-deprecation-notices.yml": {
+  "jobs": {
+   "notices": {
+    "env": {
+     "BASE": "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}"
+    },
+    "name": "no deprecation notices${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
+    "permissions": {
+     "actions": "read",
+     "checks": "read",
+     "contents": "read"
+    },
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "d620817c305933d9",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "sha": "c956d71bef0d046f",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Take the check from the base commit",
+      "sha": "1158b0c5b9b26cb2",
+      "uses": null
+     },
+     {
+      "name": "Read the annotations of every job of this run",
+      "sha": "4c02e9d3a2335a4e",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 10
+   }
+  },
+  "name": "Deprecation notices (reusable)",
+  "permissions": {},
   "true": {
    "workflow_call": null
   }

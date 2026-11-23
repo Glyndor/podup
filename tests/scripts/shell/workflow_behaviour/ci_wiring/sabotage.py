@@ -93,6 +93,10 @@ PLANTS = [
     ("the pin judge taken from the change instead of the base", "commit-hygiene.yml", 'install -m 0644 "base/$f"', 'install -m 0644 "head/$f"'),
     ("the pin judge run without isolating Python", "commit-hygiene.yml", "python3 -I judge/check-pins.py", "python3 judge/check-pins.py"),
     ("the pin judge run from the tree of the change", "commit-hygiene.yml", "python3 -I judge/check-pins.py", "python3 -I head/.github/scripts/hygiene/check-pins.py"),
+    ("a condition on the deprecation notices caller", "ci.yml", "  deprecations:\n    needs: rust\n    if: always()\n", "  deprecations:\n    needs: rust\n    if: github.event_name == 'push'\n"),
+    ("the deprecation notices run from the change instead of the base", "reusable-deprecation-notices.yml", 'run: bash "$RUNNER_TEMP/judge/no-deprecation-notices.sh"', "run: bash head/.github/scripts/ci/no-deprecation-notices.sh"),
+    ("the deprecation notices reading before the suites are done", "ci.yml", "  deprecations:\n    needs: rust\n", "  deprecations:\n"),
+    ("the deprecation notices with write access", "reusable-deprecation-notices.yml", "      checks: read\n    env:", "      checks: write\n    env:"),
     ("a condition on the commit identity check", "commit-hygiene.yml", "  commit-identity:\n", "  commit-identity:\n    if: github.event_name == 'push'\n"),
     # 10. The podman lane: the plan and the certification.
     ("the VM answer read as == 'true'", "podman-lane.yml",
@@ -118,6 +122,7 @@ NAMES = [
     ("the workflow lint loses the run kind in its name", "reusable-workflow-lint.yml", "    name: workflow-lint" + SUF, "    name: workflow-lint"),
     ("a job whose id differs only by case produces the line limit again", "commit-hygiene.yml", "jobs:\n", "jobs:\n  Line-Limit:\n    uses: ./.github/workflows/reusable-line-limit.yml\n"),
     ("a required name that keeps a matrix value", "reusable-dco.yml", "    name: Signed-off-by present on every commit" + SUF, "    name: Signed-off-by present on every commit ${{ matrix.os }}"),
+    ("the deprecation notices losing the run kind in their name", "reusable-deprecation-notices.yml", "    name: no deprecation notices" + SUF, "    name: no deprecation notices"),
     ("the audit loses the run kind in its name", "reusable-rust-audit.yml", "    name: cargo audit" + SUF, "    name: cargo audit"),
     ("the secret scan loses the run kind in its name", "commit-hygiene.yml", "    name: secret scan" + SUF, "    name: secret scan"),
     ("the pin values lose the run kind in their name", "commit-hygiene.yml", "    name: pin values" + SUF, "    name: pin values"),

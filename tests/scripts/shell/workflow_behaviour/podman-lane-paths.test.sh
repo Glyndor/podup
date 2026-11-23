@@ -40,7 +40,8 @@ for path in README.md docs/nested/page.html .github/ISSUE_TEMPLATE/bug.yml LICEN
 	deny.toml about.toml about.hbs debian/control debian/changelog install.sh install.ps1 \
 	.github/scripts/release/sign-requirements.txt \
 	.github/scripts/release/sign.py .github/scripts/checks/notes.md .github/scripts/checks/rust-ci-inputs.sh \
-	.github/scripts/hygiene/check-secrets.sh .github/scripts/hardening/check-hardening.sh; do
+	.github/scripts/hygiene/check-secrets.sh .github/scripts/hardening/check-hardening.sh \
+	.github/scripts/ci/no-deprecation-notices.sh .github/scripts/ci/cancel-others.sh; do
 	run_case 0 "$path"
 done
 # Every existing workflow except the lane has been reviewed as an independent caller.
@@ -57,7 +58,7 @@ for path in internal/x.rs Cargo.toml Cargo.lock build.rs .cargo/config.toml \
 	.github/podman_lane/baseline-tests .github/podman_lane/baseline .github/podman_lane/notes.md \
 	.github/scripts/checks/podman-lane-paths.sh .github/scripts/checks/is-version-bump.sh \
 	.github/scripts/fedora_image/fetch-fedora-image.sh .github/scripts/podman_lane/coverage-floor.sh \
-	.github/scripts/unknown/x.sh .github/scripts/top-level.sh other.txt; do
+	.github/scripts/unknown/x.sh .github/scripts/top-level.sh .github/scripts/cix/x.sh other.txt; do
 	run_case 1 "$path"
 done
 run_case 1 $'.github/dependabot.yml\ninternal/x.rs'
