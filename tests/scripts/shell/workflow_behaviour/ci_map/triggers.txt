@@ -1,6 +1,5 @@
 # pattern <TAB> the workflows with a paths: filter that start for it (see map.py; the first match decides)
-.cargo/audit.toml	audit,binary-budget,debian-build,lint-powershell,lint-shell,linux-hardening,supply-chain,windows-arm64
-.cargo/config.toml	binary-budget,debian-build,lint-powershell,lint-shell,linux-hardening,supply-chain,windows-arm64
+.cargo/*	binary-budget,debian-build,lint-powershell,lint-shell,linux-hardening,supply-chain,windows-arm64
 .editorconfig	-
 .github/CODEOWNERS	-
 .github/ISSUE_TEMPLATE/*	-
@@ -46,7 +45,7 @@
 .github/scripts/release/verify-signing-key.py	asset-contract,debian-build,lint-shell
 .github/vocabulary-exceptions.txt	-
 .github/workflows/asset-contract.yml	asset-contract
-.github/workflows/audit.yml	audit
+.github/workflows/audit.yml	-
 .github/workflows/benchmark.yml	benchmark
 .github/workflows/binary-budget.yml	binary-budget,lint-shell
 .github/workflows/ci.yml	lint-shell
@@ -74,7 +73,7 @@
 .github/workflows/reusable-line-limit.yml	lint-shell
 .github/workflows/reusable-main-guard.yml	lint-shell
 .github/workflows/reusable-powershell-ci.yml	lint-powershell
-.github/workflows/reusable-rust-audit.yml	audit
+.github/workflows/reusable-rust-audit.yml	-
 .github/workflows/reusable-rust-ci.yml	lint-shell
 .github/workflows/reusable-rust-debian.yml	debian-build,lint-shell
 .github/workflows/reusable-rust-fuzz.yml	fuzz
@@ -86,8 +85,8 @@
 .github/workflows/windows-arm64.yml	windows-arm64
 .github/workflows/workflow-lint.yml	lint-shell
 .gitignore	-
-Cargo.lock	audit,binary-budget,debian-build,fuzz,linux-hardening,supply-chain,windows-arm64
-Cargo.toml	audit,binary-budget,debian-build,fuzz,lint-powershell,lint-shell,linux-hardening,supply-chain,windows-arm64
+Cargo.lock	binary-budget,debian-build,fuzz,linux-hardening,supply-chain,windows-arm64
+Cargo.toml	binary-budget,debian-build,fuzz,lint-powershell,lint-shell,linux-hardening,supply-chain,windows-arm64
 LICENSE	-
 about.hbs	supply-chain
 about.toml	supply-chain
@@ -102,7 +101,7 @@ bench/timeit/*	benchmark
 build.rs	binary-budget,debian-build,linux-hardening,windows-arm64
 clippy.toml	-
 debian/*	debian-build
-deny.toml	audit
+deny.toml	-
 docs/assets/bench.svg	-
 docs/assets/demo.sh	lint-shell
 docs/assets/podup-demo.gif	-

@@ -7,11 +7,10 @@
 //! unmaintained or yanked crate is a warning, and a release is the one place a
 //! warning cannot be looked at again later.
 //!
-//! The asymmetry with pull requests is deliberate and is not what this file
-//! asserts: an upstream advisory must not block an unrelated pull request, so
-//! `audit.yml`'s pull-request trigger is scoped to the manifest and the
-//! lockfile. A blocked release is fixed by releasing again. A published one
-//! cannot be fixed at all.
+//! The audit is not conditioned on paths: an advisory appears without any file
+//! changing, so it runs on every pull request and every push to `develop`, and
+//! the schedule audits both branches. A blocked release is fixed by releasing
+//! again. A published one cannot be fixed at all.
 
 use std::fs;
 use std::path::Path;
@@ -39,7 +38,12 @@ fn audit_invocations(workflow: &str) -> Vec<&str> {
 		.lines()
 		.map(str::trim)
 		.filter(|l| !l.starts_with('#'))
-		.filter(|l| l.starts_with("cargo audit") || l.starts_with("run: cargo audit"))
+		.filter(|l| {
+			l.starts_with("cargo audit")
+				|| l.starts_with("cargo-audit audit")
+				|| l.starts_with("run: cargo audit")
+				|| l.starts_with("run: cargo-audit audit")
+		})
 		.collect()
 }
 
@@ -65,28 +69,59 @@ fn every_cargo_audit_denies_warnings() {
 }
 
 #[test]
-fn the_pull_request_audit_is_scoped_to_the_manifest() {
-	let body = read("audit.yml");
-	assert!(
-		body.contains("pull_request:"),
-		"audit.yml no longer runs on pull requests, so a change that introduces \
-		 a vulnerable dependency waits up to a week for the Monday cron"
-	);
-	for path in ["\"Cargo.lock\"", "\"Cargo.toml\""] {
+fn the_audit_runs_on_every_pull_request_and_every_push_to_develop() {
+	let spec: serde_yaml::Value =
+		serde_yaml::from_str(&read("audit.yml")).expect("audit.yml parses");
+	let on = &spec["on"];
+	for event in ["pull_request", "push"] {
 		assert!(
-			body.contains(path),
-			"audit.yml's pull-request trigger does not name {path}. Without the \
-			 manifest in its paths filter it either misses the change that \
-			 introduces a dependency, or runs on every pull request and lets \
-			 somebody else's disclosure timing block work that did not cause it."
+			on.get(event).is_some(),
+			"audit.yml does not run on {event}: an advisory published today would wait for the \
+			 daily schedule"
+		);
+		assert!(
+			on[event].get("paths").is_none() && on[event].get("paths-ignore").is_none(),
+			"audit.yml's {event} trigger has a paths filter. A new advisory appears without any \
+			 file changing, so the audit cannot be conditioned on paths"
 		);
 	}
-	assert!(
-		body.contains("paths:"),
-		"audit.yml runs on every pull request with no paths filter. An upstream \
-		 advisory published today would then block every open pull request, \
-		 which this repository rules out."
+	assert_eq!(
+		on["push"]["branches"],
+		serde_yaml::from_str::<serde_yaml::Value>("[develop]").unwrap(),
+		"the push audit is for develop"
 	);
+	assert!(
+		on.get("schedule").is_some(),
+		"audit.yml has no schedule, so nothing audits a branch nobody pushes to"
+	);
+	assert!(
+		read("audit.yml").contains("audit-develop:"),
+		"the scheduled run no longer audits develop, only the default branch"
+	);
+}
+
+/// A security tool is the official release binary, downloaded on every run and
+/// checked against a sum before it runs: never restored from a cache, never
+/// compiled and cached.
+#[test]
+fn the_audit_tools_are_downloaded_and_checked_and_never_restored_from_a_cache() {
+	let body = read("reusable-rust-audit.yml");
+	assert!(
+		!body.contains("actions/cache"),
+		"reusable-rust-audit.yml restores something from a cache; a security tool must not be"
+	);
+	assert!(
+		!body.contains("cargo install"),
+		"reusable-rust-audit.yml compiles a tool; the release binary is downloaded and checked"
+	);
+	assert_eq!(
+		body.matches("sha256sum -c -").count(),
+		2,
+		"each of the two tools is checked against its sum before it runs"
+	);
+	for input in ["cargo-audit-sha256", "cargo-deny-sha256"] {
+		assert!(body.contains(input), "{input} is not declared");
+	}
 }
 
 /// The parser is what both tests trust. Pin it on input that differs from the

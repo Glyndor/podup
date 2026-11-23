@@ -251,7 +251,7 @@ caller_with "$d" "      coverage-threshold: 76
       package-check: false
       semver-check: false
       semver-checks-version: '0.51.0'
-      llvm-cov-version: '0.9.1'
+      llvm-cov-version: '0.9.2'
       coverage-ignore-regex: ''" "reusable-rust-ci.yml"
 out="$(run_in "$d" "$WORK/caller-with.sh")"; rc=$?
 check "a caller whose with: values match the declared defaults is allowed" "0" "$rc"

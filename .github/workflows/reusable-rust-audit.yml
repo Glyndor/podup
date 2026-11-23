@@ -17,14 +17,27 @@ on:
         description: Rust toolchain to pin the audit and deny jobs to
         type: string
         default: "1.100"
+      # Each tool is the official release binary, downloaded on every run and
+      # checked against the sha256 below before it is run. The version and the sum
+      # travel together: overriding one without the other fails the check. A
+      # security tool is never restored from a cache and never built here, so the
+      # file that runs is the file the release published.
       cargo-audit-version:
-        description: Exact version of cargo-audit to install; bumped by editing this file
+        description: Exact version of cargo-audit to download; bumped by editing this file
         type: string
         default: "0.23.0"
-      cargo-deny-version:
-        description: Exact version of cargo-deny to install; bumped by editing this file
+      cargo-audit-sha256:
+        description: sha256 of that release's x86_64-unknown-linux-musl archive; travels with cargo-audit-version
         type: string
-        default: "0.20.2"
+        default: "4f01c74ed84b2dffd0b1d37012a62cdf2a92c96e25bdf8eec7fcc0d4d3eb7811"
+      cargo-deny-version:
+        description: Exact version of cargo-deny to download; bumped by editing this file
+        type: string
+        default: "0.22.0"
+      cargo-deny-sha256:
+        description: sha256 of that release's x86_64-unknown-linux-musl archive; travels with cargo-deny-version
+        type: string
+        default: "98c56e6a408bfa5c3c60744b6015aaa6aa08f743fdeb88386d06fca035bb1786"
 
 permissions:
   contents: read
@@ -37,14 +50,12 @@ jobs:
   audit:
     name: cargo audit
     runs-on: ubuntu-latest
-    # Bound: worst of the last three successful runs on 2026-09-02 was 194s; cargo install of the auditor dominates. Ten times that, rounded up, never under ten
+    # Bound: the download and the check take seconds now; the audit itself is the rest. Never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
     timeout-minutes: 30
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
-    env:
-      TOOL_VERSION: ${{ inputs.cargo-audit-version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,23 +68,18 @@ jobs:
           rustup toolchain install "$TOOLCHAIN" --profile minimal
           rustup default "$TOOLCHAIN"
 
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/bin
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-          # The toolchain is part of the key: a cache built under an older
-          # pin must not survive a bump via the `command -v ... ||`
-          # short-circuit below, or the pin would be silently ignored.
-          key: cargo-audit-${{ runner.os }}-${{ inputs.toolchain }}-${{ inputs.cargo-audit-version }}
-
-      - name: Install cargo-audit
-        # A bare "X.Y.Z" passed to `cargo install --version` already installs
-        # that exact release: caret ("^") matching is a Cargo.toml dependency
-        # rule, not a `cargo install` one. The leading "=" here is redundant,
-        # kept only to make the exact pin explicit at a glance.
-        run: command -v cargo-audit >/dev/null || cargo install cargo-audit --version "=$TOOL_VERSION" --locked
+      - name: Download cargo-audit and check its sum
+        env:
+          VERSION: ${{ inputs.cargo-audit-version }}
+          SHA256: ${{ inputs.cargo-audit-sha256 }}
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/cargo-audit.tgz"
+          curl -sSfL -o "$archive" "https://github.com/rustsec/rustsec/releases/download/cargo-audit%2Fv${VERSION}/cargo-audit-x86_64-unknown-linux-musl-v${VERSION}.tgz"
+          printf '%s  %s\n' "$SHA256" "$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/tools"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/tools" --strip-components=1 "cargo-audit-x86_64-unknown-linux-musl-v${VERSION}/cargo-audit"
+          echo "$RUNNER_TEMP/tools" >>"$GITHUB_PATH"
 
       - name: Run cargo audit
         # --deny warnings so unmaintained/unsound/yanked advisories also fail,
@@ -89,8 +95,6 @@ jobs:
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
-    env:
-      TOOL_VERSION: ${{ inputs.cargo-deny-version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -103,19 +107,18 @@ jobs:
           rustup toolchain install "$TOOLCHAIN" --profile minimal
           rustup default "$TOOLCHAIN"
 
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/bin
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-          # Same reasoning as cargo-audit's cache key above.
-          key: cargo-deny-${{ runner.os }}-${{ inputs.toolchain }}-${{ inputs.cargo-deny-version }}
-
-      - name: Install cargo-deny
-        # Same exact-pin reasoning as cargo-audit above: the bare version is
-        # already exact, not caret-matched.
-        run: command -v cargo-deny >/dev/null || cargo install cargo-deny --version "=$TOOL_VERSION" --locked
+      - name: Download cargo-deny and check its sum
+        env:
+          VERSION: ${{ inputs.cargo-deny-version }}
+          SHA256: ${{ inputs.cargo-deny-sha256 }}
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/cargo-deny.tar.gz"
+          curl -sSfL -o "$archive" "https://github.com/EmbarkStudios/cargo-deny/releases/download/${VERSION}/cargo-deny-${VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          printf '%s  %s\n' "$SHA256" "$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/tools"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/tools" --strip-components=1 "cargo-deny-${VERSION}-x86_64-unknown-linux-musl/cargo-deny"
+          echo "$RUNNER_TEMP/tools" >>"$GITHUB_PATH"
 
       - name: Run cargo deny
-        run: cargo deny check
+        run: cargo-deny check
