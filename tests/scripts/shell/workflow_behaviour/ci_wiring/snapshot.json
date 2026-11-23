@@ -444,20 +444,65 @@
     "name": "Supported Podman majors${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
     "needs": [
      "decide",
-     "podman-vm"
+     "podman-vm",
+     "podman-native"
     ],
     "runs-on": "ubuntu-latest",
     "steps": [
      {
       "name": "Reflect the matrix result",
-      "sha": "592dce7e8361a23e",
+      "sha": "ab99176dc793831b",
       "uses": null
      }
     ],
     "timeout-minutes": 10
    },
+   "podman-native": {
+    "env": {
+     "GLYNDOR_APT_FPR": "9ADF04EA8C3139CDB67303CFA6705C2EA153F3D6",
+     "PODMAN_FLOOR": "6.2.0"
+    },
+    "if": "${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.decide.outputs.engine != 'false' }}",
+    "needs": "decide",
+    "permissions": {
+     "contents": "read"
+    },
+    "runs-on": "ubuntu-24.04",
+    "steps": [
+     {},
+     {
+      "name": "Install Podman from the Glyndor apt repository",
+      "timeout-minutes": 10
+     },
+     {
+      "name": "Install the Rust toolchain"
+     },
+     {
+      "name": "Build the engine test binaries"
+     },
+     {
+      "name": "Start the user Podman socket"
+     },
+     {
+      "name": "Run the engine suite and the leak scan"
+     },
+     {
+      "if": "always()",
+      "name": "Run the Quadlet tests against the generator of this Podman"
+     },
+     {
+      "if": "always()",
+      "name": "Show what AppArmor refused"
+     },
+     {
+      "if": "always()",
+      "name": "Report the phases"
+     }
+    ],
+    "timeout-minutes": 60
+   },
    "podman-vm": {
-    "if": "${{ !cancelled() }}",
+    "if": "${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}",
     "needs": "decide",
     "runs-on": "ubuntu-24.04",
     "steps": [

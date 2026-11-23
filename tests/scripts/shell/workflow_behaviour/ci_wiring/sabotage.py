@@ -94,8 +94,11 @@ PLANTS = [
     ("the VM answer read as == 'true'", "podman-lane.yml",
      "if: needs.decide.outputs.engine != 'false'", "if: needs.decide.outputs.engine == 'true'"),
     ("Supported Podman majors reading another job", "podman-lane.yml",
-     "RESULT: ${{ needs.podman-vm.result }}", "RESULT: ${{ needs.decide.result }}"),
-    ("Supported Podman majors losing the plan", "podman-lane.yml", "needs: [decide, podman-vm]", "needs: podman-vm"),
+     "NATIVE: ${{ needs.podman-native.result }}", "NATIVE: ${{ needs.decide.result }}"),
+    ("the native lane also running on the schedule", "podman-lane.yml", "if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.decide.outputs.engine != 'false' }}", "if: ${{ !cancelled() && needs.decide.outputs.engine != 'false' }}"),
+    ("the VM running on a pull request again", "podman-lane.yml", "if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}\n    runs-on: ubuntu-24.04", "if: ${{ !cancelled() }}\n    runs-on: ubuntu-24.04"),
+    ("the native lane given more than it needs", "podman-lane.yml", "    timeout-minutes: 60\n    permissions:\n      contents: read\n    env:\n", "    timeout-minutes: 60\n    permissions:\n      contents: read\n      id-token: write\n    env:\n"),
+    ("Supported Podman majors losing the plan", "podman-lane.yml", "needs: [decide, podman-vm, podman-native]", "needs: [decide, podman-vm]"),
 ]
 
 SUF = "${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}"

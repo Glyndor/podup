@@ -34,8 +34,19 @@ pub(super) fn pod_json(project: &str) -> Option<serde_json::Value> {
 	v.as_array().and_then(|a| a.first().cloned())
 }
 
+/// Take the project down and fail the test, with what `down` printed, when it
+/// does not succeed. A result thrown away here is how a pod stayed on the host
+/// after its test passed, and nothing said why until the leak scan found it.
 pub(super) fn down(compose: &str, proj: &str) {
-	let _ = Command::new(bin())
+	let out = Command::new(bin())
 		.args(["-f", compose, "-p", proj, "down", "-v"])
-		.output();
+		.output()
+		.expect("podup down starts");
+	assert!(
+		out.status.success(),
+		"podup down -v of {proj} failed ({}):\n{}\n{}",
+		out.status,
+		String::from_utf8_lossy(&out.stdout),
+		String::from_utf8_lossy(&out.stderr)
+	);
 }
