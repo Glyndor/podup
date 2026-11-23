@@ -459,6 +459,18 @@ name = "create_up_flags"
 path = "tests/cli/create/create_up_flags.rs"
 
 [[test]]
+name = "up_exit_codes"
+path = "tests/cli/up/up_exit_codes.rs"
+
+[[test]]
+name = "stop_timeout"
+path = "tests/cli/lifecycle/stop_timeout.rs"
+
+[[test]]
+name = "exec_options"
+path = "tests/cli/exec/exec_options.rs"
+
+[[test]]
 name = "run_remove_orphans"
 path = "tests/cli/run/run_remove_orphans.rs"
 
