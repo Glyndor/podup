@@ -146,8 +146,15 @@ async fn the_wait_succeeds_when_every_replica_is_healthy() {
 		.into_iter()
 		.filter(|r| r.contains("/containers/proj-web-"))
 		.collect();
+	// Each replica is read at least once; a service with no healthcheck is read
+	// a second time by the stability check.
+	let distinct: std::collections::BTreeSet<&str> = inspected
+		.iter()
+		.filter_map(|r| r.split("/containers/").nth(1))
+		.filter_map(|rest| rest.split('/').next())
+		.collect();
 	assert_eq!(
-		inspected.len(),
+		distinct.len(),
 		3,
 		"every replica is inspected: {inspected:?}"
 	);

@@ -3,3 +3,4 @@
 
 mod health;
 mod lifecycle_hooks;
+mod stability;

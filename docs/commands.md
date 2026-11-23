@@ -81,6 +81,8 @@ A container that already exists is left in place when two facts both hold: its r
 
 `--wait` implies `-d` and checks every replica of each selected service. Health polling retains its per-service budget (interval × retries + start_period); `--wait-timeout` does not extend this dependency budget.
 
+A service with no healthcheck is ready when it is running. If its restart policy can start it again (`always`, `unless-stopped` or `on-failure`), podup keeps reading it for three seconds and fails the wait when the restart count rises or the container is between two runs, so a service in a crash loop does not pass; the error names the container, the restarts and the last exit code. A one-shot under `restart: "no"` that ends with status 0 passes and one that ends with another status fails. `docker compose up --wait` reads the state once: against the same Podman 6.2.0 socket it returns 0 for `sh -c 'sleep 1; exit 3'` under `restart: unless-stopped`, and it fails with `exited (N)` for any container that has ended when it looks, a status 0 included, which podup accepts.
+
 With `missing`, an observed local image skips redundant pulls. `always`/`newer` and platform-pinned services still pull; build services use or build their local image.
 
 ```bash

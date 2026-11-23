@@ -231,7 +231,8 @@ impl Engine {
 			// one: a healthy first replica says nothing about the others,
 			// and a service scaled to zero has no container to ask about.
 			names.into_iter().map(move |container| async move {
-				self.wait_healthy(&container, service, wait_timeout).await
+				self.wait_healthy(&container, service, wait_timeout).await?;
+				self.wait_stable(&container, wait_timeout).await
 			})
 		});
 		futures_util::future::try_join_all(waits).await?;
