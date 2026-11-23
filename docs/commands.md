@@ -306,6 +306,8 @@ Execute a command in a running service container.
 
 Standard input is a separate matter from the pseudo-terminal: a pipe or a redirected file is sent to the command, which then sees the end of that input when the file is exhausted. A terminal is not sent on a non-interactive session, so a command started that way reads an empty input rather than waiting for the operator.
 
+A SIGTERM, SIGINT or SIGHUP sent to `podup exec` is passed on to the command in the container, and `podup exec` waits for the command to end and exits with its status, so a command that handles the signal and exits with its own code is reported with that code. A command that ignores the signal keeps running, and so does `podup exec`; send SIGKILL or SIGQUIT to end podup alone. In an interactive session Ctrl-C reaches the command as a keystroke. `docker compose exec` ends on the signal with status 130 and leaves the command running in the container (measured against the same Podman 6.2.0 socket).
+
 ```bash
 podup exec -u root web sh
 podup exec -T db psql < dump.sql
