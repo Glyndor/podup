@@ -37,6 +37,11 @@ DEVELOP = [
     "line-limit / line limit",
     "workflow-lint / workflow-lint",
     "Supported Podman majors",
+    "audit / cargo audit",
+    "audit / cargo deny",
+    "commit identity",
+    "secret scan",
+    "pin values",
 ]
 MAIN = [
     "rust / Gate (promotion)",
@@ -44,6 +49,11 @@ MAIN = [
     "line-limit / line limit (promotion)",
     "workflow-lint / workflow-lint (promotion)",
     "Supported Podman majors (promotion)",
+    "audit / cargo audit (promotion)",
+    "audit / cargo deny (promotion)",
+    "commit identity (promotion)",
+    "secret scan (promotion)",
+    "pin values (promotion)",
     "develop-only / develop-only",
 ]
 # (event, base branch) for each kind of run a workflow can have. `Develop` and `MAIN`
@@ -61,6 +71,11 @@ SUFFIX = ("github.event_name == 'pull_request' && github.base_ref == 'main' && '
 # does not know how to resolve is a name it cannot hold to the list. The matrix and
 # input values are listed because no required name has one.
 ALLOWED = {SUFFIX, "matrix.target", "matrix.asset", "matrix.arch", "matrix.os", "inputs.msrv"}
+# The jobs whose names keep a matrix or input value after rendering. None is required;
+# a job that is not listed and keeps an expression is refused, so a required name cannot
+# hide in one.
+UNRESOLVED = {("linux-hardening.yml", "hardened"), ("release.yml", "build"), ("release.yml", "sign"),
+              ("release.yml", "build-deb"), ("reusable-rust-ci.yml", "test-extra"), ("reusable-rust-ci.yml", "msrv")}
 TOKEN = re.compile(r"\s*(&&|\|\||==|!=|!|\(|\)|,|'[^']*'|github\.event_name|github\.base_ref|format)")
 
 
@@ -127,17 +142,21 @@ def runs(spec, event, base):
     return True
 
 
-def expand(specs, spec, prefix, event, base, out, fname):
+def expand(specs, spec, prefix, event, base, out, fname, here=None):
     """Every name a workflow's jobs can emit, into the local reusables however deep.
     A job's own `if:` is not read: a skipped job still reports its name."""
     for job_id, job in (spec.get("jobs") or {}).items():
         uses = job.get("uses")
         if isinstance(uses, str) and uses.startswith("./"):
             inner = specs.get(os.path.basename(uses), {})
-            expand(specs, inner, f"{prefix}{job_id} / ", event, base, out, fname)
+            expand(specs, inner, f"{prefix}{job_id} / ", event, base, out, fname, os.path.basename(uses))
         else:
             name = render(job.get("name", job_id), event, base)
-            out.setdefault(prefix + name, set()).add((fname, event, base))
+            if "${{" in name and (here or fname, job_id) not in UNRESOLVED:
+                raise ValueError(f"{fname}: job `{job_id}` keeps an expression in its name ({name!r}) that is not listed as not required")
+            # Required names are compared without regard to case: two names that differ
+            # only by case would be told apart here and could be confused elsewhere.
+            out.setdefault((prefix + name).lower(), set()).add((fname, event, base))
 
 
 def produced(root):
@@ -168,7 +187,7 @@ def main():
         if fname.startswith("reusable-") or cfg is None:
             continue
         feeds = any(f == fname and e == "pull_request" for who in made.values() for f, e, _b in who
-                    if any(n in made and (f, e, _b) in made[n] for n in DEVELOP + MAIN))
+                    if any(n.lower() in made and (f, e, _b) in made[n.lower()] for n in DEVELOP + MAIN))
         types = (cfg or {}).get("types") if isinstance(cfg, dict) else None
         branches = (cfg or {}).get("branches") if isinstance(cfg, dict) else None
         if feeds and not (branches and set(branches) <= {"develop", "main"}):
@@ -177,8 +196,17 @@ def main():
         if feeds and not (types and "edited" in types):
             problems.append(f"{fname}: its pull_request trigger feeds a required name but does not list `edited`, "
                             "so changing the base of a pull request would not run the plan again")
+    # The security results are never advisory and never cancelled: they run in the merge
+    # queue, and their concurrency group does not cancel what is in progress.
+    for fname in ("audit.yml", "reusable-rust-audit.yml", "commit-hygiene.yml"):
+        cancel = (specs[fname].get("concurrency") or {}).get("cancel-in-progress")
+        if cancel is not False:
+            problems.append(f"{fname}: `cancel-in-progress` is {cancel!r}; a security result is never cancelled by a newer run")
     for name in DEVELOP:
-        who = made.get(name, set())
+        if not any(e == "merge_group" for _w, e, _b in made.get(name.lower(), set())):
+            problems.append(f"{name}: not produced in the merge queue, so it cannot be required there")
+    for name in DEVELOP:
+        who = made.get(name.lower(), set())
         if not who:
             problems.append(f"{name}: no workflow produces it")
             continue
@@ -188,7 +216,7 @@ def main():
         if bad:
             problems.append(f"{name}: also produced by {bad}; a push, a schedule, a dispatch or a pull request into main must not answer for it")
     for name in MAIN:
-        who = made.get(name, set())
+        who = made.get(name.lower(), set())
         if not who:
             problems.append(f"{name}: no workflow produces it")
             continue

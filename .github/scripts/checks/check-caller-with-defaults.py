@@ -64,6 +64,9 @@ REQUIRED_REUSABLES = {
     "reusable-workflow-lint.yml": [
         "workflow-lint",
     ],
+    "reusable-rust-audit.yml": [
+        "cargo audit", "cargo deny",
+    ],
 }
 
 

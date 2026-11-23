@@ -11,18 +11,26 @@ name: commit hygiene
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     branches: ["main", "develop"]
+  # In the merge queue too: neither of these is advisory.
+  merge_group:
+    types: [checks_requested]
 
 permissions: {}
 
 # Cancels superseded pull_request runs only.
+# A security result is never cancelled by a newer push: the group is the run itself.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   commit-identity:
-    name: commit identity
+    # Required on develop and on main. The name carries the kind of run, as the other
+    # required names do (see reusable-dco.yml), and this check is also asked of the merge
+    # queue: a security result is not advisory.
+    name: commit identity${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -30,17 +38,20 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Every commit uses a GitHub noreply address
         env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: .github/scripts/hygiene/check-commit-identity.sh "$BASE" "$HEAD"
 
   secret-scan:
-    name: secret scan
+    # Required on develop and on main. The name carries the kind of run, as the other
+    # required names do (see reusable-dco.yml), and this check is also asked of the merge
+    # queue: a security result is not advisory.
+    name: secret scan${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -48,20 +59,65 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: The change adds no credential-shaped line
         env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: .github/scripts/hygiene/check-secrets.sh "$BASE" "$HEAD"
+
+  pin-values:
+    # Required on develop and on main, in the merge queue as well. The contract of the
+    # wiring does not hold the commit an action is pinned to, because Dependabot moves
+    # it, so this job holds it: owner, version comment, the commit of that tag, one pair
+    # per action, no lower version than the base, images by digest from a short list.
+    # It runs on every change, not only the ones under .github/.
+    name: pin values${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    env:
+      BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+      HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          path: base
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          path: head
+          persist-credentials: false
+      # The judge is the base commit's copy, in a new directory outside both trees, run
+      # before any script of the change. A file the base does not have (the pull request
+      # that introduces it) is told apart from one that cannot be read, which is red.
+      - name: Take the judge from the base commit
+        run: |
+          judge="$RUNNER_TEMP/judge"
+          mkdir -p "$judge"
+          for f in .github/scripts/hygiene/check-pins.py .github/scripts/lib/ci_yaml.py; do
+            listing="$(git -C base ls-tree --name-only HEAD -- "$f")" || exit 1
+            if [ -n "$listing" ]; then
+              install -m 0644 "base/$f" "$judge/$(basename "$f")"
+            else
+              echo "::notice::$f is not in the base commit; the copy of the change is used"
+              install -m 0644 "head/$f" "$judge/$(basename "$f")"
+            fi
+          done
+      - name: Every pin is the commit of its tag
+        working-directory: ${{ runner.temp }}
+        run: python3 -I judge/check-pins.py --head "$GITHUB_WORKSPACE/head" --base "$GITHUB_WORKSPACE/base"
 
   # When this workflow fails on a pull request, the other runs of the same commit
   # stop: they would spend runners on a commit that is already red. The job and
   # the rules it follows are in reusable-cancel-others.yml.
   cancel-others:
-    needs: [commit-identity, secret-scan]
+    needs: [commit-identity, secret-scan, pin-values]
     if: ${{ failure() && github.event_name == 'pull_request' }}
     permissions:
       contents: read

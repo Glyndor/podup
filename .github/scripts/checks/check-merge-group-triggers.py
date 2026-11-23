@@ -67,6 +67,7 @@ DEVELOP_REQUIRED_REUSABLES = {
     "reusable-dco.yml",
     "reusable-line-limit.yml",
     "reusable-workflow-lint.yml",
+    "reusable-rust-audit.yml",
 }
 
 # Required check names emitted directly by a job in a non-reusable
@@ -75,6 +76,9 @@ DEVELOP_REQUIRED_REUSABLES = {
 # here with its check name.
 DIRECT_EMITTER_NAMES = {
     "Supported Podman majors",
+    "commit identity",
+    "secret scan",
+    "pin values",
 }
 
 

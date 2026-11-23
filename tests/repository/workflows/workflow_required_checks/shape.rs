@@ -55,10 +55,22 @@ pub const REQUIRED_ON_MAIN: &[&str] = &[
 	// above it are the suites it covers; the ruleset moves to the gate once
 	// this job is on `develop`, and the suites leave this list then.
 	"rust / Gate",
+	// The security results are required too, and in the queue: the dependency audit and
+	// the two hygiene checks. They are not part of the Rust gate.
+	"audit / cargo audit",
+	"audit / cargo deny",
+	"commit identity",
+	"secret scan",
+	"pin values",
 	// What a pull request into `main` is asked for. The same commit has just been
 	// through the merge queue and a push to `develop`, whose runs carry a plan that
 	// looked at a narrower range; the promotion has its own names, produced only by
 	// a pull request whose base is `main`, which runs every suite.
+	"audit / cargo audit (promotion)",
+	"audit / cargo deny (promotion)",
+	"commit identity (promotion)",
+	"secret scan (promotion)",
+	"pin values (promotion)",
 	"rust / Gate (promotion)",
 	"line-limit / line limit (promotion)",
 	"workflow-lint / workflow-lint (promotion)",
@@ -80,6 +92,11 @@ pub const REQUIRED_ON_MAIN: &[&str] = &[
 /// lists into one would hide that asymmetry, so they are separate.
 const MAIN_ONLY: &[&str] = &[
 	"develop-only / develop-only",
+	"audit / cargo audit (promotion)",
+	"audit / cargo deny (promotion)",
+	"commit identity (promotion)",
+	"secret scan (promotion)",
+	"pin values (promotion)",
 	"rust / Gate (promotion)",
 	"line-limit / line limit (promotion)",
 	"workflow-lint / workflow-lint (promotion)",

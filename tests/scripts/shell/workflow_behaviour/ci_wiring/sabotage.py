@@ -33,6 +33,16 @@ PLANTS = [
     ("the cancel job running the working tree's script instead of the base copy", "reusable-cancel-others.yml",
      'bash "$RUNNER_TEMP/others.sh"', "bash .github/scripts/ci/cancel-others.sh"),
     ("the layers no longer waiting for lint", R, "needs: [classify, lint]\n    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}", "needs: [classify]\n    if: ${{ !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}"),
+    # The contract holds everything that changes how a job runs, by equality.
+    ("the matrix's default shell turned into one that exits 0", R, "        shell: bash\n        working-directory: ${{ inputs.working-directory }}\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n\n      - name: Install toolchain", "        shell: \"bash -c 'exit 0' {0}\"\n        working-directory: ${{ inputs.working-directory }}\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n\n      - name: Install toolchain"),
+    ("a default shell added to the whole workflow", "ci.yml", "permissions:\n  contents: read\n", "permissions:\n  contents: read\n\ndefaults:\n  run:\n    shell: \"bash -c 'exit 0' {0}\"\n"),
+    ("a step that runs its script through a shell that exits 0", R, "      - name: Tests\n        run: cargo test --locked --all-features --workspace", "      - name: Tests\n        shell: \"bash -c 'exit 0' {0}\"\n        run: cargo test --locked --all-features --workspace"),
+    ("a suite that may fail and still count", R, "  test:\n    name: Test\n", "  test:\n    name: Test\n    continue-on-error: true\n"),
+    ("the gate that may fail and still count", R, "  gate:\n", "  gate:\n    continue-on-error: true\n"),
+    ("a step of the gate that may fail and still count", R, "      - name: Certify the plan and every skip\n", "      - name: Certify the plan and every skip\n        continue-on-error: true\n"),
+    ("a timeout that cuts a suite short", R, "    timeout-minutes: 20\n    defaults:", "    timeout-minutes: 1\n    defaults:"),
+    ("a container that runs a job in another image", "reusable-line-limit.yml", "  line-limit:\n", "  line-limit:\n    container: alpine\n"),
+    ("a property nobody listed on a job", "reusable-dco.yml", "jobs:\n  dco:\n", "jobs:\n  dco:\n    environment: elsewhere\n"),
     # 4. The plan variables of two suites crossed in the gate.
     ("the run and build answers crossed in the gate", R, "RUN=$(out classify run)", "RUN=$(out classify build)"),
     ("the switches of two suites crossed in the gate", R, 'judge msrv "$MSRV_ON"', 'judge msrv "$DOC_ON"'),
@@ -75,6 +85,10 @@ PLANTS = [
     ("a condition on the line limit", "reusable-line-limit.yml", "  line-limit:\n", "  line-limit:\n    if: github.event_name == 'push'\n"),
     ("a condition on the DCO", "reusable-dco.yml", "jobs:\n  dco:\n", "jobs:\n  dco:\n    if: github.event_name == 'push'\n"),
     ("a condition on the secret scan", "commit-hygiene.yml", "  secret-scan:\n", "  secret-scan:\n    if: github.event_name == 'push'\n"),
+    ("a condition on the pin values check", "commit-hygiene.yml", "  pin-values:\n", "  pin-values:\n    if: github.event_name == 'push'\n"),
+    ("the pin judge taken from the change instead of the base", "commit-hygiene.yml", 'install -m 0644 "base/$f"', 'install -m 0644 "head/$f"'),
+    ("the pin judge run without isolating Python", "commit-hygiene.yml", "python3 -I judge/check-pins.py", "python3 judge/check-pins.py"),
+    ("the pin judge run from the tree of the change", "commit-hygiene.yml", "python3 -I judge/check-pins.py", "python3 -I head/.github/scripts/hygiene/check-pins.py"),
     ("a condition on the commit identity check", "commit-hygiene.yml", "  commit-identity:\n", "  commit-identity:\n    if: github.event_name == 'push'\n"),
     # 10. The podman lane: the plan and the certification.
     ("the VM answer read as == 'true'", "podman-lane.yml",
@@ -94,6 +108,15 @@ NAMES = [
     ("Supported Podman majors loses the run kind in its name", "podman-lane.yml", "    name: Supported Podman majors" + SUF, "    name: Supported Podman majors"),
     ("the DCO loses the run kind in its name", "reusable-dco.yml", "    name: Signed-off-by present on every commit" + SUF, "    name: Signed-off-by present on every commit"),
     ("the workflow lint loses the run kind in its name", "reusable-workflow-lint.yml", "    name: workflow-lint" + SUF, "    name: workflow-lint"),
+    ("a job whose id differs only by case produces the line limit again", "commit-hygiene.yml", "jobs:\n", "jobs:\n  Line-Limit:\n    uses: ./.github/workflows/reusable-line-limit.yml\n"),
+    ("a required name that keeps a matrix value", "reusable-dco.yml", "    name: Signed-off-by present on every commit" + SUF, "    name: Signed-off-by present on every commit ${{ matrix.os }}"),
+    ("the audit loses the run kind in its name", "reusable-rust-audit.yml", "    name: cargo audit" + SUF, "    name: cargo audit"),
+    ("the secret scan loses the run kind in its name", "commit-hygiene.yml", "    name: secret scan" + SUF, "    name: secret scan"),
+    ("the pin values lose the run kind in their name", "commit-hygiene.yml", "    name: pin values" + SUF, "    name: pin values"),
+    ("the audit does not run in the merge queue", "audit.yml", "  merge_group:\n    types: [checks_requested]\n", ""),
+    ("the commit hygiene does not run in the merge queue", "commit-hygiene.yml", "  merge_group:\n    types: [checks_requested]\n", ""),
+    ("the audit cancelled by a newer run", "audit.yml", "  cancel-in-progress: false", "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}"),
+    ("the hygiene cancelled by a newer run", "commit-hygiene.yml", "  cancel-in-progress: false", "  cancel-in-progress: true"),
     ("a second workflow produces the line limit", "commit-hygiene.yml", "jobs:\n", "jobs:\n  line-limit:\n    uses: ./.github/workflows/reusable-line-limit.yml\n"),
     ("a pull request trigger loses `edited`", "ci.yml", "    types: [opened, synchronize, reopened, edited]\n", ""),
     ("the Podman lane runs for any base, and `Develop` is read as develop", "podman-lane.yml", "    branches: [main, develop]\n  # Required check on develop", "  # Required check on develop"),
@@ -105,7 +128,44 @@ NAMES = [
 ]
 
 
+# What a Dependabot pull request does to a workflow, and what it must not be able to
+# do. (description, file, old text, new text, replace every occurrence, must pass)
+CK = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+BUMP = "actions/checkout@" + "a" * 40
+PINS = [
+    ("a new commit for an action, with its new version comment", R, CK + " # v7.0.1", BUMP + " # v7.0.2", True, True),
+    ("a new commit for another action, the cache", R, "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0", "actions/cache@" + "b" * 40 + " # v6.2.0", True, True),
+    ("a new commit for the checkout in the hygiene workflow", "commit-hygiene.yml", CK + " # v7.0.1", BUMP + " # v7.0.2", True, True),
+    ("a new commit for the checkout in the cancel workflow", "reusable-cancel-others.yml", CK + " # v7.0.1", BUMP + " # v7.0.2", True, True),
+    ("the action renamed, with the same commit", R, CK, "actions/cache@3d3c42e5aac5ba805825da76410c181273ba90b1", True, False),
+    ("the pin removed", R, CK + " # v7.0.1", "actions/checkout", True, False),
+    ("a tag in place of the commit", R, CK + " # v7.0.1", "actions/checkout@v7", True, False),
+    ("a short hash in place of the commit", R, CK + " # v7.0.1", "actions/checkout@" + "3d3c42e5" + "a" * 31, True, False),
+    ("an upper-case hash in place of the commit", R, CK + " # v7.0.1", "actions/checkout@" + "3D3C42E5AAC5BA805825DA76410C181273BA90B1", True, False),
+    ("a branch in place of the commit", R, CK + " # v7.0.1", "actions/checkout@main", True, False),
+    ("a different action under the same pin on one step only", R, CK + " # v7.0.1", "actions/setup-go@" + "3d3c42e5aac5ba805825da76410c181273ba90b1", False, False),
+]
+
+
 def main():
+    if sys.argv[1] == "pins":
+        if sys.argv[2] == "--count":
+            print(len(PINS))
+            return 0
+        if sys.argv[2] == "--describe":
+            print(PINS[int(sys.argv[3])][0])
+            return 0
+        if sys.argv[2] == "--passes":
+            print("yes" if PINS[int(sys.argv[3])][5] else "no")
+            return 0
+        _d, name, old, new, every, _p = PINS[int(sys.argv[2])]
+        path = os.path.join(sys.argv[3], ".github", "workflows", name)
+        text = open(path).read()
+        if old not in text:
+            print(f"the pin plant {sys.argv[2]} does not find its text in {name}", file=sys.stderr)
+            return 2
+        open(path, "w").write(text.replace(old, new) if every else text.replace(old, new, 1))
+        return 0
     if sys.argv[1] == "names":
         which = NAMES
         if sys.argv[2] == "--count":

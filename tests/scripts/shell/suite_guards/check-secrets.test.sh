@@ -86,6 +86,65 @@ gitc add -A; gitc commit -q -m "fixture"
 printf -- '-----BEGIN %s-----\n' 'PRIVATE KEY' > "$repo/elsewhere.pem"; gitc add -A; gitc commit -q -m "elsewhere"
 (cd "$repo" && "$SCRIPT" "$base" HEAD >/dev/null 2>&1); check "a key outside the listed paths still fails" 1 "$?"
 
+# The header of a key is not always at the start of a line.
+H="-----BEGIN $(printf 'PRIVATE')$(printf ' KEY')-----"
+body="$(rep M 64)"
+scanfile() { # <content> -> output; status in $?
+	git -C "$repo" reset -q --hard "$base"
+	printf '%s' "$1" > "$repo/probe.yml"; gitc add -A; gitc commit -q -m probe
+	(cd "$repo" && "$SCRIPT" "$base" HEAD 2>&1)
+}
+out="$(scanfile "$(printf 'key: |\n  %s\n  %s\n  %s\n' "$H" "$body" "$body")")"; rc=$?
+check "an indented key in YAML fails" 1 "$rc"
+check "...and is named" 1 "$(printf '%s' "$out" | grep -c 'private key' | awk '{print ($1 > 0)}')"
+check "...without printing the body" 0 "$(printf '%s' "$out" | grep -cF "$body")"
+out="$(scanfile "$(printf 'KEY = "%s\n%s\n%s"\n' "$H" "$body" "$body")")"; rc=$?
+check "a key in quotes over several lines fails" 1 "$rc"
+out="$(scanfile "$(printf 'secrets:\n  - name: k\n    value: %s\n      %s\n' "$H" "$body")")"; rc=$?
+check "a header after an assignment, with the body below, fails" 1 "$rc"
+out="$(scanfile "x = \"$H\\n\" # a header")"; rc=$?
+check "code that writes the header followed by a backslash n passes" 0 "$rc"
+out="$(scanfile "$(printf 'HEADER = "%s"\n' "$H")")"; rc=$?
+check "a constant that holds the header alone passes" 0 "$rc"
+out="$(scanfile "$(printf 'assert!(pem.starts_with("%s"));\n' "$H")")"; rc=$?
+check "code that checks the header passes" 0 "$rc"
+out="$(scanfile "$(printf 'println!("%s");\nlet next = 1;\n' "$H")")"; rc=$?
+check "a header printed by code, followed by code, passes" 0 "$rc"
+
+out="$(scanfile "$(printf 'data = ["%s",\n  "%s",\n]\n' "$H" "$body")")"; rc=$?
+check "a header in a list with the body on the next line fails" 1 "$rc"
+check "...as a key spread over lines" 1 "$(printf '%s' "$out" | grep -c 'spread over lines')"
+out="$(scanfile "$(printf 'key: |\n  %s\n  # the body is below\n' "$H")")"; rc=$?
+check "an indented header alone on its line fails" 1 "$rc"
+git -C "$repo" reset -q --hard "$base"
+printf '*.dat -diff\n' > "$repo/.gitattributes"; printf 'v=%s\n' "gh$(printf 'p')_$(rep a 36)" > "$repo/probe.dat"; gitc add -A; gitc commit -q -m "attributes"
+(cd "$repo" && "$SCRIPT" "$base" HEAD >/dev/null 2>&1); check "a file the repository marks as not to be diffed is still read" 1 "$?"
+
+# History: what a commit adds and the next one takes out is still published.
+token="gh$(printf 'p')_$(rep a 36)"
+git -C "$repo" reset -q --hard "$base"
+printf 'ok\n' > "$repo/h.txt"; printf 't=%s\n' "$token" > "$repo/h.txt"; gitc add -A; gitc commit -q -m "add"
+printf 'clean\n' > "$repo/h.txt"; gitc add -A; gitc commit -q -m "remove"
+out="$(cd "$repo" && "$SCRIPT" "$base" HEAD 2>&1)"; rc=$?
+check "a credential added by one commit and removed by the next fails" 1 "$rc"
+check "...naming the pattern" 1 "$(printf '%s' "$out" | grep -c 'GitHub token')"
+check "...without printing it" 0 "$(printf '%s' "$out" | grep -cF "$token")"
+git -C "$repo" reset -q --hard "$base"
+printf 'one\n' > "$repo/h.txt"; gitc add -A; gitc commit -q -m "a message that carries $token"
+out="$(cd "$repo" && "$SCRIPT" "$base" HEAD 2>&1)"; rc=$?
+check "a credential in a commit message fails" 1 "$rc"
+check "...reported against the commit, not printed" 0 "$(printf '%s' "$out" | grep -cF "$token")"
+git -C "$repo" reset -q --hard "$base"
+printf 'one\n' > "$repo/h.txt"; gitc add -A; gitc commit -q -m "plain"
+printf 'two\n' > "$repo/h.txt"; gitc add -A; gitc commit -q -m "plain too"
+(cd "$repo" && "$SCRIPT" "$base" HEAD >/dev/null 2>&1); check "a range of ordinary commits passes" 0 "$?"
+git -C "$repo" reset -q --hard "$base"
+printf 'k=%s\n' "$token" > "$repo/g.txt"; gitc add -A; gitc commit -q -m "first adds it"
+git -C "$repo" checkout -q -b other "$base"; printf 'x\n' > "$repo/other.txt"; gitc add -A; gitc commit -q -m "other"
+git -C "$repo" checkout -q -; git -C "$repo" merge -q --no-ff -m merge other
+(cd "$repo" && "$SCRIPT" "$base" HEAD >/dev/null 2>&1); check "a credential in a range that also holds a merge fails" 1 "$?"
+git -C "$repo" checkout -q -f "$base" 2>/dev/null; git -C "$repo" branch -q -D other 2>/dev/null
+
 "$SCRIPT" >/dev/null 2>&1; check "no arguments fails" 1 "$?"
 
 echo "$pass passed, $fail failed"
