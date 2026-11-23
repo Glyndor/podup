@@ -252,6 +252,55 @@ for form in \
 	check "a nested type with a name that holds a path passes in [$(printf '%s' "$form" | sed "s/$v/VALUE/g")]" 0 "$rc"
 done
 
+# The mark that skips a line is the author's own, so the log says where it was used and never what
+# the line held; and it skips nothing in the message of a commit.
+mark="secret-scan"":allow"
+git -C "$repo" reset -q --hard "$base"
+printf 'one = 1\nt=%s # %s\n' "$token" "$mark" > "$repo/marked.txt"; printf 'two = 2\nv=%s // %s\n' "$token" "$mark" > "$repo/marked2.txt"; gitc add -A; gitc commit -q -m marks
+out="$(cd "$repo" && "$SCRIPT" "$base" HEAD 2>&1)"; rc=$?
+check "a line with the mark passes" 0 "$rc"
+check "and the log names the file and line of each, counted" "1 1 1" "$(printf '%s' "$out" | grep -c 'skipped 2 line(s)') $(printf '%s' "$out" | grep -c 'marked.txt:2') $(printf '%s' "$out" | grep -c 'marked2.txt:2')"
+check "and does not print what they held" 0 "$(printf '%s' "$out" | grep -cF "$token")"
+git -C "$repo" reset -q --hard "$base"
+printf 'ordinary\n' > "$repo/h.txt"; gitc add -A; gitc commit -q -m "a note that carries $token and the mark $mark"
+out="$(cd "$repo" && "$SCRIPT" "$base" HEAD 2>&1)"; rc=$?
+check "the mark does not skip a credential in the message of a commit" "1 1" "$rc $(printf '%s' "$out" | grep -c 'GitHub token')"
+check "and a message is not counted among the skipped lines" 0 "$(printf '%s' "$out" | grep -c 'skipped')"
+# a header that carries the mark is still read for the key below it
+git -C "$repo" reset -q --hard "$base"
+printf 'data = ["%s", // %s\n  "%s",\n]\n' "$H" "$mark" "$body" > "$repo/k.txt"; gitc add -A; gitc commit -q -m "a marked header"
+out="$(cd "$repo" && "$SCRIPT" "$base" HEAD 2>&1)"; rc=$?
+check "a marked header does not hide the body of a key below it" "1 1" "$rc $(printf '%s' "$out" | grep -c 'k.txt:1 private key spread over lines')"
+
+# Bytes that are not text, in the same file: a NUL and a 0xFF byte, in a file whose name sorts before
+# the file that holds the token. The scan reads bytes (no locale, no grep that takes the stream for
+# binary) and a failure to read is an error and never a scan that found nothing.
+git -C "$repo" reset -q --hard "$base"
+printf 'before\0\377after\n\377\377\0\n' > "$repo/0-bytes.bin"; printf 't=%s\n' "$token" > "$repo/z.txt"; gitc add -A; gitc commit -q -m "bytes first"
+out="$(cd "$repo" && LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 "$SCRIPT" "$base" HEAD 2>&1)"; rc=$?
+check "a file with a NUL and a 0xFF that sorts first does not hide a token, whatever the locale" "1 1" "$rc $(printf '%s' "$out" | grep -c 'z.txt:1 GitHub token')"
+git -C "$repo" reset -q --hard "$base"
+printf 't=%s\n' "$token" > "$repo/0-first.txt"; printf 'x\0\377\n' > "$repo/z.bin"; gitc add -A; gitc commit -q -m "token first"
+out="$(cd "$repo" && LC_ALL=C.UTF-8 "$SCRIPT" "$base" HEAD 2>&1)"; rc=$?
+check "and the same with the token in the file that sorts first" "1 1" "$rc $(printf '%s' "$out" | grep -c '0-first.txt:1 GitHub token')"
+
+# A root commit: a branch with no history in common whose first commit adds a token and whose second
+# commit takes it out, merged. The root commit has no parent, so it is read against the empty tree;
+# what the net diff and the merge show is a tree without the token.
+trunk=mainline
+git -C "$repo" checkout -q -f -B "$trunk" "$base"
+git -C "$repo" checkout -q --orphan unrelated
+git -C "$repo" rm -rq --cached . >/dev/null 2>&1; find "$repo" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+printf 't=%s\n' "$token" > "$repo/root.txt"; gitc add -A; gitc commit -q -m "a root commit with a token"
+printf 'clean\n' > "$repo/root.txt"; gitc add -A; gitc commit -q -m "and one that takes it out"
+git -C "$repo" checkout -q -f "$trunk"
+git -C "$repo" -c user.name=t -c user.email=t@x -c commit.gpgSign=false merge -q --allow-unrelated-histories --no-edit unrelated >/dev/null 2>&1
+out="$(cd "$repo" && "$SCRIPT" "$base" HEAD 2>&1)"; rc=$?
+check "a token added by a root commit and taken out by the next is found" "1 1" "$rc $(printf '%s' "$out" | grep -c 'root.txt:1 GitHub token')"
+check "and the merge that brings it in does not hide it" 1 "$(git -C "$repo" rev-list --merges "$base..HEAD" | wc -l | tr -d ' ')"
+check "and no value is printed" 0 "$(printf '%s' "$out" | grep -cF "$token")"
+git -C "$repo" checkout -q -f --detach "$base"; git -C "$repo" branch -q -D unrelated "$trunk"
+
 echo "$pass passed, $fail failed"
 printf 'DONE %s %d %d\n' "${BASH_SOURCE[0]##*/}" "$pass" "$fail"
 [ "$fail" -eq 0 ]
