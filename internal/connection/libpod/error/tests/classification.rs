@@ -84,25 +84,29 @@ fn already_exists_accepts_409_and_500_with_message() {
 }
 
 #[test]
-fn image_in_use_accepts_409_and_500_with_message() {
+fn image_in_use_is_the_409_conflict_only() {
 	// A 409 on image delete is always an in-use conflict.
 	assert!(PodmanError::Api {
 		status: 409,
 		message: "image is in use by 1 container".into(),
 	}
 	.is_image_in_use());
-	// Some Podman versions report it as a 500 naming the cause.
-	assert!(PodmanError::Api {
-		status: 500,
-		message: "image used by a container: image in use".into(),
+	// Podman 6.2.0 answers the conflict with a 409. A 500 is a real failure
+	// whatever its message says, so `down --rmi` reports it and fails.
+	for message in [
+		"image used by a container: image in use",
+		"image is being used by a build",
+		"internal error",
+	] {
+		assert!(
+			!PodmanError::Api {
+				status: 500,
+				message: message.into(),
+			}
+			.is_image_in_use(),
+			"{message}"
+		);
 	}
-	.is_image_in_use());
-	// An unrelated 500 still propagates.
-	assert!(!PodmanError::Api {
-		status: 500,
-		message: "internal error".into(),
-	}
-	.is_image_in_use());
 	assert!(!PodmanError::Api {
 		status: 404,
 		message: "no such image".into(),

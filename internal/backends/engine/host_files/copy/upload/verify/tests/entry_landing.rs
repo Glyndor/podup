@@ -31,16 +31,16 @@ fn entry_landed_with_planted_stats() {
 		LinkCheck::Refused,
 	);
 
-	// `Link` against a symlink where the runtime sent no `linkTarget` is
-	// the pre-#1808 type check, and the destination satisfies it.
+	// `Link` against a symlink where the runtime sent no `linkTarget` has
+	// nothing to compare, so it is refused rather than confirmed by type.
 	assert_eq!(
 		entry_landed(
 			SentKind::Link("anywhere".to_string()),
 			"/tmp/link",
 			Some(&stat(7, LINK_MODE)),
 		),
-		LinkCheck::Fallback,
-		"link confirmed by type because the runtime did not send linkTarget",
+		LinkCheck::Refused,
+		"a link with no linkTarget is not confirmed by its type",
 	);
 
 	// `Link` against a regular file is not a link: a target the link points

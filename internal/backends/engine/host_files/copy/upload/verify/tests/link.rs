@@ -114,14 +114,12 @@ fn a_link_with_matching_target_but_wrong_size_is_refused() {
 	);
 }
 
-/// An empty `linkTarget` (an older runtime, or a Podman that stops
-/// sending the field) is not a mismatch; it is the runtime's silence on
-/// the question the confirmation needs answered. Fall back to the type
-/// check that existed before #1808 and say so in the variant, so the log
-/// can distinguish "confirmed by target" from "confirmed by type because
-/// the runtime sent no target".
+/// An empty `linkTarget` is not an answer the confirmation can use. Podman
+/// 6.2.0 sends the field for every stat, so its absence is a runtime this does
+/// not know, and the link is refused instead of confirmed on its type alone,
+/// which would accept a link that points anywhere.
 #[test]
-fn a_link_with_empty_link_target_falls_back_to_type() {
+fn a_link_with_empty_link_target_is_refused() {
 	let sent = SentKind::Link("anywhere".to_string());
 	let post = PathStat {
 		size: 8,
@@ -131,8 +129,8 @@ fn a_link_with_empty_link_target_falls_back_to_type() {
 	};
 	assert_eq!(
 		entry_landed(sent, "/tmp/link", Some(&post)),
-		LinkCheck::Fallback,
-		"empty linkTarget is the runtime's silence, not a wrong answer",
+		LinkCheck::Refused,
+		"a link with no target to compare is not confirmed",
 	);
 }
 

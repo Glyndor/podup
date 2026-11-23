@@ -167,14 +167,6 @@ impl Engine {
 					Ok(post) => {
 						match verify::entry_landed(want.clone(), &abs_entry_path, post.as_ref()) {
 							verify::LinkCheck::Confirmed => Ok(()),
-							verify::LinkCheck::Fallback => {
-								tracing::debug!(
-									"cp: {entry} in {dir} is a symlink at the destination; \
-								 confirmed by type because the runtime sent no linkTarget: \
-								 {post:?}"
-								);
-								Ok(())
-							}
 							verify::LinkCheck::Refused => {
 								tracing::debug!(
 									"cp: {entry} in {dir} is not what was uploaded ({want:?}): \

@@ -169,4 +169,26 @@ impl crate::engine::Engine {
 		}
 		Ok(out)
 	}
+
+	/// Test seam: the `linkTarget` the runtime reports in the stat of `path`
+	/// inside `container`, read the way the upload verification reads it (a
+	/// dangling link answers 404 with the stat in the header). `None` when the
+	/// runtime sent no stat at all.
+	pub async fn test_link_target(
+		&self,
+		container: &str,
+		path: &str,
+	) -> crate::error::Result<Option<String>> {
+		let stat_path = format!(
+			"{}/containers/{}/archive?path={}",
+			crate::libpod::API_PREFIX,
+			crate::libpod::urlencoded(container),
+			crate::libpod::urlencoded(path)
+		);
+		self.client
+			.head_path_stat_even_if_missing(&stat_path)
+			.await
+			.map(|stat| stat.map(|s| s.link_target))
+			.map_err(crate::error::ComposeError::Podman)
+	}
 }
