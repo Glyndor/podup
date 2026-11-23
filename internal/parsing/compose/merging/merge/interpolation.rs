@@ -141,8 +141,9 @@ fn interpolate_in(
 			for (key, mut val) in taken {
 				warn_if_key_looks_interpolated(&key, warned);
 				let child_path = key_path(path, &key);
-				let value_is_text =
-					text || string_key.is_some_and(|is_string| key.as_str().is_some_and(is_string));
+				let value_is_text = text
+					|| string_key.is_some_and(|is_string| key.as_str().is_some_and(is_string))
+					|| is_mode_path(&child_path);
 				interpolate_in(
 					&mut val,
 					vars,
@@ -159,6 +160,15 @@ fn interpolate_in(
 		_ => {}
 	}
 	Ok(())
+}
+
+/// Whether `path` is the `mode:` of a secret or config reference or of a tmpfs.
+/// What an interpolation gives there stays text: its spelling is what says how the
+/// mode is read, and a number made of it (`420`) would have lost it.
+fn is_mode_path(path: &str) -> bool {
+	path.ends_with(".secrets.[].mode")
+		|| path.ends_with(".configs.[].mode")
+		|| path.ends_with(".tmpfs.mode")
 }
 
 /// Whether `map` (or any nested mapping/sequence/scalar it holds) contains a

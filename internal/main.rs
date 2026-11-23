@@ -292,6 +292,23 @@ async fn run(error_context: &mut startup::exit_status::ErrorContext) -> podup::R
 		)?
 	};
 
+	// What reading the modes of the file noted is said by the commands that apply a
+	// mode or check the file, once per mode; the others say nothing.
+	if matches!(
+		&cli.command,
+		Commands::Up(_)
+			| Commands::Create { .. }
+			| Commands::Run(_)
+			| Commands::Config(_)
+			| Commands::Audit { .. }
+			| Commands::Generate { .. }
+			| Commands::Autostart {
+				kind: AutostartCommands::Install { .. }
+			}
+	) {
+		podup::emit_mode_notices();
+	}
+
 	if let Commands::Config(_) = &cli.command {
 		return main_runner::post_parse::run_config(&cli, &compose_files, file, error_context)
 			.await;

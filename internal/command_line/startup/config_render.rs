@@ -180,6 +180,7 @@ pub(crate) fn render_config_to<W: Write>(
 			let mut v = serde_json::to_value(&redacted).map_err(|e| {
 				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
 			})?;
+			podup::render_modes_as_text_json(&mut v);
 			prune_json_nulls(&mut v);
 			if !out.no_interpolate {
 				super::config_dollar::escape_json(&mut v);
@@ -192,6 +193,7 @@ pub(crate) fn render_config_to<W: Write>(
 		ConfigFormat::Yaml => {
 			let mut v: serde_yaml::Value =
 				serde_yaml::to_value(&redacted).map_err(podup::ComposeError::Parse)?;
+			podup::render_modes_as_text_yaml(&mut v);
 			prune_yaml_nulls(&mut v);
 			if !out.no_interpolate {
 				super::config_dollar::escape_yaml(&mut v);

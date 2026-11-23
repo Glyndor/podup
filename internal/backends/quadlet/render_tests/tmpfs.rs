@@ -42,9 +42,10 @@ fn render_tmpfs_mount_with_and_without_options() {
 
 #[test]
 fn render_tmpfs_mount_bare_decimal_mode_is_not_octal_re_encoded() {
-	// Regression for #917: a long-form tmpfs with a bare `mode: 700` must
-	// render `mode=700`, not `mode=1274` (700 octal-encoded a second time).
-	let yaml = "type: tmpfs\ntarget: /run\ntmpfs:\n  mode: 700\n";
+	// Regression for #917: a long-form tmpfs with the mode 0700 must render
+	// `mode=700`, not `mode=1274` (700 octal-encoded a second time). The text is
+	// quoted because a bare number read straight from YAML has no known spelling.
+	let yaml = "type: tmpfs\ntarget: /run\ntmpfs:\n  mode: '0700'\n";
 	let mount: VolumeMount = serde_yaml::from_str(yaml).expect("parse tmpfs mount");
 	assert_eq!(render_tmpfs_mount(&mount).as_deref(), Some("/run:mode=700"));
 }

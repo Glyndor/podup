@@ -25,28 +25,24 @@ fn tmpfs_mode_octal_yaml_literal_is_preserved_as_bits() {
 fn tmpfs_mode_invalid_octal_is_clear_error() {
 	// A non-octal string is rejected with a clear error, not silently coerced.
 	let err = serde_yaml::from_str::<TmpfsOptions>("mode: \"0o9\"\n").unwrap_err();
-	assert!(err.to_string().contains("octal notation"), "got: {err}");
+	assert!(err.to_string().contains("not octal"), "got: {err}");
 }
 
 #[test]
-fn tmpfs_mode_bare_decimal_is_interpreted_as_octal() {
-	// A bare `700` is the octal file-mode the user typed, not a decimal value:
-	// it must yield the same permission bits as `0700`/`0o700` (issue #917)
-	// instead of being octal-encoded a second time at render time.
-	let opts: TmpfsOptions = serde_yaml::from_str("mode: 700\n").unwrap();
-	assert_eq!(opts.mode, Some(0o700));
-	let opts: TmpfsOptions = serde_yaml::from_str("mode: 644\n").unwrap();
-	assert_eq!(opts.mode, Some(0o644));
-}
-
-#[test]
-fn int_mode_bits_treats_decoded_0o_literals_as_bits() {
-	// A value carrying an 8/9 digit can only be a `0o` literal serde_yaml
-	// already decoded (`0o755` → 493), so it is taken as the bits verbatim;
-	// a value of valid octal digits is read as the octal the user typed.
-	assert_eq!(int_mode_bits(700), 0o700);
-	assert_eq!(int_mode_bits(0o755), 0o755);
-	assert_eq!(int_mode_bits(0o700), 0o700);
+fn tmpfs_mode_read_straight_from_text_without_its_spelling_is_not_guessed() {
+	// A `TmpfsOptions` read on its own gets the number the YAML reader made of
+	// `700` or `0700`, and cannot tell the two apart: it is refused instead of
+	// guessed at. A compose file recovers the spelling first (see
+	// `merging::mode_text`), so there `700` and `0700` are read by the rules.
+	let err = serde_yaml::from_str::<TmpfsOptions>("mode: 700\n").unwrap_err();
+	let text = err.to_string();
+	assert!(
+		text.contains("mode 700") && text.contains("spelling is not known"),
+		"got: {text}"
+	);
+	// A number whose digits are not octal has one reading only.
+	let opts: TmpfsOptions = serde_yaml::from_str("mode: 0o755\n").unwrap();
+	assert_eq!(opts.mode, Some(0o755));
 }
 
 // VolumeMount::target

@@ -239,6 +239,8 @@ mod cli_exec_signals;
 mod cli_logs;
 #[path = "engine_integration/cli/logs_exec/cli_logs_tail.rs"]
 mod cli_logs_tail;
+#[path = "engine_integration/cli/lifecycle/cli_mode_forms.rs"]
+mod cli_mode_forms;
 #[path = "engine_integration/cli/inspect/cli_output.rs"]
 mod cli_output;
 #[path = "engine_integration/cli/inspect/cli_port.rs"]
