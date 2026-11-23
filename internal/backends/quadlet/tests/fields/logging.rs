@@ -79,3 +79,26 @@ services:
 		"default leaked through override:\n{c}"
 	);
 }
+
+/// `logging.options.path` is the log file's place for `up` through the typed
+/// `path` field; the unit gets the same through `--log-opt path=`, which the
+/// CLI turns into that field. A path under a driver that writes no file is
+/// left out, as `up` leaves it out.
+#[test]
+fn logging_path_is_emitted_under_a_file_driver_and_left_out_under_journald() {
+	let render = |driver: &str| {
+		let yaml = format!(
+			"services:\n  s:\n    image: x\n    logging:\n      driver: {driver}\n      options:\n        path: /var/log/s.log\n"
+		);
+		let file = parse_str(&yaml).unwrap();
+		let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+		unit_named(&out, "p-s.container").contents.clone()
+	};
+	let file_driver = render("k8s-file");
+	assert!(
+		file_driver.contains("LogOpt=path=/var/log/s.log\n"),
+		"{file_driver}"
+	);
+	let journald = render("journald");
+	assert!(!journald.contains("path="), "{journald}");
+}

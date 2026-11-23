@@ -33,7 +33,7 @@ podup [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS] [SERVICE...]
 
 | Compose key | Default | Notes |
 |---|---|---|
-| `logging` | `driver: k8s-file` + `max-size: 10m` | Use journald to delegate rotation; `max-size: -1` removes this cap but host `log_size_max` may still apply. Positive `max-size` without driver selects k8s-file; nonpositive/absent size keeps the host driver. Podman keeps no rotated history. Quadlet uses the same default. |
+| `logging` | `driver: k8s-file` + `max-size: 10m` | Use journald to delegate rotation; `max-size: -1` removes this cap but host `log_size_max` may still apply. Positive `max-size` or a `path` without driver selects k8s-file; nonpositive/absent size keeps the host driver. Podman keeps no rotated history. Quadlet uses the same default. |
 
 ## Lifecycle
 

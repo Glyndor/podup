@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::compose::types::LoggingConfig;
+use crate::libpod::types::container::LogConfig;
 
 fn config(driver: Option<&str>, options: &[(&str, &str)]) -> LogConfig {
 	let logging = LoggingConfig {

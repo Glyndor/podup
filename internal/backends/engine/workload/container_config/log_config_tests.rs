@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::compose::types::LoggingConfig;
+use crate::error::ComposeError;
 
 #[test]
 fn log_config_applies_the_default_when_absent() {
@@ -158,19 +159,21 @@ fn log_config_max_size_malformed_returns_field_error() {
 
 #[test]
 fn log_config_unsupported_options_pass_through() {
-	// `path` reaches the wire unchanged. `tag` does too, but not for json-file:
-	// this test used to pin `tag` there on the strength of `man podman-run`, and
-	// Podman refuses it for that driver (see `log_tag_tests`),
-	// so it travels with `journald`, where it is a real option.
+	// A key the generator does not read still reaches the wire unchanged, and
+	// `build_log_config` reports it (see `log_options_report_tests`). `tag` does
+	// too, but not for json-file: this test used to pin `tag` there on the
+	// strength of `man podman-run`, and Podman refuses it for that driver (see
+	// `log_tag_tests`), so it travels with `journald`, where it is a real option.
+	// `path` is not here: it is a typed field, not an option (see above).
 	let mut opts = std::collections::HashMap::new();
-	opts.insert("path".into(), "/var/log/app.log".into());
+	opts.insert("env".into(), "APP".into());
 	let logging = LoggingConfig {
 		driver: Some("json-file".into()),
 		options: opts,
 	};
 	let cfg = build_log_config("web", Some(&logging)).unwrap().unwrap();
 	let v = serde_json::to_value(&cfg).unwrap();
-	assert_eq!(v["options"]["path"], "/var/log/app.log");
+	assert_eq!(v["options"]["env"], "APP");
 	let mut opts = std::collections::HashMap::new();
 	opts.insert("tag".into(), "{{.Name}}".into());
 	let logging = LoggingConfig {
@@ -311,4 +314,77 @@ fn log_config_driverless_zero_size_keeps_host_driver() {
 		Some("myapp"),
 		"non-size options must still pass through to libpod: {cfg:?}"
 	);
+}
+
+fn logging(driver: Option<&str>, options: &[(&str, &str)]) -> LoggingConfig {
+	LoggingConfig {
+		driver: driver.map(str::to_string),
+		options: options
+			.iter()
+			.map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+			.collect(),
+	}
+}
+
+#[test]
+fn log_path_moves_into_the_typed_field_the_generator_reads() {
+	// libpod reads the log file from `log_configuration.path` and ignores a
+	// `path` key inside `options` (Podman 6.2.0, measured 2026-11-22).
+	let cfg = build_log_config(
+		"web",
+		Some(&logging(Some("k8s-file"), &[("path", "/var/log/web.log")])),
+	)
+	.unwrap()
+	.unwrap();
+	assert_eq!(cfg.path.as_deref(), Some("/var/log/web.log"));
+	assert!(!cfg.options.contains_key("path"));
+	let wire = serde_json::to_value(&cfg).unwrap();
+	assert_eq!(wire["path"], "/var/log/web.log");
+	assert!(wire.get("options").is_none(), "{wire}");
+}
+
+#[test]
+fn log_path_without_a_driver_selects_the_file_driver() {
+	// Only the file drivers write a file; a host whose default is journald
+	// would take the path and never use it.
+	let cfg = build_log_config("web", Some(&logging(None, &[("path", "/var/log/a.log")])))
+		.unwrap()
+		.unwrap();
+	assert_eq!(cfg.driver.as_deref(), Some("k8s-file"));
+	assert_eq!(cfg.path.as_deref(), Some("/var/log/a.log"));
+}
+
+#[test]
+fn log_path_is_dropped_under_a_driver_that_writes_no_file() {
+	for driver in ["journald", "none", "passthrough"] {
+		let cfg = build_log_config(
+			"web",
+			Some(&logging(Some(driver), &[("path", "/var/log/a.log")])),
+		)
+		.unwrap()
+		.unwrap();
+		assert!(cfg.path.is_none(), "{driver}");
+		assert_eq!(cfg.driver.as_deref(), Some(driver));
+	}
+}
+
+#[test]
+fn absent_logging_has_no_path() {
+	assert!(build_log_config("web", None)
+		.unwrap()
+		.unwrap()
+		.path
+		.is_none());
+}
+
+#[test]
+fn json_file_and_journald_options_other_than_the_known_ones_are_still_forwarded() {
+	// Forwarded unchanged and reported: the generator reads only `tag`.
+	let cfg = build_log_config(
+		"web",
+		Some(&logging(Some("journald"), &[("tag", "t"), ("labels", "x")])),
+	)
+	.unwrap()
+	.unwrap();
+	assert_eq!(cfg.options.len(), 2);
 }

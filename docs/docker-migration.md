@@ -443,7 +443,11 @@ The `[Build]` keys `Annotation=`, `Volume=` and `DNS=` have no compose `build:` 
 | `networks.*.ipam.config[].aux_addresses` | not supported by Podman |
 | service `networks.*.gw_priority` | not supported by Podman |
 | `logging.options.tag` with `json-file` or `k8s-file` | Podman's file logger refuses a tag when the container starts; podup drops it with a warning, as it does `max-file` |
+| `logging.options.path` with a driver other than `json-file` or `k8s-file` | only the two file drivers write a file; podup drops the path with a warning |
+| any `logging.options` key other than `path`, `max-size`, `max-file` and `tag` | Podman's generator reads nothing else, so the key is forwarded and reported; see below |
 | `secrets`/`configs` `driver` / `template_driver` (on non-`external` defs) | external secret-store plugins (Vault, AWS SM, …) podup does not invoke; the secret/config is still staged from its `file`, `content` or `environment` source, and only a definition with none has nothing to stage |
+
+What the generator of Podman 6.2.0 consumes from `logging`: `driver`; `options.path` (the log file, `json-file` and `k8s-file` only) and `options.max-size` (the cap in bytes), which podup sends in the typed fields Podman reads them from, because Podman ignores both inside `options`; and `options.tag` (`journald` only). `options.max-file` is dropped, since Podman keeps one file. A `path` with no `driver` selects `k8s-file`, as a positive `max-size` does. The Quadlet export writes `path` and `max-size` as `LogOpt=` lines.
 
 ## Not yet supported
 
