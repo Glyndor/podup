@@ -100,7 +100,7 @@ services:
       - "1001"
     oom_score_adj: -500
     runtime: crun
-    platform: linux/amd64
+    platform: linux/arm/v7
     storage_opt:
       size: 1G
     links:

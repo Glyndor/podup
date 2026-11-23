@@ -63,6 +63,7 @@ mod empty_exec;
 mod image_healthcheck;
 mod one_off;
 mod pasta_options;
+mod platform_variant;
 mod service_namespaces;
 mod spec_fields;
 mod tmpfs_owner;

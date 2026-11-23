@@ -100,6 +100,8 @@ mod error_surfacing;
 mod exec_flags;
 #[path = "engine_integration/workload/dependencies/health_waits.rs"]
 mod health_waits;
+#[path = "engine_integration/images/platform/platform_variant.rs"]
+mod platform_variant;
 #[path = "engine_integration/compose_files/profiles.rs"]
 mod profiles;
 
