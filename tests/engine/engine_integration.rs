@@ -229,6 +229,8 @@ mod cli_cp;
 mod cli_down_orphans_rmi;
 #[path = "engine_integration/cli/logs_exec/cli_exec.rs"]
 mod cli_exec;
+#[path = "engine_integration/cli/lifecycle/cli_exec_signals.rs"]
+mod cli_exec_signals;
 #[path = "engine_integration/cli/logs_exec/cli_logs.rs"]
 mod cli_logs;
 #[path = "engine_integration/cli/logs_exec/cli_logs_tail.rs"]
