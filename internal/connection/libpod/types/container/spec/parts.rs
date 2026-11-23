@@ -469,6 +469,12 @@ pub struct LogConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub driver: Option<String>,
 
+	/// Where the log file is written. libpod reads it from this field and
+	/// ignores a `path` key inside [`options`](Self::options); only the
+	/// `json-file` and `k8s-file` drivers use it.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub path: Option<String>,
+
 	/// Maximum log file size in **bytes**. libpod reads rotation from this
 	/// sibling field and ignores `max-size` keys inside [`options`](Self::options)
 	/// (#1417). `-1` disables rotation, matching the Docker `--log-opt max-size=-1`
@@ -476,10 +482,10 @@ pub struct LogConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub size: Option<i64>,
 
-	/// Driver-specific options. The only keys libpod honours for the built-in
-	/// log drivers are `path` and `tag` (see `man podman-run`); `max-file` is
-	/// silently dropped by libpod regardless of where it appears, and `max-size`
-	/// must travel as the typed [`size`](Self::size) field above.
+	/// Driver-specific options. The only key libpod's generator reads from this
+	/// map is `tag` (journald); `max-file` is silently dropped by libpod
+	/// regardless of where it appears, and `max-size` and `path` must travel as
+	/// the typed [`size`](Self::size) and [`path`](Self::path) fields above.
 	#[serde(skip_serializing_if = "HashMap::is_empty", default)]
 	pub options: HashMap<String, String>,
 }

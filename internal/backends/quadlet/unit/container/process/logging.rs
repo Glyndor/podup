@@ -60,6 +60,9 @@ pub(in super::super) fn emit_log_config(
 	// `Section::add` quotes a `LogOpt=` value that carries whitespace or a
 	// quote, so a hostile value cannot become two `--log-opt` arguments, and the
 	// key half has the same protection on the other side of the `=`.
+	if let Some(path) = &logging.path {
+		container.add_native("LogOpt", "--log-opt=", &format!("path={path}"));
+	}
 	if let Some(size) = logging.size {
 		container.add_native("LogOpt", "--log-opt=", &format!("max-size={size}"));
 	}

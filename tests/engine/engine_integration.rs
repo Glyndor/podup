@@ -206,6 +206,8 @@ mod watch_delete;
 #[path = "engine_integration/host_files/watch/watch_ignore_relative.rs"]
 mod watch_ignore_relative;
 
+#[path = "engine_integration/workload/logging/log_path.rs"]
+mod log_path;
 #[path = "engine_integration/workload/autoupdate/x_podman_autoupdate.rs"]
 mod x_podman_autoupdate;
 

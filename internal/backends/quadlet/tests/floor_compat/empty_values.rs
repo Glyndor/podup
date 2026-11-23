@@ -105,8 +105,8 @@ networks:
 	);
 }
 
-/// An empty value in `logging.options:` (`{ tag: "" }`) would render
-/// `LogOpt=tag=`, which podman rejects. The non-empty option still emits.
+/// An empty value in `logging.options:` (`{ env: "" }`) would render
+/// `LogOpt=env=`, which podman rejects. The non-empty option still emits.
 #[test]
 fn empty_logging_option_value_emits_no_flag() {
 	let yaml = r#"
@@ -114,17 +114,17 @@ services:
   s:
     image: x
     logging:
-      driver: journald
+      driver: k8s-file
       options:
-        tag: ""
+        env: ""
         path: /var/log/x.log
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
-		!c.contains("LogOpt=tag="),
-		"empty logging option value must not emit LogOpt=tag=; got:\n{c}"
+		!c.contains("LogOpt=env="),
+		"empty logging option value must not emit LogOpt=env=; got:\n{c}"
 	);
 	assert!(
 		c.contains("LogOpt=path=/var/log/x.log\n"),
