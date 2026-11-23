@@ -353,6 +353,16 @@ fn generate_with_mode(
 			continue;
 		}
 		out.units.push(volume_unit(name, project, cfg.as_ref()));
+		// Podman's generator drops a `Driver=image` unit that has no `Image=`,
+		// and the containers that mount the volume then fail to start.
+		if let Some(c) = cfg {
+			if c.driver.as_deref() == Some("image") && !c.driver_opts.contains_key("image") {
+				out.warnings.push(format!(
+					"volume '{name}': driver image needs driver_opts.image; without it Quadlet \
+					 drops the volume unit"
+				));
+			}
+		}
 	}
 
 	let declared_volumes: Vec<&str> = file
