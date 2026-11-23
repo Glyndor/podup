@@ -221,6 +221,8 @@ mod x_podman_autoupdate;
 
 #[path = "engine_integration/cli/inspect/cli_absent_project.rs"]
 mod cli_absent_project;
+#[path = "engine_integration/cli/images_files/cli_build_flags.rs"]
+mod cli_build_flags;
 #[path = "engine_integration/cli/images_files/cli_build_push.rs"]
 mod cli_build_push;
 #[path = "engine_integration/cli/lifecycle/cli_commands.rs"]
@@ -268,6 +270,8 @@ mod cli_stats;
 mod cli_timeout_unlimited;
 #[path = "engine_integration/cli/inspect/cli_top_images.rs"]
 mod cli_top_images;
+#[path = "engine_integration/cli/lifecycle/cli_up_deploy_flags.rs"]
+mod cli_up_deploy_flags;
 #[path = "engine_integration/cli/lifecycle/cli_up_down.rs"]
 mod cli_up_down;
 #[path = "engine_integration/cli/lifecycle/cli_up_flags.rs"]
