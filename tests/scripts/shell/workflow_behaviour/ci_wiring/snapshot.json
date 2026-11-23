@@ -82,11 +82,6 @@
      "edited"
     ]
    },
-   "push": {
-    "branches": [
-     "develop"
-    ]
-   },
    "schedule": [
     {
      "cron": "0 6 * * *"
@@ -157,8 +152,7 @@
    },
    "push": {
     "branches": [
-     "main",
-     "develop"
+     "main"
     ]
    }
   }
@@ -371,8 +365,7 @@
    },
    "push": {
     "branches": [
-     "main",
-     "develop"
+     "main"
     ]
    }
   }
@@ -864,7 +857,7 @@
      },
      {
       "name": "Decide whether the Rust lanes must run",
-      "sha": "11c0dd1fd775f020",
+      "sha": "df7231b0dadcbf68",
       "uses": null
      },
      {
@@ -952,23 +945,6 @@
      {
       "name": "Build docs with warnings denied",
       "sha": "7ddffeb879704f5a",
-      "uses": null
-     }
-    ],
-    "timeout-minutes": 10
-   },
-   "extra-platforms-gate": {
-    "if": "always()",
-    "name": "Extra platforms",
-    "needs": [
-     "classify",
-     "test-extra"
-    ],
-    "runs-on": "ubuntu-latest",
-    "steps": [
-     {
-      "name": "Reflect the extra-platform test result",
-      "sha": "68e618ad07b61420",
       "uses": null
      }
     ],
@@ -1097,23 +1073,6 @@
      }
     ],
     "timeout-minutes": 15
-   },
-   "msrv-gate": {
-    "if": "always()",
-    "name": "MSRV",
-    "needs": [
-     "classify",
-     "msrv"
-    ],
-    "runs-on": "ubuntu-latest",
-    "steps": [
-     {
-      "name": "Reflect the MSRV result",
-      "sha": "819df689578a6a29",
-      "uses": null
-     }
-    ],
-    "timeout-minutes": 10
    },
    "package": {
     "defaults": {
@@ -1381,8 +1340,7 @@
    },
    "push": {
     "branches": [
-     "main",
-     "develop"
+     "main"
     ]
    }
   }

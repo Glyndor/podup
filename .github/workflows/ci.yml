@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  # Not on `develop`: the merge queue runs this workflow on the commit that lands there,
+  # and the push that follows is the same commit, so it would repeat what the queue
+  # ran. `main` takes a push because a release merge makes a commit nobody ran.
   push:
-    branches: [main, develop]
+    branches: [main]
   # `edited` is there so that changing the base of a pull request runs the plan again.
   pull_request:
     types: [opened, synchronize, reopened, edited]

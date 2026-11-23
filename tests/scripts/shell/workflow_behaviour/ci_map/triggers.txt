@@ -13,7 +13,6 @@
 .github/scripts/checks/check-branch-conclusion.sh	debian-build,lint-shell
 .github/scripts/checks/check-caller-with-defaults.py	debian-build,lint-shell
 .github/scripts/checks/check-local-reusables.py	debian-build,lint-shell
-.github/scripts/checks/check-merge-group-triggers.py	debian-build,lint-shell
 .github/scripts/checks/check-planning-words.sh	debian-build,lint-shell
 .github/scripts/checks/check-private-document-references.sh	debian-build,lint-shell
 .github/scripts/checks/check-tooling-isolation.py	debian-build,lint-shell
@@ -27,6 +26,7 @@
 .github/scripts/checks/rust-build-inputs.sh	debian-build,lint-shell
 .github/scripts/checks/rust-ci-inputs.sh	debian-build,lint-shell
 .github/scripts/checks/signing-key-isolation.py	debian-build,lint-shell
+.github/scripts/checks/triggers/*	debian-build,lint-shell
 .github/scripts/checks/workflow-lint-inputs.sh	debian-build,lint-shell
 .github/scripts/ci/*	debian-build,lint-shell
 .github/scripts/fedora_image/*	debian-build,lint-shell

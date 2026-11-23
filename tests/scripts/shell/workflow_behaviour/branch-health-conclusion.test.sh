@@ -180,7 +180,7 @@ run_script() { # <responses_file> [head_sha]
 	: >"$WORK/sleep.log"
 	PATH="$WORK/bin:$PATH" \
 		STUB_LOG="$WORK/gh.log" STUB_RESPONSES="$resp" SLEEP_LOG="$WORK/sleep.log" \
-		WORKFLOW=ci.yml BRANCH=main REPO=owner/repo HEAD_SHA="$head" GH_TOKEN=dummy \
+		WORKFLOW=ci.yml BRANCH="${BRANCH_UNDER_TEST:-main}" REPO=owner/repo HEAD_SHA="$head" GH_TOKEN=dummy \
 		MAX_ATTEMPTS="${MAX_ATTEMPTS:-32}" SLEEP_SECONDS="${SLEEP_SECONDS:-15}" \
 		bash "$script" 2>&1
 }
@@ -443,7 +443,7 @@ rm -f "$WORK/gh.log" "$WORK/sleep.log"
 : >"$WORK/sleep.log"
 out="$(PATH="$WORK/bin:$PATH" \
 	STUB_LOG="$WORK/gh.log" STUB_RESPONSES="$WORK/schedule.combined" SLEEP_LOG="$WORK/sleep.log" \
-	WORKFLOW=ci.yml BRANCH=main REPO=owner/repo HEAD_SHA='' GH_TOKEN=dummy \
+	WORKFLOW=ci.yml BRANCH="${BRANCH_UNDER_TEST:-main}" REPO=owner/repo HEAD_SHA='' GH_TOKEN=dummy \
 	MAX_ATTEMPTS=32 SLEEP_SECONDS=15 \
 	bash "$script" 2>&1)"
 rc=$?
@@ -500,7 +500,7 @@ rm -f "$WORK/gh.log" "$WORK/sleep.log"
 : >"$WORK/sleep.log"
 out_main="$(PATH="$WORK/bin:$PATH" \
 	STUB_LOG="$WORK/gh.log" STUB_RESPONSES="$WORK/branch.resp" SLEEP_LOG="$WORK/sleep.log" \
-	WORKFLOW=ci.yml BRANCH=main REPO=owner/repo HEAD_SHA=HEAD123 GH_TOKEN=dummy \
+	WORKFLOW=ci.yml BRANCH="${BRANCH_UNDER_TEST:-main}" REPO=owner/repo HEAD_SHA=HEAD123 GH_TOKEN=dummy \
 	bash "$script" 2>&1)"
 case "$out_main" in
 	*"on main"*) check "verdict names branch=main" "yes" "yes" ;;
@@ -539,7 +539,7 @@ rm -f "$WORK/gh.log" "$WORK/sleep.log"
 : >"$WORK/sleep.log"
 PATH="$WORK/bin:$PATH" \
 	STUB_LOG="$WORK/gh.log" STUB_RESPONSES="$WORK/streams.resp" SLEEP_LOG="$WORK/sleep.log" \
-	WORKFLOW=ci.yml BRANCH=main REPO=owner/repo HEAD_SHA=HEAD123 GH_TOKEN=dummy \
+	WORKFLOW=ci.yml BRANCH="${BRANCH_UNDER_TEST:-main}" REPO=owner/repo HEAD_SHA=HEAD123 GH_TOKEN=dummy \
 	bash "$script" >"$WORK/streams-out" 2>"$WORK/streams-err"
 rc=$?
 check "split streams: red conclusion exits 1" "1" "$rc"
@@ -569,7 +569,7 @@ rm -f "$WORK/gh.log" "$WORK/sleep.log"
 PATH="$WORK/bin:$PATH" \
 	STUB_LOG="$WORK/gh.log" STUB_RESPONSES="$WORK/streams-warning.resp" SLEEP_LOG="$WORK/sleep.log" \
 	STUB_EXIT_CODE=1 MAX_ATTEMPTS=4 SLEEP_SECONDS=15 \
-	WORKFLOW=ci.yml BRANCH=main REPO=owner/repo HEAD_SHA=HEAD123 GH_TOKEN=dummy \
+	WORKFLOW=ci.yml BRANCH="${BRANCH_UNDER_TEST:-main}" REPO=owner/repo HEAD_SHA=HEAD123 GH_TOKEN=dummy \
 	bash "$script" >"$WORK/streams-warning-out" 2>"$WORK/streams-warning-err"
 rc=$?
 check "split streams: transient gh failure exits 1" "1" "$rc"
@@ -604,7 +604,7 @@ out="$(MAX_ATTEMPTS=4 STUB_EXIT_CODE=1 \
 	PATH="$WORK/bin:$PATH" \
 	STUB_LOG="$WORK/gh.log" STUB_RESPONSES="$WORK/transient.resp" \
 	SLEEP_LOG="$WORK/sleep.log" \
-	WORKFLOW=ci.yml BRANCH=main REPO=owner/repo HEAD_SHA=HEAD123 GH_TOKEN=dummy \
+	WORKFLOW=ci.yml BRANCH="${BRANCH_UNDER_TEST:-main}" REPO=owner/repo HEAD_SHA=HEAD123 GH_TOKEN=dummy \
 	SLEEP_SECONDS=15 \
 	bash "$script" 2>&1)"
 rc=$?
@@ -752,6 +752,35 @@ for v in WORKFLOW BRANCH REPO; do
 		bash "$script" </dev/null >/dev/null 2>&1 || rc=$?
 	check "missing $v is fatal" "1" "$rc"
 done
+
+# ===========================================================================
+# `develop` takes no push run of CI: the merge queue ran it on the commit that
+# landed, and the verdict for the head is the queue's run for that commit. The
+# script asks for the push run first (so a push run still counts) and, for
+# develop only, for the merge_group run of the same head when there is none.
+# ===========================================================================
+empty_page="$(make_page)"
+q_ok="$(make_run 81 HEAD123 completed success 2026-11-23T11:00:00Z 31 https://x/r/81 merge_group)"
+q_bad="$(make_run 82 HEAD123 completed failure 2026-11-23T11:05:00Z 32 https://x/r/82 merge_group)"
+q_other="$(make_run 83 OTHER completed failure 2026-11-23T11:06:00Z 33 https://x/r/83 merge_group)"
+q_pr="$(make_run 84 HEAD123 completed failure 2026-11-23T11:07:00Z 34 https://x/r/84 pull_request)"
+printf '%s\n%s\n' "$empty_page" "$(make_page "$q_ok")" > "$WORK/q_ok.resp"
+out="$(BRANCH_UNDER_TEST=develop run_script "$WORK/q_ok.resp")"; rc=$?
+check "develop: the queue's green run for the head passes" "0" "$rc"
+case "$out" in *"run #31"*) check "develop: the verdict names the queue's run" yes yes ;; *) check "develop: the verdict names the queue's run" run-31 "$out" ;; esac
+check "develop: the second call asks for the merge_group run of the head" 1 \
+	"$(nth_call 2 | grep -c 'head_sha=HEAD123&event=merge_group')"
+printf '%s\n%s\n' "$empty_page" "$(make_page "$q_bad")" > "$WORK/q_bad.resp"
+out="$(BRANCH_UNDER_TEST=develop run_script "$WORK/q_bad.resp")"; rc=$?
+check "develop: the queue's red run for the head fails" "1" "$rc"
+printf '%s\n%s\n' "$empty_page" "$(make_page "$q_other" "$q_pr")" > "$WORK/q_other.resp"
+out="$(MAX_ATTEMPTS=1 SLEEP_SECONDS=0 BRANCH_UNDER_TEST=develop run_script "$WORK/q_other.resp")"; rc=$?
+check "develop: a queue run of another commit and a pull request run are no verdict" "1" "$rc"
+case "$out" in *"no ci.yml run for commit"*) check "develop: and it says no run was found" yes yes ;; *) check "develop: and it says no run was found" no-run "$out" ;; esac
+printf '%s\n' "$empty_page" > "$WORK/q_none.resp"; printf '%s\n' "$empty_page" >> "$WORK/q_none.resp"
+out="$(MAX_ATTEMPTS=1 SLEEP_SECONDS=0 BRANCH_UNDER_TEST=main run_script "$WORK/q_none.resp")"; rc=$?
+check "main asks only for its push run: one call, no queue lookup" "1" "$(gh_count)"
+check "main with no push run fails" "1" "$rc"
 
 echo
 echo "passed: $pass  failed: $fail"

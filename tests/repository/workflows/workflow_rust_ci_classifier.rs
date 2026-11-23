@@ -4,18 +4,13 @@
 //! whether the range touches anything the lint, test, coverage and
 //! extra-platform lanes read, and skips what it does not need to run.
 //!
-//! The names the ruleset requires are `rust / Format & lint`, `rust / Test`,
-//! `rust / Coverage`, `rust / Doc warnings`, `rust / MSRV` and
-//! `rust / Extra platforms`. A skipped job reports `skipped`, which a required
-//! check accepts, so the jobs whose own name is required (`Test`, `Coverage`)
-//! are skipped whole by an `if:` on the `classify` job's output. Two shapes
-//! are never skipped that way:
-//!
-//! - `lint` also runs checks that must see a documentation-only change, so it
-//!   skips only its heavy STEPS, behind the decision `classify` gives it.
-//! - the macOS and Windows matrix is not required by name (`Test (${{
-//!   matrix.os }})` moves with the matrix), `Extra platforms` is, so the
-//!   matrix is skipped whole while the aggregate gate always runs.
+//! The name the rulesets require is `rust / Gate`. A skipped job reports
+//! `skipped`, which a required check accepts, so the suites are not required by
+//! name: the jobs skipped whole (`Test`, `Coverage`, the matrix, `MSRV`, `Doc
+//! warnings`) are skipped by an `if:` on the `classify` job's output, and the gate
+//! reads each result and certifies each skip. `lint` also runs checks that must
+//! see a documentation-only change, so it skips only its heavy STEPS, behind the
+//! decision `classify` gives it.
 //!
 //! Properties asserted here:
 //!
@@ -28,7 +23,7 @@
 //! 3. The judge is read from the reviewed base commit, never from the pull
 //!    request's own tree, so a pull request cannot rewrite the judge of its
 //!    own diff.
-//! 4. The aggregate gates keep running and fail on anything but success or
+//! 4. The aggregate gate keeps running and fails on anything but success or
 //!    skipped.
 //!
 //!    `rust / Gate` is the one that certifies the pipeline: it waits for every
@@ -271,18 +266,17 @@ fn classify_exposes_the_decision_and_the_job_that_must_not_be_skipped_stays_whol
 		Some("${{ steps.build.outputs.build }}"),
 		"classify no longer exposes the build answer `msrv`, `doc` and the gate read"
 	);
-	for id in ["lint", "msrv-gate"] {
-		let cond = job(&spec, id)["if"]
-			.as_str()
-			.unwrap_or_default()
-			.to_string();
-		assert!(
-			!cond.contains("outputs."),
-			"{id} reads a classifier answer at job level. `lint` runs checks a \
-			 documentation-only change must see, and the MSRV gate is the name the \
-			 ruleset requires: {cond:?}"
-		);
-	}
+	let id = "lint";
+	let cond = job(&spec, id)["if"]
+		.as_str()
+		.unwrap_or_default()
+		.to_string();
+	assert!(
+		!cond.contains("outputs."),
+		"{id} reads a classifier answer at job level. `lint` runs checks a \
+		 documentation-only change must see, and the name the \
+		 ruleset requires is the gate's: {cond:?}"
+	);
 }
 
 #[test]
@@ -343,8 +337,6 @@ fn the_check_names_the_ruleset_requires_are_unchanged() {
 		("test", "Test"),
 		("coverage", "Coverage"),
 		("doc", "Doc warnings"),
-		("msrv-gate", "MSRV"),
-		("extra-platforms-gate", "Extra platforms"),
 	] {
 		assert_eq!(
 			job(&spec, id)["name"].as_str(),
@@ -411,11 +403,9 @@ fn the_gate_waits_for_every_job_and_every_suite_starts_when_the_plan_failed() {
 		.iter()
 		.filter_map(Value::as_str)
 		.collect();
-	// The two older gates are the names the ruleset still requires until it
-	// moves to `Gate`; they read the matrix and the MSRV job themselves.
 	for (id, _) in spec["jobs"].as_mapping().expect("jobs").iter() {
 		let id = id.as_str().unwrap_or_default();
-		if id == "gate" || id == "extra-platforms-gate" || id == "msrv-gate" {
+		if id == "gate" {
 			continue;
 		}
 		assert!(
@@ -434,51 +424,6 @@ fn the_gate_waits_for_every_job_and_every_suite_starts_when_the_plan_failed() {
 			"{id} is guarded by {cond:?}. Without `!cancelled()` it is skipped \
 			 when the plan failed, and a job skipped for that reason is the \
 			 fail-open the gate exists to catch"
-		);
-	}
-}
-
-/// The gates that stand in for the extra-platform matrix and for the MSRV job
-/// accept a skipped dependency only when the caller switched it off or a plan
-/// that succeeded said so out loud, so a matrix that never ran for any other
-/// reason leaves the required name red. They read the plan themselves.
-#[test]
-fn the_older_gates_certify_a_skip_against_the_plan_and_reject_the_rest() {
-	let spec = reusable();
-	for (id, dep) in [
-		("extra-platforms-gate", "test-extra"),
-		("msrv-gate", "msrv"),
-	] {
-		let gate = job(&spec, id);
-		let needs: Vec<&str> = gate["needs"]
-			.as_sequence()
-			.expect("the gate lists its needs")
-			.iter()
-			.filter_map(Value::as_str)
-			.collect();
-		assert_eq!(
-			needs,
-			["classify", dep],
-			"{id} must read the plan and {dep}"
-		);
-		assert_eq!(
-			gate["if"].as_str(),
-			Some("always()"),
-			"{id} must run whatever happened, or a skipped matrix leaves the \
-			 required check missing"
-		);
-		let body: String = steps(&gate)
-			.iter()
-			.map(run_text)
-			.collect::<Vec<_>>()
-			.join("\n");
-		assert!(
-			body.contains("[ \"$PLAN\" = success ]"),
-			"{id} accepts a skip without asking whether the plan succeeded: {body}"
-		);
-		assert!(
-			body.contains("= false ]") && body.contains("exit 1"),
-			"{id} no longer fails on a failed or cancelled dependency: {body}"
 		);
 	}
 }

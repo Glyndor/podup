@@ -96,7 +96,7 @@ check "the merge-group step was extracted from the workflow" "1" \
 	"$(grep -c check-merge-group-triggers.py "$WORK/merge-group.sh" | awk '{print ($1>0)}')"
 
 check "the merge-group trigger script lives next to the other GitHub scripts" "1" \
-	"$(test -f "$HERE/.github/scripts/checks/check-merge-group-triggers.py" && echo 1 || echo 0)"
+	"$(test -f "$HERE/.github/scripts/checks/triggers/check-merge-group-triggers.py" && echo 1 || echo 0)"
 
 # ---------------------------------------------------------------------------
 # Fixture helpers
@@ -120,8 +120,9 @@ new() {
 	done
 	mkdir -p "$WORK/t/.github/scripts/lib"
 	cp "$HERE/.github/scripts/lib/ci_yaml.py" "$WORK/t/.github/scripts/lib/"
-	cp "$HERE/.github/scripts/checks/check-merge-group-triggers.py" \
-		"$WORK/t/.github/scripts/checks/"
+	mkdir -p "$WORK/t/.github/scripts/checks/triggers"
+	cp "$HERE/.github/scripts/checks/triggers/check-merge-group-triggers.py" \
+		"$WORK/t/.github/scripts/checks/triggers/"
 	printf '%s' "$WORK/t"
 }
 run_in() { ( cd "$1" && bash "$2" 2>&1 ); }

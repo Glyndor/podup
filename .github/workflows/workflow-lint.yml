@@ -1,8 +1,11 @@
 name: Workflow lint
 
 on:
+  # Not on `develop`: the merge queue runs this workflow on the commit that lands there,
+  # and the push that follows is the same commit, so it would repeat what the queue
+  # ran. `main` takes a push because a release merge makes a commit nobody ran.
   push:
-    branches: [main, develop]
+    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, edited]
     branches: [main, develop]

@@ -1,9 +1,10 @@
 name: Security audit
 
 # Four triggers, one rule: an advisory appears without any file changing, so
-# the audit is not conditioned on paths. It runs on every pull request and on
-# every push to develop, and the daily schedule audits both branches and opens
-# an issue when either fails.
+# the audit is not conditioned on paths. It runs on every pull request and in the
+# merge queue, which is the run of the commit that lands on develop (a push to
+# develop would repeat it on the same commit), and the daily schedule audits both
+# branches and opens an issue when either fails.
 #
 # The cost is the trade the rule accepts: a finding published today about a
 # crate nobody here touched can turn a pull request red. That is the audit doing
@@ -31,9 +32,6 @@ on:
       - develop
   merge_group:
     types: [checks_requested]
-  push:
-    branches:
-      - develop
 
 permissions:
   contents: read
