@@ -53,6 +53,7 @@ pub(crate) use container_config::resources::{
 	cdi_devices, effective_cpu_quota, effective_memory_limit, effective_pids_limit, is_known_ulimit,
 };
 pub(crate) use network::apply_default_isolation;
+pub(crate) use network::link_aliases as network_link_aliases;
 /// Re-exported so `startup::config_render` (in the binary crate) can call the
 /// same function `up` uses, instead of duplicating the resolution rule.
 pub use network::resolve_network_name;

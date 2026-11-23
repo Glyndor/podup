@@ -40,7 +40,7 @@ The following Compose fields are translated onto Podman's libpod API. Fields out
 | Images / build | `image`, `build` (context, dockerfile, args, target, cache_from, cache_to, secrets, labels, network), `pull_policy` (time policies map to `newer`), `pull_refresh_after` (strict syntax only) |
 | Execution | `command`, `entrypoint`, `working_dir`, `user`, `umask`, `platform`, `tty`, `stdin_open` |
 | Environment | `environment`, `env_file` (dotenv format, or `format: raw`; see the note below the table), variable substitution (`${VAR:-default}`) |
-| Networking | `ports`, `expose`, `networks`, `network_mode`, `hostname`, `domainname`, `dns`, `dns_opt`, `dns_search`, `extra_hosts` |
+| Networking | `ports`, `expose`, `networks`, `network_mode`, `hostname`, `dns`, `dns_opt`, `dns_search`, `extra_hosts` |
 | Volumes | `volumes` (bind, named, tmpfs, npipe; a long-form bind with `create_host_path: false` fails `up` naming the service and the missing path instead of creating it), `tmpfs`, `volumes_from` |
 | Secrets / configs | `secrets`, `configs` (file, inline content, environment source, and `external: true` Podman-native secrets) |
 | Dependencies | `depends_on` (with `condition:` set to `service_started`, `service_healthy` or `service_completed_successfully`) |
@@ -376,6 +376,12 @@ A `depends_on` that names a service the file does not define is refused, with it
 ### `volumes_from`, `links`, and `service:` namespace references
 
 `volumes_from: [data]`, `links: [data:alias]`, and `network_mode` / `ipc` / `pid` / `uts` set to `service:data` add implicit dependencies on the named service. Dependency cycles are rejected.
+
+Podman has no `links` option, so `links: [data:alias]` is carried out as a network alias: `alias` becomes one more name of `data` on every network that `data` and the linking service both join. Docker scopes the alias to the linking container; here every container on those networks resolves it. `up` says so for each aliased link, and says when a link is ignored because the two services share no network or the target is not a service of the file. A link without an alias adds nothing, because every service already answers to its own name. `external_links` and `domainname` are not honored (Podman has no equivalent for either) and `up` reports each one.
+
+### Per-network `driver_opts`
+
+`networks.<name>.driver_opts` on a service reaches Podman as written, as the options of that attachment, and the network backend receives the ones it does not know untouched. `priority` is not a driver option and is not sent as one.
 
 ### Interpolation reaches the keys of top-level maps
 

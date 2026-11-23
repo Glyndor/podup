@@ -23,7 +23,7 @@ mod spec;
 mod warnings;
 
 pub(crate) use resolve::{config_hash, effective_env, resolve_bind_source};
-use resolve::{resolve_links, resolve_stop_signal, resolve_volumes_from};
+use resolve::{resolve_stop_signal, resolve_volumes_from};
 pub(crate) use spec::{build_spec_generator, NamespaceInputs, SecurityInputs, SpecInputs};
 use warnings::host_mode;
 use warnings::rootless;
@@ -258,7 +258,6 @@ impl Engine {
 			.as_deref()
 			.map(crate::backends::engine::images::platform::Platform::parse)
 			.map_or((None, None), |p| (p.os, p.arch));
-		let links = resolve_links(service, file, &self.project);
 		let volumes_from = resolve_volumes_from(service, file, &self.project);
 		let stop_timeout = service
 			.stop_grace_period
@@ -378,7 +377,6 @@ impl Engine {
 					.as_ref()
 					.map(|c| c.to_container_override()),
 				env: spec_env,
-				links,
 				image_platform: (image_os, image_arch),
 				storage_opts: service.storage_opt.clone(),
 			},

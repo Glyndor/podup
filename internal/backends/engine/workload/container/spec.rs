@@ -75,8 +75,6 @@ pub(crate) struct SpecInputs {
 	/// Environment as a `HashMap<key, value>` (already filtered for bare
 	/// `KEY` passthrough semantics).
 	pub env: HashMap<String, String>,
-	/// Service-level links resolved to `container:alias` strings.
-	pub links: Vec<String>,
 	/// Image OS / arch hint, derived from the service's `platform:`.
 	pub image_platform: (Option<String>, Option<String>),
 	/// Storage driver options (`storage_opt:`).
@@ -144,7 +142,6 @@ pub(crate) fn build_spec_generator(
 		command,
 		entrypoint,
 		env,
-		links,
 		image_platform: (image_os, image_arch),
 		storage_opts,
 	} = inputs;
@@ -189,7 +186,6 @@ pub(crate) fn build_spec_generator(
 		stop_signal,
 		stop_timeout,
 		hostname: service.hostname.clone(),
-		domainname: service.domainname.clone(),
 		labels,
 		annotations,
 		cap_add: service.cap_add.clone(),
@@ -245,7 +241,6 @@ pub(crate) fn build_spec_generator(
 		groups: service.group_add.clone(),
 		oom_score_adj: service.oom_score_adj,
 		runtime: service.runtime.clone(),
-		links,
 		image_os,
 		image_arch,
 		// The variant (`v7` of `linux/arm/v7`) is read from the service's own

@@ -10,11 +10,13 @@
 mod create;
 mod ipam;
 mod isolation;
+mod link_aliases;
 mod mode;
 mod names;
 mod per_network_options;
 
 pub(crate) use isolation::apply_default_isolation;
+pub(crate) use link_aliases::link_aliases;
 pub(in crate::backends::engine) use mode::{
 	network_mode_options, resolve_network_mode, resolve_service_namespace,
 	split_network_mode_options,

@@ -48,7 +48,6 @@ fn create_body(umask: Option<&str>) -> serde_json::Value {
 		command: None,
 		entrypoint: None,
 		env: Default::default(),
-		links: Vec::new(),
 		image_platform: (None, None),
 		storage_opts: Default::default(),
 	};
