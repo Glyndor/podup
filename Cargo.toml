@@ -451,6 +451,10 @@ name = "run_remove_orphans"
 path = "tests/cli/run/run_remove_orphans.rs"
 
 [[test]]
+name = "rm_live_containers"
+path = "tests/cli/rm/rm_live_containers.rs"
+
+[[test]]
 name = "down_services"
 path = "tests/cli/down/down_services.rs"
 
