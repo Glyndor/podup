@@ -69,7 +69,10 @@ pub(in crate::backends::engine) fn plan_build(
 ) -> Result<BuildPlan> {
 	let additional = local_additional_contexts(engine, contexts)?;
 	if is_remote_context(context_str) {
-		tracing::info!("building from remote context {context_str}");
+		tracing::info!(
+			"building from remote context {}",
+			crate::errors::redact::redact_url(context_str)
+		);
 		if build.dockerfile_inline().is_some() {
 			tracing::warn!("build.dockerfile_inline is ignored for a remote build context");
 		}

@@ -79,6 +79,10 @@ name = "build_contract"
 path = "tests/cli/output/build_contract.rs"
 
 [[test]]
+name = "build_context_credentials"
+path = "tests/cli/build/build_context_credentials.rs"
+
+[[test]]
 name = "closed_pipe"
 path = "tests/cli/output/closed_pipe.rs"
 
