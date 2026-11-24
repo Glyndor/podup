@@ -12,8 +12,27 @@ mod fake_engine;
 
 use fake_engine::{FakeEngine, Reply};
 
-const PASSWORD: &str = "s3cr3tpw";
-const TOKEN: &str = "t0k3nval";
+// Each secret is made of pieces joined by characters that are valid in a
+// password and in a token, so a cleaner that stops at one of them leaves the
+// rest in view, and each piece is looked for on its own.
+const PASSWORD: &str = "pwA1xx,pwB2xx(pwC3xx)pwD4xx'pwE5xx";
+const TOKEN: &str = "tkF6yy,tkG7yy(tkH8yy)tkI9yy'tkJ0yy";
+
+/// The pieces of both secrets, whole and one by one.
+fn leaks(output: &str) -> Vec<&'static str> {
+	let mut found = Vec::new();
+	for secret in [PASSWORD, TOKEN] {
+		if output.contains(secret) {
+			found.push(secret);
+		}
+		for piece in secret.split([',', '(', ')', '\'']) {
+			if output.contains(piece) {
+				found.push(piece);
+			}
+		}
+	}
+	found
+}
 
 fn compose() -> String {
 	format!(
@@ -63,12 +82,9 @@ fn no_log_level_shows_the_password_or_the_token() {
 		for command in [&["build"][..], &["up", "-d", "--build"]] {
 			let output = build(level, command);
 			assert!(
-				!output.contains(PASSWORD),
-				"{level} {command:?} showed the password:\n{output}"
-			);
-			assert!(
-				!output.contains(TOKEN),
-				"{level} {command:?} showed the token:\n{output}"
+				leaks(&output).is_empty(),
+				"{level} {command:?} showed {:?}:\n{output}",
+				leaks(&output)
 			);
 		}
 	}
@@ -93,9 +109,42 @@ fn a_clone_that_fails_does_not_repeat_the_credentials_in_the_error() {
 				"{level} {command:?} lost the host and the path:\n{output}"
 			);
 			assert!(
-				!output.contains(PASSWORD) && !output.contains(TOKEN),
-				"{level} {command:?} repeated a credential:\n{output}"
+				leaks(&output).is_empty(),
+				"{level} {command:?} repeated {:?}:\n{output}",
+				leaks(&output)
 			);
 		}
 	}
+}
+
+/// The build prints a step that fetches a URL with credentials in it, as
+/// buildah echoes the instruction it runs.
+fn echoing_a_step(line: &str, request: &str) -> Option<Reply> {
+	if line.starts_with("POST") && line.contains("/build") {
+		return Some(Reply {
+			status: 200,
+			body: format!(
+				"{{\"stream\":\"STEP 1/2: ADD https://user:{PASSWORD}@host.example/f.tgz?token={TOKEN} /f\\n\"}}\n{{\"stream\":\"--> sha256:0123456789abcdef\\n\"}}\n"
+			),
+		});
+	}
+	no_images(line, request)
+}
+
+#[test]
+fn a_build_step_that_echoes_a_url_does_not_repeat_its_credentials() {
+	let engine = FakeEngine::start(echoing_a_step);
+	fs::write(
+		engine.dir().join("compose.yaml"),
+		"services:\n  app:\n    image: app-image\n    build: .\n",
+	)
+	.unwrap();
+	fs::write(engine.dir().join("Dockerfile"), "FROM scratch\n").unwrap();
+	let (_, output) =
+		engine.run_with_status(None, &[], &["-f", "compose.yaml", "-p", "proj", "build"]);
+	assert!(
+		output.contains("STEP 1/2: ADD https://host.example/f.tgz"),
+		"{output}"
+	);
+	assert!(leaks(&output).is_empty(), "{:?}:\n{output}", leaks(&output));
 }
