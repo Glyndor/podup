@@ -102,6 +102,7 @@ PLANTS = [
     ("the native lane also running on the schedule", "podman-lane.yml", "if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.decide.outputs.engine != 'false' }}", "if: ${{ !cancelled() && needs.decide.outputs.engine != 'false' }}"),
     ("the VM running on a pull request again", "podman-lane.yml", "if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}\n    runs-on: ubuntu-24.04", "if: ${{ !cancelled() }}\n    runs-on: ubuntu-24.04"),
     ("the native lane given more than it needs", "podman-lane.yml", "    timeout-minutes: 60\n    permissions:\n      contents: read\n    env:\n", "    timeout-minutes: 60\n    permissions:\n      contents: read\n      id-token: write\n    env:\n"),
+    ("the Quadlet tests of the native lane running after a failed install", "podman-lane.yml", "if: ${{ !cancelled() && steps.install.outcome == 'success' }}", "if: always()"),
     ("Supported Podman majors losing the plan", "podman-lane.yml", "needs: [decide, podman-vm, podman-native]", "needs: [decide, podman-vm]"),
 ]
 
