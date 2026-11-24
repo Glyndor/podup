@@ -104,6 +104,19 @@ updates:
       cargo-major:
         patterns: ["*"]
         update-types: ["major"]
+    # clap and clap_derive 4.6.8 and later are held back. clap_derive 4.6.8 changed the code it
+    # generates for the derived `Args` and `Subcommand` impls (the builder is reassigned instead
+    # of rebound), and with the 177 options of this command line the release binary grows from
+    # 9 819 752 bytes (4.6.7) to 10 202 536 (4.6.8) and 10 202 472 (4.6.9), 382 784 bytes more
+    # for no new function, and over the 9.40 MiB budget (9 856 614 bytes). Measured on
+    # 2026-11-24 with `cargo build --release --locked --bin podup` and nothing else changed. The
+    # ignore ends when a clap release no longer makes the binary grow: build with that version
+    # in the lock and compare with the size above.
+    ignore:
+      - dependency-name: "clap"
+        versions: [">= 4.6.8"]
+      - dependency-name: "clap_derive"
+        versions: [">= 4.6.8"]
     commit-message:
       prefix: chore
 
