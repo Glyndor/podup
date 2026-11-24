@@ -95,13 +95,15 @@ jobs:
         if: ${{ inputs.dry_run }}
         run: |
           set -o pipefail
-          # A rehearsal may name a tag older than these scripts, so they come from the commit that
-          # launched the run, the one this workflow file is from. Nothing signed in a rehearsal is
-          # published, and the scripts stay out of what the later steps read as changed or new.
+          # A rehearsal may name a tag older than the scripts of the release and of the packages, so
+          # those come from the commit that launched the run, the one this workflow file is from. Only
+          # those two folders: the rest of the tag, its own tests included, stays as the tag has it.
+          # Nothing signed in a rehearsal is published, and the scripts stay out of what the later
+          # steps read as changed or new.
           git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
-          git ls-files -z .github/scripts | xargs -0 -r git update-index --skip-worktree
-          rm -rf .github/scripts && git archive FETCH_HEAD .github/scripts | tar -x
-          echo '/.github/scripts/' >> .git/info/exclude
+          git ls-files -z .github/scripts/release .github/scripts/packaging | xargs -0 -r git update-index --skip-worktree
+          rm -rf .github/scripts/release .github/scripts/packaging && git archive FETCH_HEAD .github/scripts/release .github/scripts/packaging | tar -x
+          printf '%s\n' /.github/scripts/release/ /.github/scripts/packaging/ >> .git/info/exclude
 
       - name: The checkout is the commit that was verified
         env:
@@ -220,13 +222,15 @@ jobs:
         if: ${{ inputs.dry_run }}
         run: |
           set -o pipefail
-          # A rehearsal may name a tag older than these scripts, so they come from the commit that
-          # launched the run, the one this workflow file is from. Nothing signed in a rehearsal is
-          # published, and the scripts stay out of what the later steps read as changed or new.
+          # A rehearsal may name a tag older than the scripts of the release and of the packages, so
+          # those come from the commit that launched the run, the one this workflow file is from. Only
+          # those two folders: the rest of the tag, its own tests included, stays as the tag has it.
+          # Nothing signed in a rehearsal is published, and the scripts stay out of what the later
+          # steps read as changed or new.
           git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
-          git ls-files -z .github/scripts | xargs -0 -r git update-index --skip-worktree
-          rm -rf .github/scripts && git archive FETCH_HEAD .github/scripts | tar -x
-          echo '/.github/scripts/' >> .git/info/exclude
+          git ls-files -z .github/scripts/release .github/scripts/packaging | xargs -0 -r git update-index --skip-worktree
+          rm -rf .github/scripts/release .github/scripts/packaging && git archive FETCH_HEAD .github/scripts/release .github/scripts/packaging | tar -x
+          printf '%s\n' /.github/scripts/release/ /.github/scripts/packaging/ >> .git/info/exclude
 
       - name: The checkout is the commit that was verified
         env:
@@ -384,13 +388,15 @@ jobs:
         if: ${{ inputs.dry_run }}
         run: |
           set -o pipefail
-          # A rehearsal may name a tag older than these scripts, so they come from the commit that
-          # launched the run, the one this workflow file is from. Nothing signed in a rehearsal is
-          # published, and the scripts stay out of what the later steps read as changed or new.
+          # A rehearsal may name a tag older than the scripts of the release and of the packages, so
+          # those come from the commit that launched the run, the one this workflow file is from. Only
+          # those two folders: the rest of the tag, its own tests included, stays as the tag has it.
+          # Nothing signed in a rehearsal is published, and the scripts stay out of what the later
+          # steps read as changed or new.
           git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
-          git ls-files -z .github/scripts | xargs -0 -r git update-index --skip-worktree
-          rm -rf .github/scripts && git archive FETCH_HEAD .github/scripts | tar -x
-          echo '/.github/scripts/' >> .git/info/exclude
+          git ls-files -z .github/scripts/release .github/scripts/packaging | xargs -0 -r git update-index --skip-worktree
+          rm -rf .github/scripts/release .github/scripts/packaging && git archive FETCH_HEAD .github/scripts/release .github/scripts/packaging | tar -x
+          printf '%s\n' /.github/scripts/release/ /.github/scripts/packaging/ >> .git/info/exclude
 
       - name: The checkout is the commit that was verified
         env:
@@ -572,13 +578,15 @@ jobs:
         if: ${{ inputs.dry_run }}
         run: |
           set -o pipefail
-          # A rehearsal may name a tag older than these scripts, so they come from the commit that
-          # launched the run, the one this workflow file is from. Nothing signed in a rehearsal is
-          # published, and the scripts stay out of what the later steps read as changed or new.
+          # A rehearsal may name a tag older than the scripts of the release and of the packages, so
+          # those come from the commit that launched the run, the one this workflow file is from. Only
+          # those two folders: the rest of the tag, its own tests included, stays as the tag has it.
+          # Nothing signed in a rehearsal is published, and the scripts stay out of what the later
+          # steps read as changed or new.
           git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
-          git ls-files -z .github/scripts | xargs -0 -r git update-index --skip-worktree
-          rm -rf .github/scripts && git archive FETCH_HEAD .github/scripts | tar -x
-          echo '/.github/scripts/' >> .git/info/exclude
+          git ls-files -z .github/scripts/release .github/scripts/packaging | xargs -0 -r git update-index --skip-worktree
+          rm -rf .github/scripts/release .github/scripts/packaging && git archive FETCH_HEAD .github/scripts/release .github/scripts/packaging | tar -x
+          printf '%s\n' /.github/scripts/release/ /.github/scripts/packaging/ >> .git/info/exclude
 
       - name: The checkout is the commit that was verified
         env:

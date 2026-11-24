@@ -99,29 +99,40 @@ else:
         print("the published-release check is conditional or may fail")
 
 canon = None
+FOLDERS = (".github/scripts/release", ".github/scripts/packaging")
 for path, spec, skip in (("reusable-release-verify.yml", ver, ()), ("reusable-release-build.yml", bld, ()), ("release.yml", rel, ("attest",))):
     for job, body in spec["jobs"].items():
         steps = body.get("steps") or []
-        for i, s in enumerate(steps):
-            if not str(s.get("uses", "")).startswith("actions/checkout@") or job in skip:
-                continue
-            # A container job trusts its workspace first, so that git works at all; the scripts follow.
-            after = [x for x in steps[i + 1:] if x.get("name") != "Trust the workspace"]
-            nxt = after[0] if after else {}
-            if nxt.get("name") != OVERLAY:
-                print(f"{path}: job `{job}` does not take the scripts of a rehearsal right after its checkout")
-                continue
-            if nxt.get("if") != "${{ inputs.dry_run }}":
-                print(f"{path}: job `{job}`: the step that takes the scripts is not only for a rehearsal")
-            canon = canon or nxt.get("run")
-            if nxt.get("run") != canon:
-                print(f"{path}: job `{job}`: the step that takes the scripts differs from the others")
+        checkout = next((i for i, s in enumerate(steps) if str(s.get("uses", "")).startswith("actions/checkout@")), None)
+        if checkout is None or job in skip:
+            continue
+        # A job takes the scripts of a rehearsal when it runs one of the two folders that are new, and
+        # only then: the rest of the tag, the tests of its Debian build included, stays as the tag has it.
+        runs = " ".join(str(s.get("run", "")) for s in steps if s.get("name") != OVERLAY)
+        needs = any(f in runs for f in FOLDERS)
+        # A container job trusts its workspace first, so that git works at all; the scripts follow.
+        after = [x for x in steps[checkout + 1:] if x.get("name") != "Trust the workspace"]
+        nxt = after[0] if after else {}
+        if needs and nxt.get("name") != OVERLAY:
+            print(f"{path}: job `{job}` runs a script of the release and does not take the scripts of a rehearsal right after its checkout")
+            continue
+        if not needs:
+            if any(s.get("name") == OVERLAY for s in steps):
+                print(f"{path}: job `{job}` runs no script of the release and takes them anyway, over the tag's own tests")
+            continue
+        if nxt.get("if") != "${{ inputs.dry_run }}":
+            print(f"{path}: job `{job}`: the step that takes the scripts is not only for a rehearsal")
+        canon = canon or nxt.get("run")
+        if nxt.get("run") != canon:
+            print(f"{path}: job `{job}`: the step that takes the scripts differs from the others")
 if canon is None:
     print("no job takes the scripts of a rehearsal")
 else:
-    for needle in ('"$GITHUB_SHA"', "skip-worktree", ".git/info/exclude"):
+    for needle in ('"$GITHUB_SHA"', "skip-worktree", ".git/info/exclude", ".github/scripts/release", ".github/scripts/packaging"):
         if needle not in canon:
             print(f"the step that takes the scripts lacks {needle}")
+    if "git archive FETCH_HEAD .github/scripts |" in canon or "rm -rf .github/scripts " in canon:
+        print("the step that takes the scripts replaces the whole scripts folder, and the tag's own tests read it")
 
 for job in ("sign", "sign-packages", "seal"):
     if rel["jobs"][job].get("environment") != "release":
@@ -171,9 +182,10 @@ plant "the check skipped in a rehearsal by a condition" $V "s.replace('      - n
 plant "the verification not told about the rehearsal" $R "s.replace(\"      tag: \${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}\n      dry_run: \${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}\n\", \"      tag: \${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}\n\")" "the verification does not receive dry_run"
 plant "the builds not told about the rehearsal" $R "s.replace(\"      tag: \${{ needs.verify.outputs.tag }}\n      dry_run: \${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}\n\", \"      tag: \${{ needs.verify.outputs.tag }}\n\")" "the builds does not receive dry_run"
 plant "the input of the verification on by default" $V "s.replace('        default: false\n        type: boolean', '        default: true\n        type: boolean', 1)" "no boolean input dry_run"
-plant "the scripts of a rehearsal taken in every run" $B "s.replace('        if: \${{ inputs.dry_run }}\n        shell: bash', '        shell: bash', 1)" "not only for a rehearsal"
-plant "a checkout without the step that takes the scripts" $B "s.replace('      - name: Take the release scripts from the commit that started the rehearsal\n', '      - name: Take nothing\n', 1)" "does not take the scripts of a rehearsal right after its checkout"
-plant "the scripts taken from another place in one job" $R "s.replace('git archive FETCH_HEAD .github/scripts | tar -x', 'git archive FETCH_HEAD .github | tar -x', 1)" "differs from the others"
+plant "the scripts of a rehearsal taken in every run" $B "s.replace('        if: \${{ inputs.dry_run }}\n        run: |\n          set -o pipefail', '        run: |\n          set -o pipefail', 1)" "not only for a rehearsal"
+plant "a checkout without the step that takes the scripts" $B "s.replace('      - name: Take the release scripts from the commit that started the rehearsal\n', '      - name: Take nothing\n', 1)" "runs a script of the release and does not take the scripts of a rehearsal right after its checkout"
+plant "the whole scripts folder taken in one job" $R "s.replace('rm -rf .github/scripts/release .github/scripts/packaging &&', 'rm -rf .github/scripts &&', 1)" "differs from the others"
+plant "the scripts taken in the Debian job, over the tests of the tag" $B "(lambda b: s.replace('      - name: Trust the workspace\n', b + '      - name: Trust the workspace\n', 1))(s[s.index('      - name: Take the release scripts'):s.index('      - name:', s.index('      - name: Take the release scripts') + 20)])" "takes them anyway, over the tag's own tests"
 plant "the scripts left in the worktree as changed files" $R "s.replace('skip-worktree', 'no-skip-worktree', 1)" "differs from the others"
 plant "a key job without its environment in a rehearsal" $R "s.replace('    environment: release\n', '    environment: \${{ !inputs.dry_run && \\'release\\' || \\'\\' }}\n', 1)" "is not in the environment"
 plant "a key job in another environment" $R "s.replace('    environment: release\n', '    environment: elsewhere\n', 1)" "is not in the environment"

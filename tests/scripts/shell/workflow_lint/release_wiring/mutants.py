@@ -196,7 +196,6 @@ MUTANTS["sign-python-without-isolation"] = without_isolation("r", "sign", "Sign 
 MUTANTS["sign-packages-python-without-isolation"] = without_isolation("r", "sign-packages", "Sign package")
 MUTANTS["seal-checksums-python-without-isolation"] = without_isolation("r", "seal", "Generate checksums")
 MUTANTS["seal-signing-python-without-isolation"] = without_isolation("r", "seal", "Sign SHA256SUMS")
-MUTANTS["seal-verify-python-without-isolation"] = without_isolation("r", "seal", "Verify every signature")
 MUTANTS["seal-assets-python-without-isolation"] = without_isolation("r", "seal", "Verify every file the installers")
 MUTANTS["release-verify-python-without-isolation"] = without_isolation("r", "release", "Verify every signature")
 MUTANTS["release-create-python-without-isolation"] = without_isolation("r", "release", "Create GitHub Release")
