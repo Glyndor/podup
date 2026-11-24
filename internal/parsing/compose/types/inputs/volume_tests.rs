@@ -25,7 +25,7 @@ fn tmpfs_mode_octal_yaml_literal_is_preserved_as_bits() {
 fn tmpfs_mode_invalid_octal_is_clear_error() {
 	// A non-octal string is rejected with a clear error, not silently coerced.
 	let err = serde_yaml::from_str::<TmpfsOptions>("mode: \"0o9\"\n").unwrap_err();
-	assert!(err.to_string().contains("not octal"), "got: {err}");
+	assert!(err.to_string().contains("not octal"));
 }
 
 #[test]
@@ -36,10 +36,7 @@ fn tmpfs_mode_read_straight_from_text_without_its_spelling_is_not_guessed() {
 	// `merging::mode_text`), so there `700` and `0700` are read by the rules.
 	let err = serde_yaml::from_str::<TmpfsOptions>("mode: 700\n").unwrap_err();
 	let text = err.to_string();
-	assert!(
-		text.contains("mode 700") && text.contains("spelling is not known"),
-		"got: {text}"
-	);
+	assert!(text.contains("mode 700") && text.contains("spelling is not known"));
 	// A number whose digits are not octal has one reading only.
 	let opts: TmpfsOptions = serde_yaml::from_str("mode: 0o755\n").unwrap();
 	assert_eq!(opts.mode, Some(0o755));

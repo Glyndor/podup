@@ -2,7 +2,7 @@ use super::*;
 
 fn bits(text: &str) -> u32 {
 	parse_mode_text(text)
-		.unwrap_or_else(|e| panic!("{text}: {e}"))
+		.unwrap_or_else(|_| panic!("a mode that should be read was refused"))
 		.bits
 }
 
@@ -29,8 +29,9 @@ fn the_forms_are_read_as_the_spec_and_docker_read_them() {
 		("420", 0o420, true),
 		("256", 0o256, true),
 	] {
-		let read = parse_mode_text(text).unwrap_or_else(|e| panic!("{text}: {e}"));
-		assert_eq!((read.bits, read.bare), (want, bare), "{text}");
+		let read = parse_mode_text(text)
+			.unwrap_or_else(|_| panic!("a mode that should be read was refused"));
+		assert_eq!((read.bits, read.bare), (want, bare));
 	}
 	// A digit that is 8 or 9 cannot be octal: the decimal value.
 	let read = parse_mode_text("384").unwrap();
@@ -62,26 +63,23 @@ fn what_is_not_a_mode_is_refused() {
 		"0o-7",
 		"0x-1",
 	] {
-		assert!(parse_mode_text(text).is_err(), "{text:?} was accepted");
+		assert!(parse_mode_text(text).is_err(), "was accepted");
 	}
 }
 
 #[test]
 fn control_characters_in_a_refused_value_are_not_printed() {
 	let why = parse_mode_text("0o7\u{1b}[31m").unwrap_err();
-	assert!(!why.contains('\u{1b}'), "{why}");
+	assert!(!why.contains('\u{1b}'));
 }
 
 #[test]
 fn the_notice_says_what_was_applied_and_how_to_write_it() {
 	let notice = bare_notice("644", 0o644);
-	assert!(notice.contains("without a leading 0"), "{notice}");
-	assert!(notice.contains("0644 was applied"), "{notice}");
-	assert!(
-		notice.contains("\"0644\"") && notice.contains("0o644"),
-		"{notice}"
-	);
-	assert!(!notice.contains("docker"), "{notice}");
+	assert!(notice.contains("without a leading 0"));
+	assert!(notice.contains("0644 was applied"));
+	assert!(notice.contains("\"0644\"") && notice.contains("0o644"));
+	assert!(!notice.contains("docker"));
 }
 
 /// A number whose spelling is lost is read only when its two readings agree.
@@ -98,11 +96,8 @@ fn a_number_without_a_spelling_is_applied_only_when_it_is_not_a_guess() {
 	// 420 is 0o644 decoded, or the digits 0420 typed: refused.
 	for n in [420, 644, 400, 256, 404, 640, 660, 700, 755, 10, 77] {
 		let why = read_unknown_number(n).unwrap_err();
-		assert!(why.contains(&format!("mode {n}")), "{why}");
-		assert!(
-			why.contains("quoted octal string") && why.contains("0o"),
-			"{why}"
-		);
+		assert!(why.contains(&format!("mode {n}")));
+		assert!(why.contains("quoted octal string") && why.contains("0o"));
 	}
 	// Above 0o7777 is not a mode.
 	assert!(read_unknown_number(99999).is_err());
@@ -119,13 +114,10 @@ fn the_modes_of_secrets_configs_and_tmpfs_are_written_as_text() {
 	);
 	super::super::mode_render::modes_as_text_yaml(&mut doc);
 	let out = serde_yaml::to_string(&doc).unwrap();
-	assert!(
-		out.contains("mode: '0644'") || out.contains("mode: \"0644\""),
-		"{out}"
-	);
-	assert!(out.contains("0400") && out.contains("01777"), "{out}");
+	assert!(out.contains("mode: '0644'") || out.contains("mode: \"0644\""));
+	assert!(out.contains("0400") && out.contains("01777"));
 	// A label or a port that has a key `mode` is not a mode place.
-	assert!(out.contains("labels:\n      mode: 420"), "{out}");
+	assert!(out.contains("labels:\n      mode: 420"));
 }
 
 #[test]

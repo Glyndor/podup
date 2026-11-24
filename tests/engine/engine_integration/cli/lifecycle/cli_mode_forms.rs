@@ -55,17 +55,13 @@ async fn every_form_of_mode_is_the_mode_the_container_sees() {
 		"for f in /run/secrets/s* /c*; do stat -c '%n %a' $f; done",
 	]);
 	run(&["-f", file, "-p", &project, "down", "-v", "-t", "0"]);
-	assert!(
-		up.status.success(),
-		"{}",
-		String::from_utf8_lossy(&up.stderr)
-	);
+	assert!(up.status.success());
 	let seen = String::from_utf8_lossy(&stat.stdout).to_string();
-	for (i, (form, mode)) in FORMS.iter().enumerate() {
+	for (i, (_, mode)) in FORMS.iter().enumerate() {
 		for path in [format!("/run/secrets/s{i}"), format!("/c{i}")] {
 			assert!(
 				seen.contains(&format!("{path} {mode}\n")),
-				"mode {form} for {path} should be {mode}: {seen}"
+				"mode for should be"
 			);
 		}
 	}
@@ -92,10 +88,7 @@ fn the_service_hash_of_a_deployed_stack_is_the_one_it_had() {
 	let file = deployed_file(dir.path());
 	let out = run_ok(&["-f", &file, "config", "--hash", "web"]);
 	let text = String::from_utf8_lossy(&out.stdout);
-	assert!(
-		text.contains("web 1bdb8b4a246b87cb9d0cf8daa2254d3f0597d8c2f433347d9d0ab5a8448f0ac1"),
-		"{text}"
-	);
+	assert!(text.contains("web 1bdb8b4a246b87cb9d0cf8daa2254d3f0597d8c2f433347d9d0ab5a8448f0ac1"));
 }
 
 /// What `config` prints is meant to be fed back, and reads back as the same modes
@@ -106,11 +99,8 @@ fn what_config_prints_reads_back_as_the_same_modes() {
 	let file = deployed_file(dir.path());
 	let first = run_ok(&["-f", &file, "config"]);
 	let printed = String::from_utf8_lossy(&first.stdout).to_string();
-	assert!(
-		printed.contains("mode: '0400'") || printed.contains("mode: \"0400\""),
-		"{printed}"
-	);
-	assert!(!printed.contains("mode: 420"), "{printed}");
+	assert!(printed.contains("mode: '0400'") || printed.contains("mode: \"0400\""));
+	assert!(!printed.contains("mode: 420"));
 	for (name, format) in [("again.yml", "yaml"), ("again.json", "json")] {
 		let shown = run_ok(&["-f", &file, "config", "--format", format]);
 		let again = dir.path().join(name);
@@ -118,13 +108,9 @@ fn what_config_prints_reads_back_as_the_same_modes() {
 		let back = run_ok(&["-f", again.to_str().unwrap(), "config", "--format", format]);
 		assert_eq!(
 			shown.stdout, back.stdout,
-			"{format}: the output changed when it was read back"
+			"the output changed when it was read back"
 		);
-		assert!(
-			!String::from_utf8_lossy(&back.stderr).contains("mode"),
-			"{format}: {}",
-			String::from_utf8_lossy(&back.stderr)
-		);
+		assert!(!String::from_utf8_lossy(&back.stderr).contains("mode"));
 	}
 }
 
@@ -166,7 +152,7 @@ fn the_notice_is_said_by_the_commands_that_apply_or_check_and_by_no_other() {
 		&["run", "--rm", "a", "true"],
 	] {
 		let said = stderr_of(file, args);
-		assert_eq!(said.matches(NOTICE).count(), 1, "{args:?}: {said}");
+		assert_eq!(said.matches(NOTICE).count(), 1);
 	}
 	for args in [
 		&["ps"][..],
@@ -183,7 +169,7 @@ fn the_notice_is_said_by_the_commands_that_apply_or_check_and_by_no_other() {
 		&["pause"],
 	] {
 		let said = stderr_of(file, args);
-		assert!(!said.contains(NOTICE), "{args:?}: {said}");
+		assert!(!said.contains(NOTICE));
 	}
 }
 
@@ -198,5 +184,5 @@ fn a_notice_is_said_once_for_each_mode() {
 	)
 	.unwrap();
 	let said = stderr_of(compose.to_str().unwrap(), &["config"]);
-	assert_eq!(said.matches(NOTICE).count(), 2, "{said}");
+	assert_eq!(said.matches(NOTICE).count(), 2);
 }

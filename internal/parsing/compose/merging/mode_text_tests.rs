@@ -30,7 +30,7 @@ fn tmpfs_yaml(mode: &str) -> String {
 fn secret_of(file: &ComposeFile) -> Option<u32> {
 	match &file.services["web"].secrets[0] {
 		ServiceSecretRef::Long { mode, .. } => *mode,
-		other => panic!("{other:?}"),
+		_ => panic!("not the long form of the entry"),
 	}
 }
 
@@ -44,7 +44,7 @@ fn config_mode(yaml: &str) -> Result<Option<u32>, String> {
 	let file = parse_str(yaml).map_err(|e| e.to_string())?;
 	match &file.services["web"].configs[0] {
 		ServiceConfigRef::Long { mode, .. } => Ok(*mode),
-		other => panic!("{other:?}"),
+		_ => panic!("not the long form of the entry"),
 	}
 }
 
@@ -52,7 +52,7 @@ fn tmpfs_mode(yaml: &str) -> Result<Option<u32>, String> {
 	let file = parse_str(yaml).map_err(|e| e.to_string())?;
 	match &file.services["web"].volumes[0] {
 		VolumeMount::Long { tmpfs, .. } => Ok(tmpfs.as_ref().and_then(|t| t.mode)),
-		other => panic!("{other:?}"),
+		_ => panic!("not the long form of the entry"),
 	}
 }
 
@@ -81,21 +81,9 @@ fn every_form_is_read_as_the_octal_it_is() {
 		("384", 384),
 		("\"644\"", 0o644),
 	] {
-		assert_eq!(
-			secret_mode(&secret_yaml(form)),
-			Ok(Some(want)),
-			"secret {form}"
-		);
-		assert_eq!(
-			config_mode(&config_yaml(form)),
-			Ok(Some(want)),
-			"config {form}"
-		);
-		assert_eq!(
-			tmpfs_mode(&tmpfs_yaml(form)),
-			Ok(Some(want)),
-			"tmpfs {form}"
-		);
+		assert_eq!(secret_mode(&secret_yaml(form)), Ok(Some(want)));
+		assert_eq!(config_mode(&config_yaml(form)), Ok(Some(want)));
+		assert_eq!(tmpfs_mode(&tmpfs_yaml(form)), Ok(Some(want)));
 	}
 }
 
@@ -117,10 +105,9 @@ fn what_is_not_a_mode_is_refused_naming_the_service_the_secret_and_the_value() {
 		assert!(
 			error.contains("service 'web'")
 				&& error.contains("secrets 's'")
-				&& error.contains("invalid mode"),
-			"{form}: {error}"
+				&& error.contains("invalid mode")
 		);
-		assert!(config_mode(&config_yaml(form)).is_err(), "config {form}");
+		assert!(config_mode(&config_yaml(form)).is_err());
 	}
 }
 
@@ -150,8 +137,7 @@ fn run(files: &[(&str, String)]) -> Result<(Option<u32>, (usize, usize)), String
 	let numbers = FINAL_NUMBERS.with(std::cell::Cell::get);
 	assert_eq!(
 		numbers, notices.0,
-		"{numbers} numbers stood as a mode and {} were noticed",
-		notices.0
+		"numbers stood as a mode and were noticed"
 	);
 	Ok((secret_of(&file), notices))
 }
@@ -220,7 +206,7 @@ fn the_ways_a_document_is_built() {
 		assert_eq!(
 			run_ok(&[("a.yml", file_a(a)), ("b.yml", second)]),
 			(Some(want), notices),
-			"a={a} b={b}"
+			"a= b"
 		);
 	}
 
@@ -233,8 +219,7 @@ fn the_ways_a_document_is_built() {
 		);
 		assert_eq!(
 			run_ok(&[("a.yml", child), ("base.yml", base.to_string())]),
-			(Some(want), (0, 0)),
-			"child {child_mode}"
+			(Some(want), (0, 0))
 		);
 	}
 
@@ -271,7 +256,7 @@ fn an_interpolated_mode_keeps_its_text() {
 	] {
 		temp_env::with_var("PODUP_MODE_TEST", Some(value), || {
 			let got = run_ok(&[("a.yml", secret_yaml("${PODUP_MODE_TEST}"))]);
-			assert_eq!(got, (Some(want), notices), "M={value}");
+			assert_eq!(got, (Some(want), notices));
 		});
 	}
 }
@@ -306,8 +291,7 @@ fn a_number_whose_text_was_not_recovered_is_refused_unless_it_is_not_a_guess() {
 			&& refused.contains("secrets 's'")
 			&& refused.contains("mode 420")
 			&& refused.contains("quoted octal string")
-			&& refused.contains("0o644"),
-		"{refused}"
+			&& refused.contains("0o644")
 	);
 	// 0o600 decoded to 384: its digits are not octal, so the number is the only reading.
 	let agreed = run(&[("a.yml", secret_yaml("0o600"))]);
@@ -385,13 +369,10 @@ fn twenty_thousand_modes_under_a_deep_path_cost_little_time_and_memory() {
 		let links = LINKS.with(Cell::get);
 		assert!(
 			links <= 2 * (DEPTH + 10 + 2 * MODES),
-			"{links} steps made for {MODES} modes"
+			"steps made for modes"
 		);
 	}
-	assert!(
-		best < std::time::Duration::from_secs(2),
-		"fastest of five: {best:?}"
-	);
+	assert!(best < std::time::Duration::from_secs(2), "fastest of five");
 }
 
 /// Numbers and texts are paired by their ordinal, and a mode that is not a number
@@ -452,12 +433,12 @@ fn a_document_with_too_many_modes_is_refused_with_a_clear_message() {
 	let message = super::restore_up_to(&mut value, &over, 4)
 		.unwrap_err()
 		.to_string();
-	assert!(message.contains("more than 4 `mode:` values"), "{message}");
+	assert!(message.contains("more than 4 `mode:` values"));
 
 	// The real limit, through the whole parse.
 	let many = entries(super::MAX_MODES + 1);
 	let error = parse_str(&many).unwrap_err().to_string();
-	assert!(error.contains("more than 100000 `mode:` values"), "{error}");
+	assert!(error.contains("more than 100000 `mode:` values"));
 }
 
 /// podup writes a service out and reads it back in two places while it puts a
@@ -480,14 +461,14 @@ fn what_podup_writes_out_and_reads_back_keeps_its_modes() {
 		.iter()
 		.map(|s| match s {
 			ServiceSecretRef::Long { mode, .. } => *mode,
-			other => panic!("{other:?}"),
+			_ => panic!("not the long form of the entry"),
 		})
 		.collect();
 	assert!(
 		modes.contains(&Some(0o644))
 			&& modes.contains(&Some(0o404))
 			&& modes.contains(&Some(0o440)),
-		"{modes:?}"
+		"a mode of the base or the child was not read back as it was written"
 	);
 	assert!(matches!(
 		&file.services["web"].configs[0],
