@@ -110,8 +110,8 @@ updates:
     # 9 819 752 bytes (4.6.7) to 10 202 536 (4.6.8) and 10 202 472 (4.6.9), 382 784 bytes more
     # for no new function, and over the 9.40 MiB budget (9 856 614 bytes). Measured on
     # 2026-11-24 with `cargo build --release --locked --bin podup` and nothing else changed. The
-    # ignore ends when a clap release no longer makes the binary grow; the reason and the way
-    # out are in ai-context, context/podup/ci/dependencies-held-back.md.
+    # ignore ends when a clap release no longer makes the binary grow: build with that version
+    # in the lock and compare with the size above.
     ignore:
       - dependency-name: "clap"
         versions: [">= 4.6.8"]
