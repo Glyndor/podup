@@ -134,7 +134,9 @@ pub(crate) fn apply_nested_resets(service: &mut Service, paths: &[Vec<String>]) 
 	for path in paths {
 		remove_path(&mut value, path);
 	}
-	let Ok(mut rebuilt) = serde_yaml::from_value::<Service>(value) else {
+	let Ok(mut rebuilt) = crate::compose::types::inputs::mode::reading_resolved(|| {
+		serde_yaml::from_value::<Service>(value)
+	}) else {
 		return;
 	};
 	rebuilt.umask_merge_tag = service.umask_merge_tag;

@@ -59,6 +59,7 @@ pub(in super::super) fn deserialize_with_merge_interp(
 	// Jobs are typed first and on their own, so a bad job is reported by name
 	// instead of as a file that failed to parse.
 	let jobs = super::super::jobs::extract_jobs(&mut value)?;
+	crate::compose::types::inputs::mode::check_modes(&value)?;
 	let mut file: ComposeFile = serde_yaml::from_value(value)?;
 	file.jobs = jobs;
 	for (name, service) in &mut file.services {
@@ -123,6 +124,10 @@ pub(in super::super) fn interpolated_value(
 	// Merge keys first: a service built from `<<: *base` has its keys only after
 	// they are resolved, and the typing of an interpolated value depends on the
 	// key being a direct key of the service.
+	// The mode of a secret, a config or a tmpfs goes back to the text it was
+	// written as: the reading above made a number of `0o644` that cannot be told
+	// from a `420`.
+	let _restored = super::mode_text::restore(&mut value, content)?;
 	apply_merge_keys(&mut value)?;
 	if let Some(vars) = vars {
 		// One budget for the whole project. The per-scalar cap cannot see
