@@ -189,8 +189,13 @@
       "uses": "actions/checkout@<commit>"
      },
      {
+      "name": "Take the check from the base commit",
+      "sha": "c14703ae13b99332",
+      "uses": null
+     },
+     {
       "name": "Every commit uses a GitHub noreply address",
-      "sha": "b7d24e81172718d0",
+      "sha": "66250331c3bb0c17",
       "uses": null
      }
     ],
@@ -241,8 +246,13 @@
       "uses": "actions/checkout@<commit>"
      },
      {
+      "name": "Take the check from the base commit",
+      "sha": "50d2ababa4217153",
+      "uses": null
+     },
+     {
       "name": "The change adds no credential-shaped line",
-      "sha": "5be532038711c909",
+      "sha": "77d26d2406ce4023",
       "uses": null
      }
     ],
@@ -616,13 +626,13 @@
       "uses": "actions/checkout@<commit>"
      },
      {
-      "name": "Verify Signed-off-by trailers",
-      "sha": "86ecbccfa4c26aae",
+      "name": "Take the check from the base commit",
+      "sha": "fbe0478d2947b1d4",
       "uses": null
      },
      {
-      "name": "Detect evil merges",
-      "sha": "18918cfe74f52e64",
+      "name": "Every commit is signed off and no merge hides a change",
+      "sha": "8eee61c2bc0731d2",
       "uses": null
      }
     ],

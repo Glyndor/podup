@@ -41,11 +41,28 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
           fetch-depth: 0
           persist-credentials: false
+      # The check is the base commit's copy, never a file of the change: a pull request
+      # that edited it must not be judged by its own edit. A base that does not have it
+      # (the pull request that introduces it) is told apart from one that cannot be read,
+      # which fails.
+      - name: Take the check from the base commit
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          f=.github/scripts/hygiene/check-commit-identity.sh
+          mkdir -p "$RUNNER_TEMP/judge"
+          listing="$(git ls-tree --name-only "$BASE" -- "$f")" || exit 1
+          if [ -n "$listing" ]; then
+            git show "$BASE:$f" >"$RUNNER_TEMP/judge/check-commit-identity.sh" || exit 1
+          else
+            echo "::notice::$f is not in the base commit; the copy of the change is used"
+            cp "$f" "$RUNNER_TEMP/judge/check-commit-identity.sh"
+          fi
       - name: Every commit uses a GitHub noreply address
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
-        run: .github/scripts/hygiene/check-commit-identity.sh "$BASE" "$HEAD"
+        run: bash "$RUNNER_TEMP/judge/check-commit-identity.sh" "$BASE" "$HEAD"
 
   secret-scan:
     # Required on develop and on main. The name carries the kind of run, as the other
@@ -62,11 +79,28 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
           fetch-depth: 0
           persist-credentials: false
+      # The check is the base commit's copy, never a file of the change: a pull request
+      # that edited it must not be judged by its own edit. A base that does not have it
+      # (the pull request that introduces it) is told apart from one that cannot be read,
+      # which fails.
+      - name: Take the check from the base commit
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          f=.github/scripts/hygiene/check-secrets.sh
+          mkdir -p "$RUNNER_TEMP/judge"
+          listing="$(git ls-tree --name-only "$BASE" -- "$f")" || exit 1
+          if [ -n "$listing" ]; then
+            git show "$BASE:$f" >"$RUNNER_TEMP/judge/check-secrets.sh" || exit 1
+          else
+            echo "::notice::$f is not in the base commit; the copy of the change is used"
+            cp "$f" "$RUNNER_TEMP/judge/check-secrets.sh"
+          fi
       - name: The change adds no credential-shaped line
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
-        run: .github/scripts/hygiene/check-secrets.sh "$BASE" "$HEAD"
+        run: bash "$RUNNER_TEMP/judge/check-secrets.sh" "$BASE" "$HEAD"
 
   pin-values:
     # Required on develop and on main, in the merge queue as well. The contract of the

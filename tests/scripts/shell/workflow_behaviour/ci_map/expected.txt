@@ -127,6 +127,7 @@ tests/scripts/shell/workflow_behaviour/rust-gate.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/workflow-lint-inputs.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/write-token-jobs.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/check-pins.test.sh	N N N R N
+tests/scripts/shell/workflow_lint/lint-shell-covers-the-contract.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/push-triggers.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-gate.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-least-privilege.test.sh	N N N R N

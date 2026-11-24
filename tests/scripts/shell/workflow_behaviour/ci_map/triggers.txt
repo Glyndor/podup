@@ -45,7 +45,7 @@
 .github/scripts/release/verify-signing-key.py	asset-contract,debian-build,lint-shell
 .github/vocabulary-exceptions.txt	-
 .github/workflows/asset-contract.yml	asset-contract
-.github/workflows/audit.yml	-
+.github/workflows/audit.yml	lint-shell
 .github/workflows/benchmark.yml	benchmark
 .github/workflows/binary-budget.yml	binary-budget,lint-shell
 .github/workflows/ci.yml	lint-shell
@@ -73,7 +73,7 @@
 .github/workflows/reusable-line-limit.yml	lint-shell
 .github/workflows/reusable-main-guard.yml	lint-shell
 .github/workflows/reusable-powershell-ci.yml	lint-powershell
-.github/workflows/reusable-rust-audit.yml	-
+.github/workflows/reusable-rust-audit.yml	lint-shell
 .github/workflows/reusable-rust-ci.yml	lint-shell
 .github/workflows/reusable-rust-debian.yml	debian-build,lint-shell
 .github/workflows/reusable-rust-fuzz.yml	fuzz
