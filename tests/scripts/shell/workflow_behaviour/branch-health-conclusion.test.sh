@@ -2,42 +2,44 @@
 #
 # Behaviour tests for `.github/scripts/checks/check-branch-conclusion.sh`.
 #
-# The script decides whether the run for a branch's CURRENT head was a
-# pass. It used to read the newest completed run on the branch, with
-# `cancelled` skipped over on the theory a newer push had superseded
-# it. The defect measured on 2026-09-20: that logic could answer for a
-# commit nobody had tested (let A pass, push B, cancel B's run by
-# hand with nothing replacing it, and the script reported A's
-# success). The new logic picks the run whose `head_sha` is the
-# branch's current head, polls until that run finishes, and treats a
-# `cancelled` run for that head as RED.
+# The script decides whether a branch is red. A branch is red when a run of
+# its suite that has FINISHED failed, and only then. The run it judges is the
+# newest one for the branch's current head when that has finished, and
+# otherwise the last run that finished in a pass or a failure. A head whose
+# suite is queued, running or never started is not a verdict: with the runners
+# saturated the suite takes longer than any wait this job can afford, and the
+# job used to go red after eight minutes of polling with nothing broken
+# (podup, 2026-11-24: "no ci.yml run for commit da14bd1 on develop finished
+# within 32 attempts"). It used to read the newest run on the branch with
+# `cancelled` skipped, which could answer for a commit nobody had tested
+# (measured 2026-09-20), so a run of the head that finished still outranks an
+# older green one, and a cancelled or skipped run of the head is red.
 #
-# The harness plants API answers through a stub `gh` on PATH. Each
-# call to `gh` increments an index and returns line N of a planted
-# responses file (compact JSON, one response per line), so the script's
-# polling is exercised by adding more lines than it needs. The stub
-# records its argv to a log so the URL the step built can be checked
-# for the right filters, the same way the schedule-freshness test
-# does.
+# The harness plants API answers through a stub `gh` on PATH. Each call to
+# `gh` increments an index and returns line N of a planted responses file
+# (compact JSON, one response per line). The stub records its argv to a log so
+# the URL the step built can be checked for the right filters, and `sleep` is
+# a stub that must never be called.
 #
-# Cases:
-#   - head's run green passes
-#   - head's run red fails, naming it
-#   - head's run cancelled fails (this used to be passed over)
-#   - still running waits one cycle then passes when completed
-#   - never appearing fails after the configured attempts, with one
-#     fewer sleeps than attempts
-#   - an older green run for a different commit is NOT the verdict
-#   - a newer pull_request run for the same head does NOT shadow an
-#     older push run for that head (the bug measured 2026-09-20 on the
-#     5.9.5 release push for commit 83315af)
-#   - the inverse: a newer push failure for the head still wins, so
-#     the fix is not "prefer whichever succeeded"
-#   - the branch head is read from the API on a schedule event when
-#     HEAD_SHA is not set in the environment
+# Cases, both ways (the function `design_cases`, which the sabotages at the end
+# run again against copies of the script with one rule broken):
+#   - the head's run green passes; red, cancelled, skipped, timed out and
+#     never started fail, naming it
+#   - the head's run still queued or running is NOT red: the last run that
+#     finished before it is judged and named, when it is an ancestor of the
+#     head, recent, and concluded in a pass or a failure of any kind; one that
+#     is not an ancestor, or is older than 48 hours, says nothing; a suite
+#     stuck for more than 24 hours is red
+#   - a head with NO run is given three hours and is red after them: the
+#     success of the commit before it is not its own
+#   - a failing `gh` is no answer, and not red
+#   - a newer pull_request run for the same head does NOT shadow a push run
+#   - develop reads the merge queue's runs for its own branch only
+#   - the branch head is read from the API on a schedule event when HEAD_SHA
+#     is not set in the environment
 #
 # Plus a handful of structural assertions (missing env vars, unknown
-# conclusion, stream split) that survive the new design unchanged.
+# conclusion, stream split).
 #
 # Requires: bash, jq, python3 for some helpers, the script under test.
 set -uo pipefail
@@ -112,11 +114,12 @@ write_stub
 # `event=push` so the verdict must read the run the branch triggered.
 # The default `event` for a fixture is `push`; the cases that need a
 # different event pass it explicitly as the 8th argument.
-make_run() { # <id> <head_sha> <status> <conclusion> <created_at> <run_number> <html_url> [event]
-	local event="${8:-push}"
+make_run() { # <id> <head_sha> <status> <conclusion> <created_at> <run_number> <html_url> [event] [head_branch]
+	local event="${8:-push}" branch="${9:-}"
+	[ -n "$branch" ] || { [ "$event" = merge_group ] && branch="gh-readonly-queue/develop/pr-$1-$2" || branch=main; }
 	jq -nc --argjson id "$1" --arg head "$2" --arg status "$3" --arg conclusion "$4" \
-		--arg created "$5" --argjson number "$6" --arg url "$7" --arg event "$event" \
-		'{id:$id, head_sha:$head, status:$status, conclusion:$conclusion, created_at:$created, run_number:$number, html_url:$url, event:$event}'
+		--arg created "$5" --argjson number "$6" --arg url "$7" --arg event "$event" --arg branch "$branch" \
+		'{id:$id, head_sha:$head, status:$status, conclusion:(if $conclusion == "" then null else $conclusion end), created_at:$created, run_number:$number, html_url:$url, event:$event, head_branch:$branch}'
 }
 
 # Build a page from one or more compact-JSON run records. Each page
@@ -169,9 +172,8 @@ make_jobs() { # <name>:<conclusion> [<name>:<conclusion> ...]
 # Run the script under test against planted responses. Combine
 # stdout+stderr in `out`, exit code in `rc`. Each call starts from a
 # fresh gh.log and sleep.log so call counts are per-invocation.
-# MAX_ATTEMPTS and SLEEP_SECONDS inherited from the caller's
-# environment shrink the polling bound so the "never appears" case
-# does not actually take 8 minutes; the defaults match production.
+# The script reads the page once and never waits, so there is no
+# polling bound to shrink.
 run_script() { # <responses_file> [head_sha]
 	local resp="$1"
 	local head="${2:-HEAD123}"
@@ -181,9 +183,15 @@ run_script() { # <responses_file> [head_sha]
 	PATH="$WORK/bin:$PATH" \
 		STUB_LOG="$WORK/gh.log" STUB_RESPONSES="$resp" SLEEP_LOG="$WORK/sleep.log" \
 		WORKFLOW=ci.yml BRANCH="${BRANCH_UNDER_TEST:-main}" REPO=owner/repo HEAD_SHA="$head" GH_TOKEN=dummy \
-		MAX_ATTEMPTS="${MAX_ATTEMPTS:-32}" SLEEP_SECONDS="${SLEEP_SECONDS:-15}" \
+		NOW_EPOCH="$NOW" \
 		bash "$script" 2>&1
 }
+
+# The clock the script reads: the fixtures are dated 2026-09-19, and "now" is 13:00 that day.
+NOW="$(date -u -d 2026-09-19T13:00:00Z +%s)"
+# What the compare API answers about a commit and the head, and what the commits API says of the head's date.
+compare_line() { printf '{"status":"%s"}\n' "$1"; }
+commit_line() { printf '{"commit":{"committer":{"date":"%s"}}}\n' "$1"; }
 
 # Count recorded `gh` calls (NUL-separated log).
 gh_count() { grep -acz . "$WORK/gh.log" | tr -d ' '; }
@@ -275,63 +283,183 @@ case "$out" in
 esac
 
 # ===========================================================================
-# Head's run still running. The first attempt sees status=in_progress
-# and an empty conclusion; the second attempt sees the run completed
-# with success. The script waits once and passes.
+# The cases of the design, in a function so that the sabotages at the end run
+# the same ones against a copy of the script with one rule broken.
+#
+# A branch is red when a finished run of its suite failed, or when its head never
+# had a suite at all. A head whose suite is queued or running is not red, and is
+# judged by the last run that finished before it, so long as that run is an
+# ancestor of the head, is recent, and concluded in a pass or a failure of any
+# kind (`timed_out` and `startup_failure` are failures). A head with no run is
+# given a short grace to start one and is red after it: the success of the commit
+# before it is not its own.
 # ===========================================================================
-in_progress_run="$(jq -nc --argjson id 4 '{id:4, head_sha:"HEAD123", status:"in_progress", conclusion:null, created_at:"2026-09-19T11:00:00Z", run_number:4, html_url:"https://x/r/4", event:"push"}')"
-done_run="$(make_run 4 HEAD123 completed success 2026-09-19T11:00:00Z 4 https://x/r/4)"
-make_page "$in_progress_run" > "$WORK/wait1.resp"
-make_page "$done_run" >> "$WORK/wait1.resp"
-out="$(run_script "$WORK/wait1.resp")"; rc=$?
-check "in_progress then success exits 0" "0" "$rc"
-check "in_progress then success: 2 gh calls" "2" "$(gh_count)"
-check "in_progress then success: 1 sleep" "1" "$(sleep_count)"
-case "$out" in
-	*"concluded success"*) check "in_progress then success names the conclusion" "yes" "yes" ;;
-	*) check "in_progress then success names the conclusion" "concluded-success" "$(printf '%s' "$out" | head -1)" ;;
-esac
+design_cases() {
+	local out rc head_running done_ok other_red other_to other_sf head_run_old
+	head_running="$(make_run 4 HEAD123 in_progress "" 2026-09-19T12:00:00Z 14 https://x/r/4)"
+	done_ok="$(make_run 5 OTHER completed success 2026-09-19T10:00:00Z 13 https://x/r/5)"
+	other_red="$(make_run 6 OTHER completed failure 2026-09-19T10:30:00Z 13 https://x/r/6)"
+	other_to="$(make_run 7 OTHER completed timed_out 2026-09-19T10:30:00Z 13 https://x/r/7)"
+	other_sf="$(make_run 8 OTHER completed startup_failure 2026-09-19T10:30:00Z 13 https://x/r/8)"
 
-# ===========================================================================
-# Head's run never appears. With MAX_ATTEMPTS=4 (overridable through
-# env so the test takes microseconds rather than minutes), the script
-# makes 4 gh calls and 3 sleeps (no sleep after the last attempt), then
-# fails with one line naming the commit.
-# ===========================================================================
-printf '\n' > "$WORK/never.resp"
-out="$(MAX_ATTEMPTS=4 SLEEP_SECONDS=15 run_script "$WORK/never.resp")"; rc=$?
-check "never-appearing exits 1" "1" "$rc"
-check "never-appearing: 4 gh calls" "4" "$(gh_count)"
-check "never-appearing: 3 sleeps (one fewer than attempts)" "3" "$(sleep_count)"
-case "$out" in
-	*"::error::"*"no ci.yml run for commit HEAD123 on main"*) check "never-appearing names the commit on one line" "yes" "yes" ;;
-	*) check "never-appearing names the commit on one line" "names-commit-one-line" "$(printf '%s' "$out" | head -1)" ;;
-esac
+	# --- the head is running and an ancestor finished green
+	{ make_page "$head_running" "$done_ok"; compare_line ahead; } > "$WORK/d1.resp"
+	out="$(run_script "$WORK/d1.resp")"; rc=$?
+	check "head running, an ancestor green: passes" "0" "$rc"
+	check "head running: the page and one compare, no wait" "2 0" "$(gh_count) $(sleep_count)"
+	case "$(nth_call 2)" in *"compare/OTHER...HEAD123"*) check "head running: the compare asks whether the run's commit is behind the head" yes yes ;; *) check "head running: the compare asks whether the run's commit is behind the head" compare-url "$(nth_call 2)" ;; esac
+	case "$out" in
+		*"::notice::"*"has not finished"*"run #13"*"OTHER"*) check "head running: the notice names the head, the run and the commit judged" yes yes ;;
+		*) check "head running: the notice names the head, the run and the commit judged" notice "$(printf '%s' "$out" | head -2)" ;;
+	esac
+	{ make_page "$head_running" "$done_ok"; compare_line identical; } > "$WORK/d1b.resp"
+	run_script "$WORK/d1b.resp" >/dev/null; rc=$?
+	check "head running, the run's commit is the head itself (identical): passes" "0" "$rc"
 
-# ===========================================================================
-# Older green run for a different commit is NOT the verdict. With
-# HEAD_SHA=HEAD123, a page that only carries a green run for OTHER
-# must fail; the script must not pick that as the verdict. This is
-# the case the old logic got wrong: it took the newest run on the
-# branch, so an older green run for any commit answered for the head.
-# ===========================================================================
-older_other="$(make_run 10 OTHER completed success 2026-09-19T10:00:00Z 5 https://x/r/10)"
-make_page "$older_other" > "$WORK/other.resp"
-out="$(MAX_ATTEMPTS=2 SLEEP_SECONDS=15 run_script "$WORK/other.resp" HEAD123)"; rc=$?
-check "older green for a different commit exits 1" "1" "$rc"
-check "older green: 2 gh calls (polled again before giving up)" "2" "$(gh_count)"
-check "older green: 1 sleep" "1" "$(sleep_count)"
-case "$out" in
-	*"no ci.yml run for commit HEAD123 on main"*) check "older green: error names the asked-for HEAD" "yes" "yes" ;;
-	*) check "older green: error names the asked-for HEAD" "names-asked-for-head" "$(printf '%s' "$out" | head -1)" ;;
-esac
-# The older green URL must NOT appear on the verdict line. The script
-# never picks it, so neither the success nor the run-URL line can
-# carry it.
-case "$out" in
-	*"https://x/r/10"*) check "older green URL does NOT appear anywhere" "no-r10" "$(printf '%s' "$out" | head -1)" ;;
-	*) check "older green URL does NOT appear anywhere" "yes" "yes" ;;
-esac
+	# --- not an ancestor: the run says nothing about the head
+	for rel in diverged behind; do
+		{ make_page "$head_running" "$done_ok"; compare_line "$rel"; } > "$WORK/d2.resp"
+		out="$(run_script "$WORK/d2.resp")"; rc=$?
+		check "head running, the green run's commit is $rel: not its verdict, and not red" "0" "$rc"
+		case "$out" in *"no run of an ancestor"*) check "head running, $rel: says no ancestor finished" yes yes ;; *) check "head running, $rel: says no ancestor finished" warning "$out" ;; esac
+	done
+	{ make_page "$head_running" "$other_red"; compare_line diverged; } > "$WORK/d2b.resp"
+	run_script "$WORK/d2b.resp" >/dev/null; rc=$?
+	check "head running, a red run of a commit that is not an ancestor: not red either" "0" "$rc"
+	# A compare call that fails is unknown, not "not an ancestor": the newest finished run is red and its call fails,
+	# and the older green run must NOT answer in its place.
+	printf '%s\n%s\n%s\n' "$(make_page "$head_running" "$other_red" "$done_ok")" '' "$(compare_line ahead)" > "$WORK/d2c.resp"
+	out="$(run_script "$WORK/d2c.resp")"; rc=$?
+	check "head running, the newest finished run is red and its compare call fails: not green" "1" "$rc"
+	check "...and no older run is tried in its place: the page and the one compare" "2" "$(gh_count)"
+	case "$out" in
+		*"::warning::"*"compare/OTHER...HEAD123"*) check "...with a ::warning:: that names the call" yes yes ;;
+		*) check "...with a ::warning:: that names the call" warning "$(printf '%s' "$out" | head -3)" ;;
+	esac
+	case "$out" in *"Unknown is not green"*"::error::"*|*"::error::"*"no verdict"*) check "...and an error that says there is no verdict" yes yes ;; *) check "...and an error that says there is no verdict" error "$out" ;; esac
+
+	# --- an ancestor that failed, in every way a suite can fail
+	{ make_page "$head_running" "$other_red"; compare_line ahead; make_jobs 'rust / Test (ubuntu-latest):failure'; } > "$WORK/d3.resp"
+	out="$(run_script "$WORK/d3.resp")"; rc=$?
+	check "head running, the last finished run failed: red" "1" "$rc"
+	case "$out" in *"https://x/r/6"*"Failed jobs"*|*"::error::"*"run #13 concluded failure"*) check "head running, red: names that run" yes yes ;; *) check "head running, red: names that run" named "$out" ;; esac
+	{ make_page "$head_running" "$other_to"; compare_line ahead; } > "$WORK/d3b.resp"
+	out="$(run_script "$WORK/d3b.resp")"; rc=$?
+	check "head running, the last finished run timed out: red" "1" "$rc"
+	case "$out" in *"concluded timed_out"*) check "head running, timed out: the error says so" yes yes ;; *) check "head running, timed out: the error says so" timed_out "$out" ;; esac
+	{ make_page "$head_running" "$other_sf"; compare_line ahead; } > "$WORK/d3c.resp"
+	out="$(run_script "$WORK/d3c.resp")"; rc=$?
+	check "head running, the last finished run never started (startup_failure): red" "1" "$rc"
+	check "head running, timed out or never started: no jobs lookup (nothing to excuse)" "2" "$(gh_count)"
+
+	# --- cancelled and skipped runs of other commits say nothing
+	other_cancelled="$(make_run 9 OTHER completed cancelled 2026-09-19T11:00:00Z 12 https://x/r/9)"
+	other_skipped="$(make_run 10 OTHER completed skipped 2026-09-19T11:30:00Z 12 https://x/r/10)"
+	make_page "$head_running" "$other_cancelled" "$other_skipped" > "$WORK/d4.resp"
+	out="$(run_script "$WORK/d4.resp")"; rc=$?
+	check "head running, only cancelled and skipped runs of others: passes, with no verdict" "0" "$rc"
+	check "head running, nothing to compare: one call" "1" "$(gh_count)"
+
+	# --- the age bounds
+	old_fallback="$(make_run 11 OTHER completed success 2026-09-16T10:00:00Z 9 https://x/r/11)"
+	make_page "$head_running" "$old_fallback" > "$WORK/d5.resp"
+	out="$(run_script "$WORK/d5.resp")"; rc=$?
+	check "head running, the only finished run is older than 48 hours: not used, not red" "0" "$rc"
+	check "head running, the stale run is not even compared" "1" "$(gh_count)"
+	head_run_old="$(make_run 4 HEAD123 queued "" 2026-09-18T10:00:00Z 14 https://x/r/4)"
+	make_page "$head_run_old" "$done_ok" > "$WORK/d6.resp"
+	out="$(run_script "$WORK/d6.resp")"; rc=$?
+	check "the head's run has been queued for more than 24 hours: red (a stuck suite)" "1" "$rc"
+	case "$out" in *"more than 24 hours"*"https://x/r/4"*|*"::error::"*"more than 24 hours"*) check "...and the error says so and names the run" yes yes ;; *) check "...and the error says so and names the run" stuck "$out" ;; esac
+
+	# --- the head's own run finished badly
+	for c in timed_out startup_failure; do
+		own="$(make_run 20 HEAD123 completed "$c" 2026-09-19T11:00:00Z 20 https://x/r/20)"
+		make_page "$own" > "$WORK/d7.resp"
+		out="$(run_script "$WORK/d7.resp")"; rc=$?
+		check "the head's own run $c: red" "1" "$rc"
+	done
+
+	for c in cancelled skipped; do
+		own="$(make_run 21 HEAD123 completed "$c" 2026-09-19T11:00:00Z 21 https://x/r/21)"
+		make_page "$own" "$done_ok" > "$WORK/d7b.resp"
+		run_script "$WORK/d7b.resp" >/dev/null; rc=$?
+		check "the head's own run $c, with a green run of an older commit: red" "1" "$rc"
+	done
+
+	# --- the head has no run at all
+	make_page "$done_ok" > "$WORK/d8.resp"; commit_line 2026-09-19T12:00:00Z >> "$WORK/d8.resp"
+	out="$(run_script "$WORK/d8.resp")"; rc=$?
+	check "no run for the head, the commit is an hour old: grace, and not red" "0" "$rc"
+	check "no run for the head: the page and the date of the commit" "2" "$(gh_count)"
+	case "$(nth_call 2)" in *"commits/HEAD123"*) check "no run for the head: the second call reads the commit of the head" yes yes ;; *) check "no run for the head: the second call reads the commit of the head" commits-url "$(nth_call 2)" ;; esac
+	case "$out" in *"grace"*) check "no run for the head, inside the grace: the warning says so" yes yes ;; *) check "no run for the head, inside the grace: the warning says so" grace "$out" ;; esac
+	make_page "$done_ok" > "$WORK/d9.resp"; commit_line 2026-09-19T08:00:00Z >> "$WORK/d9.resp"
+	out="$(run_script "$WORK/d9.resp")"; rc=$?
+	check "no run for the head, the commit is five hours old: red, a green run of another commit does not answer for it" "1" "$rc"
+	case "$out" in *"::error::head without CI"*"HEAD123"*) check "...and the error says the head has no CI" yes yes ;; *) check "...and the error says the head has no CI" head-without-ci "$out" ;; esac
+	{ make_page; commit_line 2026-09-18T08:00:00Z; } > "$WORK/d9b.resp"
+	run_script "$WORK/d9b.resp" >/dev/null; rc=$?
+	check "no run at all anywhere, an old commit: red" "1" "$rc"
+	{ make_page; printf '{"commit":{}}\n'; } > "$WORK/d9c.resp"
+	run_script "$WORK/d9c.resp" >/dev/null; rc=$?
+	check "no run for the head and the commit date is unreadable: no verdict, not red" "0" "$rc"
+
+	# --- gh itself fails: nothing was learnt, and nothing is red
+	printf '\n' > "$WORK/transient.resp"
+	rm -f "$WORK/gh.log" "$WORK/sleep.log"; : >"$WORK/gh.log"; : >"$WORK/sleep.log"
+	out="$(STUB_EXIT_CODE=1 PATH="$WORK/bin:$PATH" STUB_LOG="$WORK/gh.log" STUB_RESPONSES="$WORK/transient.resp" SLEEP_LOG="$WORK/sleep.log" \
+		WORKFLOW=ci.yml BRANCH="${BRANCH_UNDER_TEST:-main}" REPO=owner/repo HEAD_SHA=HEAD123 GH_TOKEN=dummy NOW_EPOCH="$NOW" bash "$script" 2>&1)"; rc=$?
+	check "a failing gh: the script survives it and is not red" "0" "$rc"
+	check "a failing gh: no sleep" "0" "$(sleep_count)"
+	case "$out" in
+		*"::warning::"*"gh api call failed"*"runs?branch=main"*) check "a failing gh: ::warning:: names the call that failed" yes yes ;;
+		*) check "a failing gh: ::warning:: names the call that failed" warning "$(printf '%s' "$out" | head -3)" ;;
+	esac
+
+	# --- develop: the queue's runs, ancestors only, of its own branch only
+	local empty_page q_ok q_bad q_other q_main q_pr q_running q_anc
+	empty_page="$(make_page)"
+	q_ok="$(make_run 81 HEAD123 completed success 2026-09-19T11:00:00Z 31 https://x/r/81 merge_group)"
+	q_bad="$(make_run 82 HEAD123 completed failure 2026-09-19T11:05:00Z 32 https://x/r/82 merge_group)"
+	q_other="$(make_run 83 OTHER completed failure 2026-09-19T11:06:00Z 33 https://x/r/83 merge_group)"
+	q_anc="$(make_run 85 OTHER completed success 2026-09-19T11:06:00Z 35 https://x/r/85 merge_group)"
+	q_main="$(make_run 86 HEAD123 completed failure 2026-09-19T11:08:00Z 36 https://x/r/86 merge_group gh-readonly-queue/main/pr-9-abc)"
+	q_pr="$(make_run 84 HEAD123 completed failure 2026-09-19T11:07:00Z 34 https://x/r/84 pull_request)"
+	q_running="$(make_run 87 HEAD123 queued "" 2026-09-19T11:09:00Z 37 https://x/r/87 merge_group)"
+	printf '%s\n%s\n' "$empty_page" "$(make_page "$q_ok")" > "$WORK/q_ok.resp"
+	out="$(BRANCH_UNDER_TEST=develop run_script "$WORK/q_ok.resp")"; rc=$?
+	check "develop: the queue's green run for the head passes" "0" "$rc"
+	case "$out" in *"run #31"*) check "develop: the verdict names the queue's run" yes yes ;; *) check "develop: the verdict names the queue's run" run-31 "$out" ;; esac
+	check "develop: the second call asks for the runs of the merge queue, and it is made even when the push page has runs" "1 2" \
+		"$(nth_call 2 | grep -c 'event=merge_group&per_page=30') $(gh_count)"
+	printf '%s\n%s\n' "$empty_page" "$(make_page "$q_bad")" > "$WORK/q_bad.resp"
+	BRANCH_UNDER_TEST=develop run_script "$WORK/q_bad.resp" >/dev/null; rc=$?
+	check "develop: the queue's red run for the head fails" "1" "$rc"
+	# The head is queued, and a run of the queue for an ancestor failed: red. For a commit that is not an ancestor, not red.
+	{ printf '%s\n' "$empty_page"; make_page "$q_running" "$q_other" "$q_pr" "$q_main"; compare_line ahead; make_jobs 'rust / Test (ubuntu-latest):failure'; } > "$WORK/q_anc.resp"
+	out="$(BRANCH_UNDER_TEST=develop run_script "$WORK/q_anc.resp")"; rc=$?
+	check "develop: the head is queued and the queue's run of an ancestor failed: red" "1" "$rc"
+	case "$out" in *"run #33"*) check "develop: and the error names that run, not the pull request's or main's" yes yes ;; *) check "develop: and the error names that run, not the pull request's or main's" run-33 "$out" ;; esac
+	{ printf '%s\n' "$empty_page"; make_page "$q_running" "$q_other"; compare_line diverged; } > "$WORK/q_nonanc.resp"
+	BRANCH_UNDER_TEST=develop run_script "$WORK/q_nonanc.resp" >/dev/null; rc=$?
+	check "develop: the head is queued and the failed queue run is not an ancestor of it: not red" "0" "$rc"
+	{ printf '%s\n' "$empty_page"; make_page "$q_running" "$q_anc"; compare_line ahead; } > "$WORK/q_pend.resp"
+	out="$(BRANCH_UNDER_TEST=develop run_script "$WORK/q_pend.resp")"; rc=$?
+	check "develop: the head's queued run and the green run of an ancestor: passes" "0" "$rc"
+	case "$out" in *"has not finished"*"run #35"*) check "develop: and the notice names the run judged" yes yes ;; *) check "develop: and the notice names the run judged" notice "$out" ;; esac
+	# A pull request run and the queue of another branch are no run of the head at all.
+	{ printf '%s\n' "$empty_page"; make_page "$q_pr" "$q_main"; commit_line 2026-09-19T08:00:00Z; } > "$WORK/q_nothing.resp"
+	out="$(BRANCH_UNDER_TEST=develop run_script "$WORK/q_nothing.resp")"; rc=$?
+	check "develop: only a pull request run and the queue of main, and an old commit: the head has no CI, red" "1" "$rc"
+	{ printf '%s\n' "$empty_page"; printf '%s\n' "$empty_page"; commit_line 2026-09-19T12:30:00Z; } > "$WORK/q_none.resp"
+	BRANCH_UNDER_TEST=develop run_script "$WORK/q_none.resp" >/dev/null; rc=$?
+	check "develop: nothing at all and a commit of half an hour: grace, not red" "0" "$rc"
+	{ printf '%s\n' "$empty_page"; commit_line 2026-09-19T12:30:00Z; } > "$WORK/m_none.resp"
+	BRANCH_UNDER_TEST=main run_script "$WORK/m_none.resp" >/dev/null; rc=$?
+	check "main asks for its push run and then for the commit: two calls, no queue lookup" "2" "$(gh_count)"
+	check "main with no run and a fresh commit passes with a warning" "0" "$rc"
+}
 
 # ===========================================================================
 # The inverse: an older green run for the SAME head plus an older
@@ -444,7 +572,6 @@ rm -f "$WORK/gh.log" "$WORK/sleep.log"
 out="$(PATH="$WORK/bin:$PATH" \
 	STUB_LOG="$WORK/gh.log" STUB_RESPONSES="$WORK/schedule.combined" SLEEP_LOG="$WORK/sleep.log" \
 	WORKFLOW=ci.yml BRANCH="${BRANCH_UNDER_TEST:-main}" REPO=owner/repo HEAD_SHA='' GH_TOKEN=dummy \
-	MAX_ATTEMPTS=32 SLEEP_SECONDS=15 \
 	bash "$script" 2>&1)"
 rc=$?
 check "schedule: empty env HEAD_SHA exits 0 once branch head is read" "0" "$rc"
@@ -552,27 +679,24 @@ case "$(cat "$WORK/streams-err")" in
 	*) check "split streams: detail URL on stderr (not stdout)" "stderr" "$(head -n1 "$WORK/streams-err")" ;;
 esac
 
-# The same rule applies to `::warning::`. The transient `gh api`
-# failure path prints one `::warning::` per attempt before the
-# polling-bound `::error::` fires; the warning must land on stdout,
-# the workflow-command stream, not on stderr, or the GitHub Actions
-# runner does not read it as an annotation. This sub-case plants a
-# failing `gh` (STUB_EXIT_CODE=1) and MAX_ATTEMPTS=4 so the script
-# exits 1 with the polling-bound `::error::` and several `::warning::`
-# lines on the captured stdout, no `::warning::` on the captured
-# stderr. Asserting on the captured files (not on merged `2>&1`) is
-# what surfaces a swap as a failure rather than letting it pass.
+# The same rule applies to `::warning::`. A `gh api` that fails is "no answer",
+# and the warning that names it must land on stdout, the workflow-command stream,
+# or the GitHub Actions runner does not read it as an annotation. This sub-case
+# plants a failing `gh` (STUB_EXIT_CODE=1): the script passes, because nothing was
+# learnt about the branch, with `::warning::` lines on the captured stdout and none
+# on the captured stderr. Asserting on the captured files (not on merged `2>&1`)
+# is what surfaces a swap as a failure rather than letting it pass.
 printf '\n' > "$WORK/streams-warning.resp"
 rm -f "$WORK/gh.log" "$WORK/sleep.log"
 : >"$WORK/gh.log"
 : >"$WORK/sleep.log"
 PATH="$WORK/bin:$PATH" \
 	STUB_LOG="$WORK/gh.log" STUB_RESPONSES="$WORK/streams-warning.resp" SLEEP_LOG="$WORK/sleep.log" \
-	STUB_EXIT_CODE=1 MAX_ATTEMPTS=4 SLEEP_SECONDS=15 \
+	STUB_EXIT_CODE=1 \
 	WORKFLOW=ci.yml BRANCH="${BRANCH_UNDER_TEST:-main}" REPO=owner/repo HEAD_SHA=HEAD123 GH_TOKEN=dummy \
 	bash "$script" >"$WORK/streams-warning-out" 2>"$WORK/streams-warning-err"
 rc=$?
-check "split streams: transient gh failure exits 1" "1" "$rc"
+check "split streams: transient gh failure is no verdict, and not red" "0" "$rc"
 case "$(cat "$WORK/streams-warning-out")" in
 	*"::warning::"*) check "split streams: ::warning:: on stdout (not stderr)" "yes" "yes" ;;
 	*) check "split streams: ::warning:: on stdout (not stderr)" "stdout" "$(head -n1 "$WORK/streams-warning-out")" ;;
@@ -580,49 +704,6 @@ esac
 case "$(cat "$WORK/streams-warning-err")" in
 	*"::warning::"*) check "split streams: ::warning:: NOT on stderr" "absent" "present" ;;
 	*) check "split streams: ::warning:: NOT on stderr" "absent" "absent" ;;
-esac
-
-# ===========================================================================
-# The poll loop survives a transient `gh api` failure. A rate limit, a
-# 5xx, or any other transient API error must not abort the script
-# mid-poll: a retry loop that cannot survive one transient error is a
-# retry loop that runs exactly once. The script treats the failed call
-# as "no answer this attempt" and keeps polling, with a `::warning::`
-# naming the failure so it is visible in the job log.
-#
-# This case plants a stub `gh` that returns exit 1 on every call and
-# runs the script with MAX_ATTEMPTS=4. The expected shape: four gh
-# calls, three sleeps (one fewer than attempts), a `::warning::` per
-# attempt, and the same "no run finished" error the polling-bound
-# exhaustion path prints with a healthy API.
-# ===========================================================================
-printf '\n' > "$WORK/transient.resp"
-rm -f "$WORK/gh.log" "$WORK/sleep.log"
-: >"$WORK/gh.log"
-: >"$WORK/sleep.log"
-out="$(MAX_ATTEMPTS=4 STUB_EXIT_CODE=1 \
-	PATH="$WORK/bin:$PATH" \
-	STUB_LOG="$WORK/gh.log" STUB_RESPONSES="$WORK/transient.resp" \
-	SLEEP_LOG="$WORK/sleep.log" \
-	WORKFLOW=ci.yml BRANCH="${BRANCH_UNDER_TEST:-main}" REPO=owner/repo HEAD_SHA=HEAD123 GH_TOKEN=dummy \
-	SLEEP_SECONDS=15 \
-	bash "$script" 2>&1)"
-rc=$?
-check "transient gh failure: script does not abort mid-poll, exits 1" "1" "$rc"
-check "transient gh failure: 4 gh calls (polled through every attempt)" "4" "$(gh_count)"
-check "transient gh failure: 3 sleeps (one fewer than attempts)" "3" "$(sleep_count)"
-case "$out" in
-	*"::warning::"*"gh api"*"failed"*) check "transient gh failure: ::warning:: names the failure on every attempt" "yes" "yes" ;;
-	*) check "transient gh failure: ::warning:: names the failure on every attempt" "warning-logged" "$(printf '%s' "$out" | head -3)" ;;
-esac
-# The empty-answer error still fires: the polling bound was exhausted
-# without ever seeing a completed run, so the verdict is "no run
-# finished in time", not "we know the verdict". Without the loop
-# surviving the transient, the script would have aborted with exit 1
-# and no message at all.
-case "$out" in
-	*"no ci.yml run for commit HEAD123 on main"*) check "transient gh failure: empty-answer error fires after the bound" "yes" "yes" ;;
-	*) check "transient gh failure: empty-answer error fires after the bound" "empty-answer-error" "$(printf '%s' "$out" | head -1)" ;;
 esac
 
 # ===========================================================================
@@ -753,34 +834,49 @@ for v in WORKFLOW BRANCH REPO; do
 	check "missing $v is fatal" "1" "$rc"
 done
 
+design_cases
+
 # ===========================================================================
-# `develop` takes no push run of CI: the merge queue ran it on the commit that
-# landed, and the verdict for the head is the queue's run for that commit. The
-# script asks for the push run first (so a push run still counts) and, for
-# develop only, for the merge_group run of the same head when there is none.
+# The sabotages: a copy of the script with one rule broken, run against the
+# cases of the design, must fail at least one of them. A rule no case reads is
+# a rule that can be dropped without anybody noticing.
 # ===========================================================================
-empty_page="$(make_page)"
-q_ok="$(make_run 81 HEAD123 completed success 2026-11-23T11:00:00Z 31 https://x/r/81 merge_group)"
-q_bad="$(make_run 82 HEAD123 completed failure 2026-11-23T11:05:00Z 32 https://x/r/82 merge_group)"
-q_other="$(make_run 83 OTHER completed failure 2026-11-23T11:06:00Z 33 https://x/r/83 merge_group)"
-q_pr="$(make_run 84 HEAD123 completed failure 2026-11-23T11:07:00Z 34 https://x/r/84 pull_request)"
-printf '%s\n%s\n' "$empty_page" "$(make_page "$q_ok")" > "$WORK/q_ok.resp"
-out="$(BRANCH_UNDER_TEST=develop run_script "$WORK/q_ok.resp")"; rc=$?
-check "develop: the queue's green run for the head passes" "0" "$rc"
-case "$out" in *"run #31"*) check "develop: the verdict names the queue's run" yes yes ;; *) check "develop: the verdict names the queue's run" run-31 "$out" ;; esac
-check "develop: the second call asks for the merge_group run of the head" 1 \
-	"$(nth_call 2 | grep -c 'head_sha=HEAD123&event=merge_group')"
-printf '%s\n%s\n' "$empty_page" "$(make_page "$q_bad")" > "$WORK/q_bad.resp"
-out="$(BRANCH_UNDER_TEST=develop run_script "$WORK/q_bad.resp")"; rc=$?
-check "develop: the queue's red run for the head fails" "1" "$rc"
-printf '%s\n%s\n' "$empty_page" "$(make_page "$q_other" "$q_pr")" > "$WORK/q_other.resp"
-out="$(MAX_ATTEMPTS=1 SLEEP_SECONDS=0 BRANCH_UNDER_TEST=develop run_script "$WORK/q_other.resp")"; rc=$?
-check "develop: a queue run of another commit and a pull request run are no verdict" "1" "$rc"
-case "$out" in *"no ci.yml run for commit"*) check "develop: and it says no run was found" yes yes ;; *) check "develop: and it says no run was found" no-run "$out" ;; esac
-printf '%s\n' "$empty_page" > "$WORK/q_none.resp"; printf '%s\n' "$empty_page" >> "$WORK/q_none.resp"
-out="$(MAX_ATTEMPTS=1 SLEEP_SECONDS=0 BRANCH_UNDER_TEST=main run_script "$WORK/q_none.resp")"; rc=$?
-check "main asks only for its push run: one call, no queue lookup" "1" "$(gh_count)"
-check "main with no push run fails" "1" "$rc"
+sabotage() { # <description> <text to find, once> <text to put there>
+	local copy="$WORK/sabotaged-$RANDOM.sh" real="$script" before_fail="$fail" before_pass="$pass"
+	if ! python3 - "$real" "$copy" "$2" "$3" <<'PYEOF'
+import sys
+src, dst, old, new = sys.argv[1:5]
+text = open(src).read()
+if text.count(old) != 1:
+    sys.exit(3)
+open(dst, "w").write(text.replace(old, new))
+PYEOF
+	then
+		check "the sabotage applies: $1" applied not-applied
+		return
+	fi
+	chmod +x "$copy"
+	script="$copy"
+	design_cases >/dev/null 2>&1
+	script="$real"
+	local killed=$((fail - before_fail))
+	fail="$before_fail"
+	pass="$before_pass"
+	check "sabotage: $1" yes "$([ "$killed" -gt 0 ] && echo yes || echo no)"
+}
+# shellcheck disable=SC2016 # the texts are literal script text
+sabotage "a failed compare call is read as not an ancestor, and the next older run answers" 'if ! rel="$(gh api "repos/${repo}/compare/${csha}...${head_sha}" --jq '"'"'.status'"'"' 2>/dev/null)" || [ -z "$rel" ]; then' 'if ! rel="$(gh api "repos/${repo}/compare/${csha}...${head_sha}" --jq '"'"'.status'"'"' 2>/dev/null)" && false; then'
+sabotage "a head with no run is never red" 'if [ "$age" -gt $((grace_hours * 3600)) ]; then' 'if false; then'
+sabotage "a run that is not an ancestor is trusted" 'ahead | identical)' 'ahead | identical | diverged | behind | "")'
+sabotage "a timed out run is not a failure" ' or .conclusion == \"timed_out\"' ''
+sabotage "a run that never started is not a failure" ' or .conclusion == \"startup_failure\"' ''
+sabotage "a stuck suite is not red" 'if [ "$age" -gt $((pending_hours * 3600)) ]; then' 'if false; then'
+sabotage "a finished run of any age is trusted" 'fromdateiso8601) >= \$cutoff' 'fromdateiso8601) >= 0'
+sabotage "the head's own timed out run is not red" '	timed_out | startup_failure)' '	never_a_conclusion)'
+sabotage "the fallback also fires when the head has no run" 'elif [ -n "$mine_pending" ]; then' 'elif true; then'
+sabotage "the head's own cancelled run is no longer red" '		echo "  and the next tick will read the new run." >&2
+		exit 1' '		echo "  and the next tick will read the new run." >&2
+		exit 0'
 
 echo
 echo "passed: $pass  failed: $fail"

@@ -13,16 +13,21 @@ name: Branch health (reusable)
 # SUCCESSFUL scheduled run, so a failing run is missing from their answer
 # by construction.
 #
-# Three states that are NOT failures and must not be reported as one:
+# States that are NOT failures and must not be reported as one:
 #
-# 1. A run still in progress. The script polls for up to 32 attempts of
-#    15 seconds (eight minutes, inside the job's ten-minute bound), so a
-#    push run that has not yet reached a verdict waits for one. The
-#    reasoning for the polling bound lives inside the script.
-# 2. An empty history for the branch's current head. There is no run
-#    for the commit this branch points at. The script reports the head
-#    SHA so the operator can match against the API rather than reading
-#    "no run on record" and looking for a cron that is not the cause.
+# 1. A run that has not finished: queued or running. The script does not wait
+#    for it. It judges the last run that finished before it, in a pass or a
+#    failure of any kind, if that run is an ancestor of the head and no older
+#    than 48 hours, says so in a notice, and is red only if that run failed.
+#    With the runners saturated a suite takes longer than any wait the job
+#    could afford, and waiting made the check red for a branch where nothing
+#    was broken (podup, 2026-11-24: eight minutes of polling and
+#    "no ci.yml run for commit da14bd1 on develop finished"). A suite that
+#    has been pending for more than 24 hours is stuck, and that is red.
+# 2. A head with no run yet. A commit that has just landed has not had time to
+#    start its suite, so for three hours the answer is a warning and a pass.
+#    After that the commit never ran anything, and the success of the commit
+#    before it is not its own: it is red, as "head without CI".
 # 3. A conclusion of `cancelled` for the branch's head. The verdict is the
 #    run for the head, so nothing newer can supersede a cancelled run for
 #    it: a `cancelled` run for the head is RED, and the message names the
@@ -63,13 +68,10 @@ jobs:
   health:
     name: branch health
     runs-on: ubuntu-latest
-    # Bound: the request itself is small; ten seconds covers the fetch
-    # and the poll. The 32 attempts of 15 seconds the script makes add
-    # up to eight minutes, which this ten-minute bound covers with two
-    # minutes of headroom. A run that waits longer than that has
-    # either hung or had the suite fail to start, and the script's
-    # own error message points at the right run rather than this
-    # timeout.
+    # Bound: the script reads one or two pages of runs and, when the run it
+    # judges failed, its jobs: a few requests of a second each, and no
+    # waiting. Ten minutes is the floor this repository gives a job, and
+    # what it covers is a hung request, not a suite that has not finished.
     timeout-minutes: 10
     permissions:
       actions: read # reading this repository's workflow-run history
