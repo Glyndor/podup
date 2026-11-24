@@ -11,7 +11,7 @@ name: commit hygiene
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize]
     branches: ["main", "develop"]
   # In the merge queue too: neither of these is advisory.
   merge_group:

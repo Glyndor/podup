@@ -187,6 +187,13 @@ fn check_reusable(doc: &Value, prefix: &str, suffix: &str) -> Result<(), String>
 	if doc["concurrency"]["group"].as_str() != Some(&expected) {
 		return Err(format!("reusable group must be {expected}"));
 	}
+	if prefix == "main-guard" {
+		// The guard of the base runs again on an edit, so what is running is not cancelled by it.
+		if doc["concurrency"]["cancel-in-progress"].as_bool() != Some(false) {
+			return Err("the guard of the base must never cancel".into());
+		}
+		return Ok(());
+	}
 	if doc["concurrency"]["cancel-in-progress"].as_str() != Some(CANCEL_EXPRESSION) {
 		return Err("reusable must cancel only PR runs".into());
 	}

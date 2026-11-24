@@ -76,6 +76,12 @@ ALLOWED = {SUFFIX, "matrix.target", "matrix.asset", "matrix.arch", "matrix.os", 
 # hide in one.
 UNRESOLVED = {("linux-hardening.yml", "hardened"), ("release.yml", "build"), ("release.yml", "sign"),
               ("release.yml", "build-deb"), ("reusable-rust-ci.yml", "test-extra"), ("reusable-rust-ci.yml", "msrv")}
+# The workflows whose pull_request trigger may list `edited` and `reopened`, with why: they judge the base
+# of the pull request, and an edit can change it. A required check that is one job and is never skipped.
+EDIT_EXCEPTIONS = {
+    "main-guard.yml": "it judges the base of the pull request (only a pull request into main must come from develop), "
+                      "so changing the base to main has to run it; one job of a few seconds that is never cancelled",
+}
 TOKEN = re.compile(r"\s*(&&|\|\||==|!=|!|\(|\)|,|'[^']*'|github\.event_name|github\.base_ref|format)")
 
 
@@ -181,7 +187,8 @@ def main():
         print(e)
         return 1
     problems = []
-    # A pull request trigger that feeds a required name runs again when the base changes.
+    # A pull request trigger that feeds a required name runs for a push and not for an edit or a reopening,
+    # except the one workflow that judges the base of the pull request.
     for fname, spec in specs.items():
         cfg = on_of(spec).get("pull_request")
         if fname.startswith("reusable-") or cfg is None:
@@ -193,9 +200,26 @@ def main():
         if feeds and not (branches and set(branches) <= {"develop", "main"}):
             problems.append(f"{fname}: its pull_request trigger feeds a required name and does not limit the bases "
                             "to `branches: [develop, main]`, which is the only filter that tells `Develop` from `develop`")
-        if feeds and not (types and "edited" in types):
-            problems.append(f"{fname}: its pull_request trigger feeds a required name but does not list `edited`, "
-                            "so changing the base of a pull request would not run the plan again")
+        extra = sorted(set(types or []) & {"edited", "reopened"})
+        if feeds and types is None:
+            problems.append(f"{fname}: its pull_request trigger feeds a required name and lists no `types:`; the default includes `reopened`, "
+                            "which starts a second set of runs of the same commit and cancels the first")
+        elif feeds and fname not in EDIT_EXCEPTIONS and extra:
+            problems.append(f"{fname}: its pull_request trigger feeds a required name and lists {extra}: a second set of runs of the same "
+                            "commit cancels the first, and the aggregators of the cancelled one report a failure under the required names")
+        elif feeds and fname in EDIT_EXCEPTIONS:
+            jobs = spec.get("jobs") or {}
+            always = [j for j, v in jobs.items() if "always()" in str((v or {}).get("if", ""))]
+            if sorted(extra) != ["edited", "reopened"]:
+                problems.append(f"{fname}: it is on the list of workflows that judge the base but does not list `edited` and `reopened`; the list is stale")
+            if len(jobs) != 1 or always:
+                problems.append(f"{fname}: it lists `edited` and has {len(jobs)} job(s){' and an `always()` aggregator' if always else ''}; "
+                                "only a single job that is never skipped may")
+            if (spec.get("concurrency") or {}).get("cancel-in-progress") is not False:
+                problems.append(f"{fname}: it lists `edited` and cancels what is in progress; a cancelled run leaves a red check under the required name")
+    for fname, reason in EDIT_EXCEPTIONS.items():
+        if fname not in specs or not reason.strip():
+            problems.append(f"{fname}: it is on the list of workflows that may list `edited` and is missing or has no reason")
     # The security results are never advisory and never cancelled: they run in the merge
     # queue, and their concurrency group does not cancel what is in progress.
     for fname in ("audit.yml", "reusable-rust-audit.yml", "commit-hygiene.yml"):

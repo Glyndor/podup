@@ -20,6 +20,7 @@ The binary is `target/release/podup`. The default build enables watch, completio
 
 - Branch from `develop` and target `develop`; `main` accepts the release PR from `develop`.
 - Squash into `develop`; use a Conventional Commit PR title.
+- Editing the title or the body of a pull request does not run the CI again, and neither does reopening it: a second set of runs of the same commit would cancel the first and leave a red check under the required names. Changing the base needs a push. `develop` is reached only through the merge queue, which runs everything again on the result that lands, so a base that changed after the checks ran is judged there. Only `guard`, which judges the base itself, runs again on an edit.
 
 Mention the issue in the PR and mark its status done. It closes when the release PR merges into `main`.
 
