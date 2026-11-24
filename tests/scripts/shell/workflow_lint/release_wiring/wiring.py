@@ -302,7 +302,7 @@ def problems(path):
     elif (rel[provenance].get("env") or {}).get("SOURCE_COMMIT") != COMMIT or (rel[provenance].get("env") or {}).get("SOURCE_REF") != "refs/tags/${{ needs.verify.outputs.tag }}":
         bad("release verifies the provenance for something other than the tag and the commit `verify` named")
     exact = at(rel, "exact \"$VERSION\" published")
-    sigs = at(rel, "verify-signing-key.py")
+    sigs = at(rel, "verify-signatures.sh")
     tagged = next((i for i, x in enumerate(rel) if str(x.get("name", "")).startswith("The tag still points at the commit that was built")), None)
     created = next((i for i, s in enumerate(rel) if "gh release create" in str(s.get("run", ""))), None)
     if None in (exact, sigs, tagged, created, sealed, provenance) or not exact < sealed < sigs < tagged < created or not sealed < provenance < created:

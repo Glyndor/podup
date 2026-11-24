@@ -93,16 +93,14 @@ jobs:
 
       - name: Take the release scripts from the commit that started the rehearsal
         if: ${{ inputs.dry_run }}
-        shell: bash
         run: |
-          set -euo pipefail
+          set -o pipefail
           # A rehearsal may name a tag older than these scripts, so they come from the commit that
           # launched the run, the one this workflow file is from. Nothing signed in a rehearsal is
           # published, and the scripts stay out of what the later steps read as changed or new.
           git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
           git ls-files -z .github/scripts | xargs -0 -r git update-index --skip-worktree
-          rm -rf .github/scripts
-          git archive FETCH_HEAD .github/scripts | tar -x
+          rm -rf .github/scripts && git archive FETCH_HEAD .github/scripts | tar -x
           echo '/.github/scripts/' >> .git/info/exclude
 
       - name: The checkout is the commit that was verified
@@ -220,16 +218,14 @@ jobs:
 
       - name: Take the release scripts from the commit that started the rehearsal
         if: ${{ inputs.dry_run }}
-        shell: bash
         run: |
-          set -euo pipefail
+          set -o pipefail
           # A rehearsal may name a tag older than these scripts, so they come from the commit that
           # launched the run, the one this workflow file is from. Nothing signed in a rehearsal is
           # published, and the scripts stay out of what the later steps read as changed or new.
           git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
           git ls-files -z .github/scripts | xargs -0 -r git update-index --skip-worktree
-          rm -rf .github/scripts
-          git archive FETCH_HEAD .github/scripts | tar -x
+          rm -rf .github/scripts && git archive FETCH_HEAD .github/scripts | tar -x
           echo '/.github/scripts/' >> .git/info/exclude
 
       - name: The checkout is the commit that was verified
@@ -386,16 +382,14 @@ jobs:
 
       - name: Take the release scripts from the commit that started the rehearsal
         if: ${{ inputs.dry_run }}
-        shell: bash
         run: |
-          set -euo pipefail
+          set -o pipefail
           # A rehearsal may name a tag older than these scripts, so they come from the commit that
           # launched the run, the one this workflow file is from. Nothing signed in a rehearsal is
           # published, and the scripts stay out of what the later steps read as changed or new.
           git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
           git ls-files -z .github/scripts | xargs -0 -r git update-index --skip-worktree
-          rm -rf .github/scripts
-          git archive FETCH_HEAD .github/scripts | tar -x
+          rm -rf .github/scripts && git archive FETCH_HEAD .github/scripts | tar -x
           echo '/.github/scripts/' >> .git/info/exclude
 
       - name: The checkout is the commit that was verified
@@ -516,29 +510,10 @@ jobs:
           VERSION: ${{ needs.verify.outputs.version }}
           REHEARSAL: ${{ inputs.dry_run }}
         run: |
-          set -euo pipefail
-          # sign.py only checks the seed is base64 of 32 bytes, so a wrong-but-
-          # well-formed GLYNDOR_RELEASE_ED25519_KEY signs happily and publishes a
-          # release nothing can verify. Releases are immutable, so that mistake
-          # burns the version. Every asset is verified, each with its own .sig, because a
-          # per-binary substitution is the failure SHA256SUMS cannot catch (the manifest can
-          # be re-signed to match the swapped binary). The list of what carries a signature is
-          # the one the version gives, so an empty directory of signatures cannot pass: a
-          # missing signature and an extra one are both a difference from the exact set.
+          # What this checks and why is in verify-signatures.sh.
           here="$GITHUB_WORKSPACE/.github/scripts/release"
           bash "$here/check-artifact-dir.sh" . exact "$VERSION" published
-          venv_py="$RUNNER_TEMP/signvenv/bin/python"
-          if [ "$REHEARSAL" = true ]; then
-            PODUP_VERIFY_ONLY_KEY_B64="$(REHEARSAL_SEED_B64="$REHEARSAL_SEED_B64" "$venv_py" -I "$here/public-key-of.py")"
-            export PODUP_VERIFY_ONLY_KEY_B64
-          fi
-          count=0
-          want=$(( $(python3 -I "$here/expected-assets.py" "$VERSION" checksummed | wc -l) + 1 ))
-          while IFS= read -r file; do
-            "$venv_py" -I "$here/verify-signing-key.py" "$file" "$file.sig"
-            count=$((count + 1))
-          done < <({ python3 -I "$here/expected-assets.py" "$VERSION" checksummed; echo SHA256SUMS; })
-          [ "$count" -eq "$want" ] || { echo "::error::$count signatures were verified, $want were expected"; exit 1; }
+          bash "$here/verify-signatures.sh" "$RUNNER_TEMP/signvenv/bin/python" "$VERSION"
 
       - name: Verify every file the installers fetch is staged
         working-directory: ${{ runner.temp }}/artifacts
@@ -595,16 +570,14 @@ jobs:
 
       - name: Take the release scripts from the commit that started the rehearsal
         if: ${{ inputs.dry_run }}
-        shell: bash
         run: |
-          set -euo pipefail
+          set -o pipefail
           # A rehearsal may name a tag older than these scripts, so they come from the commit that
           # launched the run, the one this workflow file is from. Nothing signed in a rehearsal is
           # published, and the scripts stay out of what the later steps read as changed or new.
           git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
           git ls-files -z .github/scripts | xargs -0 -r git update-index --skip-worktree
-          rm -rf .github/scripts
-          git archive FETCH_HEAD .github/scripts | tar -x
+          rm -rf .github/scripts && git archive FETCH_HEAD .github/scripts | tar -x
           echo '/.github/scripts/' >> .git/info/exclude
 
       - name: The checkout is the commit that was verified
@@ -664,22 +637,10 @@ jobs:
           VERSION: ${{ needs.verify.outputs.version }}
           REHEARSAL: ${{ inputs.dry_run }}
         run: |
-          set -euo pipefail
           here="$GITHUB_WORKSPACE/.github/scripts/release"
           python3 -I -m venv "$RUNNER_TEMP/verifyvenv"
-          venv_py="$RUNNER_TEMP/verifyvenv/bin/python"
-          "$venv_py" -I -m pip install --quiet --require-hashes --only-binary=:all: -r "$here/sign-requirements.txt"
-          if [ "$REHEARSAL" = true ]; then
-            PODUP_VERIFY_ONLY_KEY_B64="$(REHEARSAL_SEED_B64="$REHEARSAL_SEED_B64" "$venv_py" -I "$here/public-key-of.py")"
-            export PODUP_VERIFY_ONLY_KEY_B64
-          fi
-          count=0
-          want=$(( $(python3 -I "$here/expected-assets.py" "$VERSION" checksummed | wc -l) + 1 ))
-          while IFS= read -r file; do
-            "$venv_py" -I "$here/verify-signing-key.py" "$file" "$file.sig"
-            count=$((count + 1))
-          done < <({ python3 -I "$here/expected-assets.py" "$VERSION" checksummed; echo SHA256SUMS; })
-          [ "$count" -eq "$want" ] || { echo "::error::$count signatures were verified, $want were expected"; exit 1; }
+          "$RUNNER_TEMP/verifyvenv/bin/python" -I -m pip install --quiet --require-hashes --only-binary=:all: -r "$here/sign-requirements.txt"
+          bash "$here/verify-signatures.sh" "$RUNNER_TEMP/verifyvenv/bin/python" "$VERSION"
 
       - name: The tag still points at the commit that was built
         env:
