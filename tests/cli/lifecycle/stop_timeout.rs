@@ -114,9 +114,10 @@ fn a_timeout_of_zero_is_sent_as_zero_and_not_as_the_default() {
 #[test]
 fn a_negative_timeout_is_refused_before_anything_is_stopped() {
 	let engine = engine(COMPOSE);
-	let (code, output) = run(&engine, &["down", "--timeout=-1"]);
+	let (code, output) = run(&engine, &["down", "--timeout=-2"]);
 	assert_eq!(code, Some(2), "{output}");
-	assert!(output.contains("must be zero or greater"), "{output}");
+	assert!(output.contains("timeout `-2` must be"), "{output}");
+	assert!(output.contains("zero or greater"), "{output}");
 	assert!(
 		engine
 			.sent()
