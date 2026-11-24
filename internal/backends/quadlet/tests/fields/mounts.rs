@@ -24,13 +24,19 @@ secrets:
 	let c = &unit_named(&out, "p-s.container").contents;
 	// `up` creates a `file:` secret as `{project}_secret_{name}`, so the unit
 	// names that one, and the project's secrets unit creates it from the file.
-	assert!(c.contains("Secret=p_secret_tok,mode=400\n"), "in:\n{c}");
-	assert!(c.contains("Secret=p_secret_cred,target=/run/cred,uid=100"));
-	assert!(c.contains("Requires=p-podup-secrets.service\n"), "in:\n{c}");
-	let secrets = &unit_named(&out, "p-podup-secrets.service").contents;
 	assert!(
-		secrets.contains("\"p_secret_tok\" \"p\" \"/srv/app/tok\""),
-		"in:\n{secrets}"
+		c.contains("Secret=p_secret_tok,mode=400\n"),
+		"the container does not name the secret with its mode"
+	);
+	assert!(c.contains("Secret=p_secret_cred,target=/run/cred,uid=100"));
+	assert!(
+		c.contains("Requires=p-podup-secrets.service\n"),
+		"the container does not require the unit"
+	);
+	let creator = &unit_named(&out, "p-podup-secrets.service").contents;
+	assert!(
+		creator.contains("\"p_secret_tok\" \"p\" \"/srv/app/tok\""),
+		"the unit does not create the secret from the file"
 	);
 	// The file is not there when the test generates, so the only thing said about
 	// it is that its mode could not be read.
@@ -39,8 +45,7 @@ secrets:
 			.iter()
 			.filter(|w| w.contains("p_secret_tok"))
 			.all(|w| w.contains("could not be read")),
-		"{:?}",
-		out.warnings
+		"something other than the mode was said about the file"
 	);
 }
 

@@ -56,8 +56,17 @@ pub(super) fn exec_lines(unit: &str) -> Vec<Vec<String>> {
 		.collect()
 }
 
+/// Whether the tests that run `podman` may. They need the Podman the export is
+/// written for (the floor): the 4.9 of the `ubuntu-latest` runner reads `podman
+/// secret create` differently (it refuses a regular file on standard input, and
+/// `--replace` fails for a secret that does not exist), so a test that ran it
+/// would fail for a reason that is no fault of the code. The Quadlet generator
+/// helper judges the version, skips with a line on stderr, and fails instead
+/// where `PODUP_REQUIRE_QUADLET_GENERATOR=1` says a Podman at the floor is
+/// guaranteed.
 pub(super) fn podman_available() -> bool {
-	Command::new("podman").arg("--version").output().is_ok()
+	crate::backends::quadlet::tests::generator::generator().is_some()
+		&& Command::new("podman").arg("--version").output().is_ok()
 }
 
 #[test]
