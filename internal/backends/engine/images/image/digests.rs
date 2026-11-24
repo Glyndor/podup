@@ -9,7 +9,7 @@ use futures_util::StreamExt;
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::image::ImageInspect;
-use crate::libpod::{urlencoded, Client, PodmanError, API_PREFIX};
+use crate::libpod::{image_urlencoded, Client, PodmanError, API_PREFIX};
 
 /// Upper bound on the number of image-inspect requests [`resolve_image_digests`]
 /// has in flight at once.
@@ -81,7 +81,7 @@ pub async fn resolve_image_digests(client: &Client, file: &ComposeFile) -> Resul
 	let mut outcomes: Vec<(usize, String, ResolveOutcome)> =
 		futures_util::stream::iter(inputs.into_iter().enumerate().map(
 			|(i, (name, image))| async move {
-				let path = format!("{API_PREFIX}/images/{}/json", urlencoded(&image));
+				let path = format!("{API_PREFIX}/images/{}/json", image_urlencoded(&image));
 				match client.get_json::<ImageInspect>(&path).await {
 					Ok(info) => match info.repo_digests.into_iter().next() {
 						Some(digest) => (i, name, ResolveOutcome::Pinned(digest)),

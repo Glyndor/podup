@@ -30,7 +30,7 @@
 
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::image::ImageInspect;
-use crate::libpod::{normalize::normalize_docker_reference, urlencoded, API_PREFIX};
+use crate::libpod::{image_urlencoded, normalize::normalize_docker_reference, API_PREFIX};
 
 use super::super::Engine;
 
@@ -46,7 +46,7 @@ impl Engine {
 		&self,
 		name: &str,
 	) -> Result<String> {
-		let path = format!("{API_PREFIX}/images/{}/json", urlencoded(name));
+		let path = format!("{API_PREFIX}/images/{}/json", image_urlencoded(name));
 		match self.client.get_json::<ImageInspect>(&path).await {
 			Ok(inspect) => {
 				if let Some(matched) = match_repo_tag(&inspect.repo_tags, name) {

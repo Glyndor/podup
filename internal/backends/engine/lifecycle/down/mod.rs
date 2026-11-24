@@ -375,7 +375,10 @@ impl Engine {
 			// (e.g. two stacks both on `nginx:latest`). docker compose leaves an
 			// in-use image in place, so an "in use" conflict is a skip, not a
 			// failure.
-			let path = format!("{API_PREFIX}/images/{}", crate::libpod::urlencoded(&image),);
+			let path = format!(
+				"{API_PREFIX}/images/{}",
+				crate::libpod::image_urlencoded(&image),
+			);
 			match self.client.delete_ok(&path).await {
 				Ok(_) => crate::ui::progress_line("Image", &image, "Removed"),
 				Err(e) if e.is_status(404) => {}

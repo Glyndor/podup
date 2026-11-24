@@ -4,8 +4,8 @@ use tracing::warn;
 
 use crate::compose::types::{BuildConfig, Service};
 use crate::error::{ComposeError, Result};
-use crate::libpod::urlencoded;
 use crate::libpod::validate::pre_validate_build;
+use crate::libpod::{image_urlencoded, urlencoded};
 use crate::size;
 
 use super::super::names::looks_like_secret;
@@ -150,6 +150,9 @@ impl Engine {
 		// cache travels as its reference and a cache type with no libpod
 		// equivalent is left out.
 		let cache_from = references(CacheField::From, build.cache_from());
+		cache_from
+			.iter()
+			.for_each(|image| crate::errors::redact::remember_reference(image));
 		let cachefrom = if cache_from.is_empty() {
 			None
 		} else {
@@ -214,7 +217,7 @@ impl Engine {
 		let wire_tag = self.normalize_image_reference(tag).await?;
 		let mut qs = format!(
 			"t={}&rm=true&forcerm=true&layers=true&nocache={}&outputformat={}",
-			urlencoded(&wire_tag),
+			image_urlencoded(&wire_tag),
 			build.no_cache() || opts.no_cache,
 			urlencoded("application/vnd.docker.distribution.manifest.v2+json"),
 		);
@@ -272,6 +275,13 @@ impl Engine {
 		}
 		for (name, value) in &plan.contexts {
 			let mapped = map_additional_context(&self.base_dir, value);
+			// An image or a URL may carry credentials; a path may hold an `@`.
+			if let Some(named) = mapped
+				.strip_prefix("image:")
+				.or_else(|| mapped.strip_prefix("url:"))
+			{
+				crate::errors::redact::remember_context(named);
+			}
 			qs.push_str(&format!(
 				"&additionalbuildcontexts={}",
 				urlencoded(&format!("{name}={mapped}"))

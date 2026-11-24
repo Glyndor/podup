@@ -3,7 +3,7 @@
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::image::ImageInspect;
-use crate::libpod::{urlencoded, API_PREFIX};
+use crate::libpod::{image_urlencoded, API_PREFIX};
 use crate::units::{format_bytes, SizeFormat};
 
 use crate::backends::engine::observe::query::inspect::{humanize_age, split_repo_tag};
@@ -114,7 +114,7 @@ impl Engine {
 		for image_ref in &ordered_refs {
 			let names = by_ref.remove(image_ref).unwrap_or_default();
 			let (repository, tag) = split_repo_tag(image_ref);
-			let path = format!("{API_PREFIX}/images/{}/json", urlencoded(image_ref));
+			let path = format!("{API_PREFIX}/images/{}/json", image_urlencoded(image_ref));
 			match self.client.get_json::<ImageInspect>(&path).await {
 				Ok(img) => {
 					let id = img.id.trim_start_matches("sha256:").get(..12).unwrap_or("");

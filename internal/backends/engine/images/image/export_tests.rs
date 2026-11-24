@@ -39,6 +39,22 @@ fn commit_path_includes_pause_flag() {
 	assert!(live.contains("pause=false"));
 }
 
+// A commit that fails says the repository the way it was given. What it holds
+// of credentials is remembered before the request goes out, so a message that
+// repeats only the password is hidden.
+#[test]
+fn commit_remembers_the_credentials_of_the_repository() {
+	let _ = commit_path(
+		"proj_web_1",
+		"usrQR1xx:pwG7xxxx@registry.example/team/img",
+		"1",
+		true,
+	);
+	let shown =
+		crate::errors::redact::redact_urls_in_text("commit refused, the password was pwG7xxxx");
+	assert!(!shown.contains("pwG7xxxx"), "the password came out");
+}
+
 #[test]
 fn refuses_only_when_no_file_and_tty() {
 	assert!(refuse_tar_to_tty(true, true));

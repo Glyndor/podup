@@ -9,7 +9,7 @@ use crate::compose::dependencies::effective_depends_on;
 use crate::compose::types::{ComposeFile, Service};
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::image::ImagePullProgress;
-use crate::libpod::{urlencoded, API_PREFIX};
+use crate::libpod::{image_urlencoded, API_PREFIX};
 
 use crate::engine::Engine;
 
@@ -361,7 +361,7 @@ impl Engine {
 
 		let mut query = format!(
 			"reference={}&policy={}",
-			urlencoded(&image),
+			image_urlencoded(&image),
 			pull_policy.libpod()
 		);
 		if let Some(platform) = &service.platform {
