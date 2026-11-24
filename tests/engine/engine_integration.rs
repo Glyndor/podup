@@ -251,6 +251,8 @@ mod cli_pull;
 mod cli_pull_flags;
 #[path = "engine_integration/cli/lifecycle/cli_restart_stop_kill.rs"]
 mod cli_restart_stop_kill;
+#[path = "engine_integration/cli/lifecycle/cli_rm_live_containers.rs"]
+mod cli_rm_live_containers;
 #[path = "engine_integration/cli/lifecycle/cli_run.rs"]
 mod cli_run;
 #[path = "engine_integration/cli/lifecycle/cli_service_ops.rs"]

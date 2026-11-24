@@ -54,8 +54,15 @@ fn stop_fails(line: &str, request: &str) -> Option<Reply> {
 	running(line, request)
 }
 
-/// The engine refuses to remove a container that is still running.
+/// The engine refuses to remove a container that is still running, and says it
+/// is running when it is asked.
 fn remove_conflicts(line: &str, request: &str) -> Option<Reply> {
+	if line.starts_with("GET") && line.contains("proj-web-1/json") {
+		return Some(Reply {
+			status: 200,
+			body: r#"{"State":{"Status":"running"}}"#.to_string(),
+		});
+	}
 	if line.starts_with("DELETE") && line.contains("/containers/") {
 		return Some(Reply {
 			status: 409,

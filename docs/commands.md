@@ -343,7 +343,7 @@ Send a signal to service containers.
 | `--remove-orphans` | Then remove containers for services no longer in the file. | off |
 
 ### `rm [SERVICE...]`
-Remove stopped service containers.
+Remove stopped service containers. A container that is running or paused is skipped with a warning and the command still exits 0, so one `rm` removes the stopped ones and leaves the others; `-f` removes it anyway, and `-s` stops it first.
 
 | Flag | Description | Default |
 |---|---|---|

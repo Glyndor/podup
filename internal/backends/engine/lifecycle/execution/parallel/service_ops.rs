@@ -233,15 +233,25 @@ impl Engine {
 					crate::ui::progress_line("Container", &container_name, "Removed");
 				}
 				Ok(false) => crate::ui::progress_line("Container", &container_name, "Absent"),
-				// Without `--force`, a running container 409s. docker compose rm
-				// skips running containers rather than aborting, so warn and keep
-				// going (later stopped containers still get removed).
-				Err(e) if !force && e.is_status(409) => {
-					crate::ui::progress_line("Container", &container_name, "Skipped");
-					tracing::warn!(
-						"{container_name} is running; skipping (pass -f to force removal)"
-					);
-				}
+				// Without `--force`, Podman refuses to remove a container that is
+				// running or paused, and what it answers is not a stable signal:
+				// 6.2.0 sends a 500 ("container state improper"), another
+				// version a 409. docker compose rm skips such a container rather
+				// than aborting, so the container is asked what state it is in,
+				// and a live one is skipped with a warning while later stopped
+				// containers still get removed. Any other failure stays an error.
+				Err(e) if !force => match self.live_state(&container_name).await {
+					Some(state) => {
+						crate::ui::progress_line("Container", &container_name, "Skipped");
+						tracing::warn!(
+							"{container_name} is {state}; skipping (pass -f to force removal)"
+						);
+					}
+					None => {
+						crate::ui::progress_line("Container", &container_name, "Failed");
+						first_err.get_or_insert(ComposeError::Podman(e));
+					}
+				},
 				Err(e) => {
 					crate::ui::progress_line("Container", &container_name, "Failed");
 					first_err.get_or_insert(ComposeError::Podman(e));
@@ -249,6 +259,26 @@ impl Engine {
 			}
 		}
 		first_err.map_or(Ok(()), Err)
+	}
+
+	/// `running` or `paused` when the container is in a state `rm` must not
+	/// remove without `--force`, and `None` for any other state or when the
+	/// container cannot be inspected (the caller then keeps the original error).
+	async fn live_state(&self, container_name: &str) -> Option<&'static str> {
+		let path = format!(
+			"{API_PREFIX}/containers/{}/json",
+			urlencoded(container_name)
+		);
+		let info = self
+			.client
+			.get_json::<crate::libpod::types::container::ContainerInspect>(&path)
+			.await
+			.ok()?;
+		match info.state?.status?.to_ascii_lowercase().as_str() {
+			"running" | "restarting" | "stopping" => Some("running"),
+			"paused" => Some("paused"),
+			_ => None,
+		}
 	}
 
 	/// Pause or unpause a single service's live containers, treating a state
