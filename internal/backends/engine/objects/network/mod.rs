@@ -17,7 +17,7 @@ mod order;
 mod per_network_options;
 
 pub(crate) use isolation::apply_default_isolation;
-pub(crate) use link_aliases::link_aliases;
+pub(crate) use link_aliases::{link_aliases, link_aliases_among};
 pub(in crate::backends::engine) use mode::{
 	network_mode_options, resolve_network_mode, resolve_service_namespace,
 	split_network_mode_options,

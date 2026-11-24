@@ -436,6 +436,12 @@ fn generate_with_mode(
 				.then_some((key.as_str(), cfg.name.as_deref().unwrap_or(key.as_str())))
 		})
 		.collect();
+	// The services and jobs whose `links:` give another service a network alias.
+	let linkers: Vec<&crate::compose::types::Service> = file
+		.services
+		.values()
+		.chain(file.jobs.values().map(|job| &job.service))
+		.collect();
 	let ctx = UnitContext {
 		project,
 		declared_volumes: &declared_volumes,
@@ -447,6 +453,7 @@ fn generate_with_mode(
 		secrets_unit: mode == ContainerUnitMode::Standard,
 		base_dir,
 		services: &file.services,
+		linkers: &linkers,
 		// `x-podman-pod: true` opts each container into the project pod,
 		// dropping the per-container `PublishPort=` / `Network=` lines that
 		// the pod now owns. A typo in the extension (anything other than a
