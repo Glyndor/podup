@@ -149,6 +149,17 @@ pub enum ComposeError {
 		/// The ceiling in force when the request was refused.
 		max: u32,
 	},
+	/// A container being waited on has no healthcheck and its restart policy keeps
+	/// starting it again: it is in a crash loop, not running.
+	WaitServiceRestarting {
+		/// The container name Podman reported.
+		container: String,
+		/// The exit status of the last run, when the container was between two
+		/// runs when it was read.
+		code: Option<i64>,
+		/// How many times the restart policy had started it again.
+		restarts: i64,
+	},
 	/// `start --wait --wait-timeout` elapsed before services became healthy.
 	WaitTimeout {
 		/// The budget that elapsed, in whole seconds, as `--wait-timeout`
@@ -367,6 +378,21 @@ impl fmt::Display for ComposeError {
 				"container '{}' exited with code {code} while waiting for it to be ready",
 				sanitize_name(container)
 			),
+			Self::WaitServiceRestarting {
+				container,
+				code,
+				restarts,
+			} => {
+				write!(
+					f,
+					"container '{}' keeps restarting ({restarts} restart(s) so far",
+					sanitize_name(container)
+				)?;
+				if let Some(code) = code {
+					write!(f, ", last exit code {code}")?;
+				}
+				write!(f, "); it is not running")
+			}
 			Self::ReplicaLimitExceeded {
 				service,
 				replicas,

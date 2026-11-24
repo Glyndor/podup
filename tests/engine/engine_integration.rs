@@ -83,6 +83,8 @@ mod scaled_replicas;
 mod top_images;
 #[path = "engine_integration/workload/recreate/up_recreate.rs"]
 mod up_recreate;
+#[path = "engine_integration/workload/lifecycle/wait_restart_loop.rs"]
+mod wait_restart_loop;
 
 #[path = "engine_integration/host_files/copy/cp_link_target.rs"]
 mod cp_link_target;

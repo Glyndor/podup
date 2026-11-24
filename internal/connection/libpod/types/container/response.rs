@@ -141,6 +141,16 @@ pub struct ContainerInspect {
 	#[serde(rename = "NetworkSettings")]
 	pub network_settings: Option<NetworkSettings>,
 
+	/// How many times the restart policy has started the container again.
+	/// Read by `--wait` to tell a service that runs from one that is in a
+	/// crash loop.
+	#[serde(rename = "RestartCount")]
+	pub restart_count: Option<i64>,
+
+	/// Host-side configuration; only the restart policy is read.
+	#[serde(rename = "HostConfig")]
+	pub host_config: Option<ContainerHostConfig>,
+
 	/// The mounts the container has, as the runtime resolved them.
 	#[serde(rename = "Mounts", default, deserialize_with = "null_default")]
 	pub mounts: Vec<ContainerMount>,
@@ -219,6 +229,22 @@ pub struct HealthConfig {
 	/// `["NONE"]` means the healthcheck is explicitly disabled; empty means none.
 	#[serde(rename = "Test", default, deserialize_with = "null_default")]
 	pub test: Vec<String>,
+}
+
+/// The part of the container's host configuration `--wait` reads.
+#[derive(Deserialize, Default)]
+pub struct ContainerHostConfig {
+	/// The restart policy the container was created with.
+	#[serde(rename = "RestartPolicy")]
+	pub restart_policy: Option<ContainerRestartPolicy>,
+}
+
+/// A container's restart policy, by name.
+#[derive(Deserialize, Default)]
+pub struct ContainerRestartPolicy {
+	/// `no`, `always`, `unless-stopped` or `on-failure`; empty for none.
+	#[serde(rename = "Name")]
+	pub name: Option<String>,
 }
 
 /// Container state sub-object.
