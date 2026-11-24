@@ -558,6 +558,8 @@ fn a_path_is_written_without_the_parts_that_mean_nothing() {
 		("/", "/"),
 		("/srv/app/./tok", "/srv/app/tok"),
 		("rel/./a", "rel/a"),
+		// A `\` is a character of a POSIX name, not a separator.
+		("/srv/my dir/a\\d", "/srv/my dir/a\\d"),
 	] {
 		assert_eq!(super::tidy_path(given), want);
 	}

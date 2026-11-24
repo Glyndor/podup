@@ -38,6 +38,9 @@ fn container<'a>(out: &'a QuadletOutput, name: &str) -> &'a str {
 
 pub(super) const FILE_SECRET: &str = "services:\n  web:\n    image: img\n    secrets: [token]\nsecrets:\n  token:\n    file: ./token.txt\n";
 
+// Reads a file of the host and its mode, which a Windows host does not have, and
+// the path of a host file is not one of the machine the units run on.
+#[cfg(unix)]
 #[test]
 fn a_file_secret_is_created_by_one_unit_that_holds_the_path_and_not_the_bytes() {
 	let dir = tempfile::tempdir().unwrap();

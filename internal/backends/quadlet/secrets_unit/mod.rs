@@ -231,7 +231,18 @@ pub(crate) fn classify(
 	let scoped = crate::engine::scoped_name(project, word, name);
 	let to_create = format!("podman secret create --label podup.project={project} {scoped}");
 	if let Some(file) = def.file {
-		let path = crate::engine::container::resolve_bind_source(file, base_dir);
+		// An absolute path is the path on the machine the units run on, a POSIX
+		// one, and is taken as written whatever the host that generates them. A
+		// relative one, or `~`, is resolved the way `up` resolves it, and where
+		// that host joins with `\` (Windows) the join is read as `/`.
+		let path = if file.starts_with('/') {
+			file.to_string()
+		} else {
+			let joined = crate::engine::container::resolve_bind_source(file, base_dir);
+			#[cfg(windows)]
+			let joined = joined.replace('\\', "/");
+			joined
+		};
 		let path = tidy_path(&path);
 		if let Err(why) = checked_path(&path) {
 			return refused(format!(
@@ -295,12 +306,8 @@ pub(crate) fn classify(
 }
 
 /// `./` and `//` in the middle of a path mean nothing and read badly in a unit;
-/// they are dropped without touching `..`. The path is read on the machine the
-/// units run on, a POSIX one, so the `\` of a Windows host that generates them is
-/// a separator.
+/// they are dropped without touching `..`. A `\` is a character of a POSIX name.
 fn tidy_path(path: &str) -> String {
-	#[cfg(windows)]
-	let path = path.replace('\\', "/");
 	let joined: Vec<&str> = path
 		.split('/')
 		.filter(|part| !part.is_empty() && *part != ".")
