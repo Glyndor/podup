@@ -131,6 +131,16 @@ fn time_the_chain(length: usize) -> std::time::Duration {
 	elapsed
 }
 
+/// The shortest of `runs` timings of a chain of `length` jobs. A slow run is
+/// the scheduler or the machine getting in the way, and it can only add time,
+/// so the minimum is the closest a measurement gets to the work itself.
+fn fastest_of(runs: usize, length: usize) -> std::time::Duration {
+	(0..runs)
+		.map(|_| time_the_chain(length))
+		.min()
+		.expect("at least one run")
+}
+
 #[test]
 fn a_chain_of_twenty_thousand_jobs_is_resolved_in_one_pass() {
 	// Looking for the next job to drop from the start each time made this
@@ -140,11 +150,20 @@ fn a_chain_of_twenty_thousand_jobs_is_resolved_in_one_pass() {
 	// about four times as much. Quadratic would cost sixteen times, and the limit
 	// of ten sits between them. The short chain is floored at 20 ms so that timer
 	// noise on a fast machine cannot make the baseline zero.
-	let short = time_the_chain(5_000).max(std::time::Duration::from_millis(20));
-	let long = time_the_chain(20_000);
+	//
+	// Each chain is timed five times and the minimums are compared. One timing of
+	// each was not enough: on a Windows runner the linear version took 1.03 s for
+	// the long chain against 95 ms for the short one, a ratio of 10.9, because a
+	// single timing of either chain can be stretched by something that has
+	// nothing to do with the work. The quadratic version still costs about
+	// sixteen times in the minimum, since it is slow in every run.
+	const RUNS: usize = 5;
+	let short = fastest_of(RUNS, 5_000).max(std::time::Duration::from_millis(20));
+	let long = fastest_of(RUNS, 20_000);
 	assert!(
 		long <= short * 10,
-		"four times the chain took {long:?} against {short:?} for the short one"
+		"four times the chain took {long:?} against {short:?} for the short one, \
+		 the fastest of {RUNS} runs each"
 	);
 }
 
