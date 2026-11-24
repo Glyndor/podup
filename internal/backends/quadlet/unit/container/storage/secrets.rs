@@ -33,16 +33,19 @@ pub(in super::super) fn emit_secrets(
 	warnings: &mut Vec<String>,
 ) {
 	let mut needs_unit = false;
+	// What a mounted name is to the export, and the mode its mount gets from it.
+	let mut mode_of = |kind: Kind, source: &str, def: Option<Def<'_>>, explicit: Option<u32>| {
+		let source = secrets_unit::classify(kind, project, source, def, base_dir);
+		needs_unit |= matches!(source, Source::File { .. } | Source::Refused { .. });
+		derived_mode(&source, secrets_unit_written, explicit)
+	};
 	for secret in &service.secrets {
-		let source = secrets_unit::classify(
+		let derived = mode_of(
 			Kind::Secret,
-			project,
 			secret.source(),
 			secrets.get(secret.source()).map(Def::from),
-			base_dir,
+			explicit_secret_mode(secret),
 		);
-		needs_unit |= matches!(source, Source::File { .. } | Source::Refused { .. });
-		let derived = derived_mode(&source, secrets_unit_written, explicit_secret_mode(secret));
 		// Without the secrets unit (the units `autostart --mode quadlet`
 		// installs) nothing creates the secret: say so, as the export always has.
 		if !secrets_unit_written && is_inline_secret(secrets.get(secret.source())) {
@@ -67,15 +70,12 @@ pub(in super::super) fn emit_secrets(
 		return;
 	}
 	for config in &service.configs {
-		let source = secrets_unit::classify(
+		let derived = mode_of(
 			Kind::Config,
-			project,
 			config.source(),
 			configs.get(config.source()).map(Def::from),
-			base_dir,
+			explicit_config_mode(config),
 		);
-		needs_unit |= matches!(source, Source::File { .. } | Source::Refused { .. });
-		let derived = derived_mode(&source, secrets_unit_written, explicit_config_mode(config));
 		if let Some(line) = render_config(config, project, configs, derived) {
 			container.add("Secret", line);
 		}

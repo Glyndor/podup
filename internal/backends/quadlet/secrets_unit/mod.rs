@@ -374,31 +374,18 @@ pub(crate) fn referenced(
 		.filter(|job| !job.triggers.schedule.is_empty())
 		.map(|job| &job.service);
 	for service in file.services.values().chain(jobs) {
-		for secret in &service.secrets {
-			let name = secret.source();
-			if !seen.contains(&(Kind::Secret.word(), name)) {
-				seen.push((Kind::Secret.word(), name));
-				out.push(classify(
-					Kind::Secret,
-					project,
-					name,
-					file.secrets.get(name).map(Def::from),
-					base_dir,
-				));
+		let secrets = service.secrets.iter().map(|s| (Kind::Secret, s.source()));
+		let configs = service.configs.iter().map(|c| (Kind::Config, c.source()));
+		for (kind, name) in secrets.chain(configs) {
+			if seen.contains(&(kind.word(), name)) {
+				continue;
 			}
-		}
-		for config in &service.configs {
-			let name = config.source();
-			if !seen.contains(&(Kind::Config.word(), name)) {
-				seen.push((Kind::Config.word(), name));
-				out.push(classify(
-					Kind::Config,
-					project,
-					name,
-					file.configs.get(name).map(Def::from),
-					base_dir,
-				));
-			}
+			seen.push((kind.word(), name));
+			let def = match kind {
+				Kind::Secret => file.secrets.get(name).map(Def::from),
+				Kind::Config => file.configs.get(name).map(Def::from),
+			};
+			out.push(classify(kind, project, name, def, base_dir));
 		}
 	}
 	out
