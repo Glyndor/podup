@@ -423,6 +423,10 @@ name = "up_selection"
 path = "tests/cli/up/up_selection.rs"
 
 [[test]]
+name = "timeout_minus_one"
+path = "tests/cli/lifecycle/timeout_minus_one.rs"
+
+[[test]]
 name = "unknown_service"
 path = "tests/cli/up/unknown_service.rs"
 

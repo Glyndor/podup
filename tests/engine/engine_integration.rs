@@ -257,6 +257,8 @@ mod cli_run;
 mod cli_service_ops;
 #[path = "engine_integration/cli/inspect/cli_stats.rs"]
 mod cli_stats;
+#[path = "engine_integration/cli/lifecycle/cli_timeout_unlimited.rs"]
+mod cli_timeout_unlimited;
 #[path = "engine_integration/cli/inspect/cli_top_images.rs"]
 mod cli_top_images;
 #[path = "engine_integration/cli/lifecycle/cli_up_down.rs"]

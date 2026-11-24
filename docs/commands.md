@@ -57,7 +57,7 @@ A container that already exists is left in place when two facts both hold: its r
 | `--no-recreate` | Leave existing containers as they are: a stopped one is started without applying configuration changes. | off |
 | `--force-recreate` | Recreate containers even if their config is unchanged. | off |
 | `--no-deps` | Do not start the `depends_on` services of the named services. | off |
-| `-t, --timeout <SECS>` | Seconds to wait for a container to stop when recreating; zero or more. | Podman default |
+| `-t, --timeout <SECS>` | Seconds to wait for a container to stop when recreating; `-1` waits without limit. | Podman default |
 | `--scale <SERVICE=N>` | Override a service's replica count for this run. Repeatable; N is a whole number of at least 1, so `0` and `+3` are refused (use `down` or `stop` to remove a service). | from file |
 | `--pull <POLICY>` | Pull policy before starting: `always`, `missing`, `never`, `newer`, `build`. (`newer` is Podman's extension.) | per service; otherwise `missing` |
 | `--no-build` | Do not build images, even for services with a `build:` section. | off |
@@ -98,7 +98,7 @@ Stop and remove containers, networks, and (with `-v`) volumes. With service name
 | `--remove-orphans` | Remove containers for services no longer in the file. | off |
 | `--force` | Run `-v` or `--remove-orphans` even when the project was created from another directory (a second checkout, or `COMPOSE_PROJECT_NAME` in another `.env`); without it they are refused, because they would remove that directory's volumes or containers. | off |
 | `--rmi <SCOPE>` | Also remove service images: `all`, or `local` (only the images built from a `build:` section that set no `image:` tag of their own). | keep images |
-| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them; zero or more. | Podman default |
+| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them; `-1` waits without limit for a container that ignores SIGTERM. | Podman default |
 
 ### `create`
 Create the containers for services without starting them. Accepts a trailing service list.
@@ -128,7 +128,7 @@ Stop running containers without removing them. Accepts a trailing service list.
 
 | Flag | Description | Default |
 |---|---|---|
-| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them; zero or more. | Podman default |
+| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them; `-1` waits without limit for a container that ignores SIGTERM. | Podman default |
 
 ### `restart`
 Restart service containers (default: all, or the named ones).
@@ -136,7 +136,7 @@ Restart reuses the existing containers and does not apply compose changes (ports
 
 | Flag | Description | Default |
 |---|---|---|
-| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them; zero or more. | Podman default |
+| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them; `-1` waits without limit for a container that ignores SIGTERM. | Podman default |
 | `--no-deps` | Do not cascade-restart dependents that declare a `depends_on` restart condition. | off |
 
 ### `build`

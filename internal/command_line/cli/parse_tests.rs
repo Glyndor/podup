@@ -35,13 +35,15 @@ fn parse_pull_policy_rejects_unknown_values() {
 }
 
 #[test]
-fn parse_timeout_accepts_zero_and_positive() {
+fn parse_timeout_accepts_minus_one_zero_and_positive() {
 	assert_eq!(parse_timeout("0"), Ok(0));
 	assert_eq!(parse_timeout("30"), Ok(30));
+	assert_eq!(parse_timeout("-1"), Ok(-1));
 }
 
 #[test]
 fn parse_timeout_rejects_negative_and_non_numeric() {
 	assert!(parse_timeout("-5").is_err());
+	assert!(parse_timeout("-2").is_err());
 	assert!(parse_timeout("abc").is_err());
 }
