@@ -47,6 +47,7 @@
 .github/scripts/release/check-artifact-dir.sh	debian-build,lint-shell
 .github/scripts/release/check-key-slots.py	debian-build,lint-shell
 .github/scripts/release/check-tag.sh	debian-build,lint-shell
+.github/scripts/release/check-unpublished.sh	debian-build,lint-shell
 .github/scripts/release/expected-assets.py	debian-build,lint-shell
 .github/scripts/release/public-key-of.py	debian-build,lint-shell
 .github/scripts/release/sign-requirements.txt	asset-contract,debian-build,lint-shell

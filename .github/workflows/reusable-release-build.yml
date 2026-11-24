@@ -21,6 +21,11 @@ on:
         description: The version the tag, Cargo.toml, debian/changelog and Cargo.lock agree on
         required: true
         type: string
+      dry_run:
+        description: A rehearsal. The release scripts come from the commit that started the run, since the tag may be older than them
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -74,6 +79,20 @@ jobs:
         with:
           persist-credentials: false
           ref: refs/tags/${{ inputs.tag }}
+
+      - name: Take the release scripts from the commit that started the rehearsal
+        if: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A rehearsal may name a tag older than these scripts, so they come from the commit that
+          # launched the run, the one this workflow file is from. Nothing signed in a rehearsal is
+          # published, and the scripts stay out of what the later steps read as changed or new.
+          git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
+          git ls-files -z .github/scripts | xargs -0 -r git update-index --skip-worktree
+          rm -rf .github/scripts
+          git archive FETCH_HEAD .github/scripts | tar -x
+          echo '/.github/scripts/' >> .git/info/exclude
 
       - name: The checkout is the commit that was verified
         env:
@@ -226,6 +245,20 @@ jobs:
           persist-credentials: false
           ref: refs/tags/${{ inputs.tag }}
 
+      - name: Take the release scripts from the commit that started the rehearsal
+        if: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A rehearsal may name a tag older than these scripts, so they come from the commit that
+          # launched the run, the one this workflow file is from. Nothing signed in a rehearsal is
+          # published, and the scripts stay out of what the later steps read as changed or new.
+          git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
+          git ls-files -z .github/scripts | xargs -0 -r git update-index --skip-worktree
+          rm -rf .github/scripts
+          git archive FETCH_HEAD .github/scripts | tar -x
+          echo '/.github/scripts/' >> .git/info/exclude
+
       - name: The checkout is the commit that was verified
         env:
           COMMIT: ${{ inputs.commit }}
@@ -283,6 +316,20 @@ jobs:
           persist-credentials: false
           ref: refs/tags/${{ inputs.tag }}
 
+      - name: Take the release scripts from the commit that started the rehearsal
+        if: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A rehearsal may name a tag older than these scripts, so they come from the commit that
+          # launched the run, the one this workflow file is from. Nothing signed in a rehearsal is
+          # published, and the scripts stay out of what the later steps read as changed or new.
+          git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
+          git ls-files -z .github/scripts | xargs -0 -r git update-index --skip-worktree
+          rm -rf .github/scripts
+          git archive FETCH_HEAD .github/scripts | tar -x
+          echo '/.github/scripts/' >> .git/info/exclude
+
       - name: The checkout is the commit that was verified
         env:
           COMMIT: ${{ inputs.commit }}
@@ -337,6 +384,20 @@ jobs:
         with:
           persist-credentials: false
           ref: refs/tags/${{ inputs.tag }}
+
+      - name: Take the release scripts from the commit that started the rehearsal
+        if: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A rehearsal may name a tag older than these scripts, so they come from the commit that
+          # launched the run, the one this workflow file is from. Nothing signed in a rehearsal is
+          # published, and the scripts stay out of what the later steps read as changed or new.
+          git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
+          git ls-files -z .github/scripts | xargs -0 -r git update-index --skip-worktree
+          rm -rf .github/scripts
+          git archive FETCH_HEAD .github/scripts | tar -x
+          echo '/.github/scripts/' >> .git/info/exclude
 
       - name: The checkout is the commit that was verified
         env:
@@ -429,6 +490,20 @@ jobs:
         with:
           persist-credentials: false
           ref: refs/tags/${{ inputs.tag }}
+
+      - name: Take the release scripts from the commit that started the rehearsal
+        if: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A rehearsal may name a tag older than these scripts, so they come from the commit that
+          # launched the run, the one this workflow file is from. Nothing signed in a rehearsal is
+          # published, and the scripts stay out of what the later steps read as changed or new.
+          git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
+          git ls-files -z .github/scripts | xargs -0 -r git update-index --skip-worktree
+          rm -rf .github/scripts
+          git archive FETCH_HEAD .github/scripts | tar -x
+          echo '/.github/scripts/' >> .git/info/exclude
 
       - name: The checkout is the commit that was verified
         env:

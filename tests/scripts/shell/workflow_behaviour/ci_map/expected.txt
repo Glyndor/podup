@@ -144,6 +144,7 @@ tests/scripts/shell/workflow_lint/release-key-slots.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-least-privilege.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-path-filters.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-python-isolation.test.sh	N N N R N
+tests/scripts/shell/workflow_lint/release-rehearsal.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-wiring.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release_wiring/*	R N B R N
 tests/scripts/shell/workflow_lint/reusable-workflow-lint-caller-if.test.sh	N N N R N

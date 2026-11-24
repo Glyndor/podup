@@ -2,7 +2,7 @@ name: Release verification (reusable)
 
 # What the release checks before it builds anything, and the one place the commit, the version and the tag
 # are named: the tag has to be an annotated tag object at the commit this checks out, on `main`, equal to
-# the version of Cargo.toml, debian/changelog and Cargo.lock, and not already published (a rehearsal included).
+# the version of Cargo.toml, debian/changelog and Cargo.lock, and not already published (a rehearsal may name a published tag).
 # Nothing here runs a tool of other people's: the commit is read before the audit installs one, and the audit
 # is a job of its own with no outputs. The jobs of release.yml take `commit`, `version` and `tag` from here
 # and resolve the tag no more.
@@ -14,6 +14,11 @@ on:
         description: The tag the release is cut from, v<major>.<minor>.<patch>
         required: true
         type: string
+      dry_run:
+        description: A rehearsal. A tag that is already published is accepted, and an advisory in the audit is reported and does not stop it
+        required: false
+        default: false
+        type: boolean
     outputs:
       commit:
         description: The full commit the tag was verified to point at
@@ -53,6 +58,20 @@ jobs:
           persist-credentials: false
           ref: refs/tags/${{ inputs.tag }}
 
+      - name: Take the release scripts from the commit that started the rehearsal
+        if: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A rehearsal may name a tag older than these scripts, so they come from the commit that
+          # launched the run, the one this workflow file is from. Nothing signed in a rehearsal is
+          # published, and the scripts stay out of what the later steps read as changed or new.
+          git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
+          git ls-files -z .github/scripts | xargs -0 -r git update-index --skip-worktree
+          rm -rf .github/scripts
+          git archive FETCH_HEAD .github/scripts | tar -x
+          echo '/.github/scripts/' >> .git/info/exclude
+
       - name: Validate tag format
         env:
           TAG: ${{ inputs.tag }}
@@ -74,20 +93,16 @@ jobs:
         run: python3 -I .github/scripts/release/check-key-slots.py
 
       - name: Refuse an already published release
-        # Publication follows asset verification. Refuse a second publication
-        # after waiting for another run of the same tag to finish. `gh release
-        # create` at the end would refuse it too, but only after every build.
+        # Publication follows asset verification. A real release refuses a second publication
+        # here, before anything is built: `gh release create` at the end would refuse it too, but
+        # only after every build. A rehearsal publishes nothing, so a tag that is already
+        # published is the safest one to rehearse on and is accepted.
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-          published=$(gh api --paginate "repos/$GH_REPO/releases" --jq '.[] | select(.draft == false) | .tag_name')
-          if grep -Fxq -- "$TAG" <<< "$published"; then
-            echo "::error::Release $TAG is already published; refusing to rebuild or publish it again."
-            exit 1
-          fi
+          MODE: ${{ inputs.dry_run && 'rehearsal' || 'release' }}
+        run: bash .github/scripts/release/check-unpublished.sh "$TAG" "$MODE"
 
       - name: Tag must equal Cargo.toml version
         env:
@@ -186,12 +201,31 @@ jobs:
           persist-credentials: false
           ref: refs/tags/${{ inputs.tag }}
 
+      - name: Take the release scripts from the commit that started the rehearsal
+        if: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A rehearsal may name a tag older than these scripts, so they come from the commit that
+          # launched the run, the one this workflow file is from. Nothing signed in a rehearsal is
+          # published, and the scripts stay out of what the later steps read as changed or new.
+          git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
+          git ls-files -z .github/scripts | xargs -0 -r git update-index --skip-worktree
+          rm -rf .github/scripts
+          git archive FETCH_HEAD .github/scripts | tar -x
+          echo '/.github/scripts/' >> .git/info/exclude
+
       - name: The checkout is the commit that was verified
         env:
           COMMIT: ${{ needs.verify.outputs.commit }}
         run: test "$(git rev-parse HEAD)" = "$COMMIT"
 
       - name: Audit dependencies for known advisories
+        id: audit
+        # A rehearsal may name a tag that was clean when it was released and has an advisory today:
+        # it reports it below and goes on, so the rest of the chain can still be rehearsed. A real
+        # release stops here.
+        continue-on-error: ${{ inputs.dry_run }}
         # Gate the release on `cargo audit`: a RUSTSEC advisory in a pinned
         # dependency must block publishing, not wait for the weekly cron scan.
         #
@@ -209,3 +243,7 @@ jobs:
         run: |
           cargo install cargo-audit --version "=0.23.0" --locked
           cargo audit --deny warnings
+
+      - name: Report an advisory the rehearsal went past
+        if: ${{ inputs.dry_run && steps.audit.outcome == 'failure' }}
+        run: echo "::warning::the audit of this tag reports an advisory; a real release would have stopped here"

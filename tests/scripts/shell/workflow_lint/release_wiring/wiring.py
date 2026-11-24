@@ -82,11 +82,15 @@ def attest_condition(job):
     return "${{ !cancelled() && " + ok + " && (needs.attest.result == 'success' || inputs.dry_run && needs.attest.result == 'skipped') }}"
 
 
+OVERLAY = "Take the release scripts from the commit that started the rehearsal"
+
+
 def first_script(steps, skip=None):
-    """The first step that runs a script of the checkout."""
+    """The first step that runs a script of the checkout. The step that puts the scripts of the commit that
+    started a rehearsal in place runs none of the tag's: it only reads them out of git."""
     for i, s in enumerate(steps):
         text = str(s.get("run", ""))
-        if i != skip and (".github/scripts" in text or "bash .github" in text):
+        if i != skip and s.get("name") != OVERLAY and (".github/scripts" in text or "bash .github" in text):
             return i
     return None
 
@@ -170,8 +174,9 @@ def problems(path):
     call = jobs["builds"]
     if call.get("uses") != "./.github/workflows/reusable-release-build.yml":
         bad("`builds` does not call the reusable of the builds")
-    if (call.get("with") or {}) != {"commit": COMMIT, "tag": "${{ needs.verify.outputs.tag }}", "version": "${{ needs.verify.outputs.version }}"}:
-        bad("`builds` is not called with the commit, the tag and the version `verify` named")
+    if (call.get("with") or {}) != {"commit": COMMIT, "tag": "${{ needs.verify.outputs.tag }}", "version": "${{ needs.verify.outputs.version }}",
+                                 "dry_run": "${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}"}:
+        bad("`builds` is not called with the commit, the tag and the version `verify` named, and the dry_run of the run")
 
     # 3. The commit: every checkout after `verify` is the tag of the run, never a bare revision, and every job
     # asserts right after that what it checked out is the commit `verify` named.
@@ -185,7 +190,8 @@ def problems(path):
                     continue
                 if (s.get("with") or {}).get("ref") != want:
                     bad(f"{label}: `{name}` checks out {(s.get('with') or {}).get('ref')!r}, not the tag of the run")
-                follow = str(steps[i + 1].get("run", "")) if i + 1 < len(steps) else ""
+                rest = [x for x in steps[i + 1:] if x.get("name") != OVERLAY]
+                follow = str(rest[0].get("run", "")) if rest else ""
                 if 'git rev-parse HEAD' not in follow:
                     bad(f"{label}: `{name}` does not check that its checkout is the verified commit")
     out_names = set(((verify_spec.get("on", verify_spec.get(True)) or {}).get("workflow_call") or {}).get("outputs") or {})
@@ -204,8 +210,9 @@ def problems(path):
     if pin is None:
         bad("the verify job does not name the commit in a step called pin")
     refuse = next((st for st in vjobs["verify"]["steps"] if "Refuse an already published" in str(st.get("name", ""))), None)
-    if refuse is None or "if" in refuse:
-        bad("a release that is already published is refused in a rehearsal as well")
+    if refuse is None or "if" in refuse or (refuse.get("env") or {}).get("MODE") != "${{ inputs.dry_run && 'rehearsal' || 'release' }}" \
+            or str(refuse.get("run", "")).strip() != 'bash .github/scripts/release/check-unpublished.sh "$TAG" "$MODE"':
+        bad("a published tag stops a real release and not a rehearsal: by the script, with the mode taken from dry_run, and no condition")
     if "refs/tags/${{ inputs.tag }}" != next(st for st in vjobs["verify"]["steps"] if uses(st, "actions/checkout"))["with"]["ref"]:
         bad("the verification does not check out the tag it was given")
 
