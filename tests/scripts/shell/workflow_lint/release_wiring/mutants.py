@@ -74,6 +74,7 @@ MUTANTS["seal-without-attest"] = rel(lambda m: m["jobs"]["seal"]["needs"].remove
 MUTANTS["release-without-seal"] = rel(lambda m: m["jobs"]["release"].update({"needs": ["verify"]}))
 MUTANTS["sign-without-verify"] = rel(lambda m: m["jobs"]["sign"].update({"needs": ["builds"]}))
 MUTANTS["builds-is-another-workflow"] = rel(lambda m: m["jobs"]["builds"].update({"uses": "./.github/workflows/other.yml"}))
+MUTANTS["builds-without-the-tag"] = rel(lambda m: m["jobs"]["builds"]["with"].pop("tag"))
 MUTANTS["builds-without-the-commit"] = rel(lambda m: m["jobs"]["builds"]["with"].pop("commit"))
 MUTANTS["builds-with-another-version"] = rel(lambda m: m["jobs"]["builds"]["with"].update({"version": "${{ inputs.tag }}"}))
 MUTANTS["verify-outputs-nothing"] = ver(lambda m: m["jobs"]["verify"].pop("outputs"))
@@ -83,18 +84,22 @@ MUTANTS["verify-installs-a-tool"] = ver(lambda m: m["jobs"]["verify"]["steps"].a
 MUTANTS["verify-has-no-pin-step"] = ver(lambda m: step(m, "verify", "Name the commit").pop("id"))
 MUTANTS["a-published-release-is-allowed-in-a-rehearsal"] = ver(lambda m: step(m, "verify", "Refuse an already published").update({"if": "${{ !inputs.dry_run }}"}))
 MUTANTS["verify-checks-out-another-tag"] = ver(lambda m: step(m, "verify", "actions/checkout")["with"].update({"ref": "refs/heads/main"}))
-MUTANTS["the-audit-checks-out-the-tag"] = ver(lambda m: step(m, "audit", "actions/checkout")["with"].update({"ref": "refs/tags/${{ inputs.tag }}"}))
+MUTANTS["the-audit-checks-out-a-revision-an-output-carries"] = ver(lambda m: step(m, "audit", "actions/checkout")["with"].update({"ref": "${{ needs.verify.outputs.commit }}"}))
 MUTANTS["verify-called-with-another-tag"] = rel(lambda m: m["jobs"]["verify"]["with"].update({"tag": "${{ github.ref_name }}"}))
 MUTANTS["verify-is-another-workflow"] = rel(lambda m: m["jobs"]["verify"].update({"uses": "./.github/workflows/reusable-release-build.yml"}))
 
 # --- the commit -----------------------------------------------------------------------------------
 for _j in ("sign", "sign-packages", "attest", "seal", "release"):
-    MUTANTS[f"{_j}-checks-out-the-tag"] = rel((lambda j: lambda m: step(m, j, "actions/checkout")["with"].update(
+    MUTANTS[f"{_j}-checks-out-a-revision-an-output-carries"] = rel((lambda j: lambda m: step(m, j, "actions/checkout")["with"].update(
+        {"ref": "${{ needs.verify.outputs.commit }}"}))(_j))
+    MUTANTS[f"{_j}-checks-out-another-tag"] = rel((lambda j: lambda m: step(m, j, "actions/checkout")["with"].update(
         {"ref": "refs/tags/${{ needs.verify.outputs.tag }}"}))(_j))
     MUTANTS[f"{_j}-does-not-check-the-checkout"] = rel((lambda j: lambda m: m["jobs"][j]["steps"].remove(step(m, j, "The checkout is the commit")))(_j))
 for _j in ("build", "build-deb", "build-rpm", "build-pacman", "sbom"):
-    MUTANTS[f"reusable-{_j}-checks-out-the-tag"] = bld((lambda j: lambda m: step(m, j, "actions/checkout")["with"].update(
+    MUTANTS[f"reusable-{_j}-checks-out-another-tag"] = bld((lambda j: lambda m: step(m, j, "actions/checkout")["with"].update(
         {"ref": "refs/tags/v1.0.0"}))(_j))
+    MUTANTS[f"reusable-{_j}-checks-out-a-revision-an-input-carries"] = bld((lambda j: lambda m: step(m, j, "actions/checkout")["with"].update(
+        {"ref": "${{ inputs.commit }}"}))(_j))
     MUTANTS[f"reusable-{_j}-does-not-check-the-checkout"] = bld((lambda j: lambda m: m["jobs"][j]["steps"].remove(step(m, j, "The checkout is the commit")))(_j))
 
 # --- the sealing job ------------------------------------------------------------------------------
@@ -228,6 +233,17 @@ MUTANTS["release-provenance-for-another-ref"] = rel(lambda m: step(m, "release",
 MUTANTS["release-provenance-after-create"] = rel(lambda m: m["jobs"]["release"]["steps"].append(m["jobs"]["release"]["steps"].pop(
     m["jobs"]["release"]["steps"].index(step(m, "release", "Verify the provenance of the binaries")))))
 MUTANTS["release-cannot-read-attestations"] = rel(lambda m: m["jobs"]["release"]["permissions"].pop("attestations"))
+
+# --- no shared cache ------------------------------------------------------------------------------
+CACHE = {"name": "cache", "uses": "actions/cache@0000000000000000000000000000000000000000", "with": {"path": "target", "key": "k"}}
+for _j in ("build", "build-deb", "build-rpm", "build-pacman", "sbom"):
+    MUTANTS[f"reusable-{_j}-restores-a-cache"] = bld((lambda j: lambda m: m["jobs"][j]["steps"].insert(1, dict(CACHE)))(_j))
+MUTANTS["the-build-uses-a-rust-cache"] = bld(lambda m: m["jobs"]["build"]["steps"].insert(1, {"name": "c", "uses": "Swatinem/rust-cache@0000000000000000000000000000000000000000"}))
+MUTANTS["the-audit-restores-a-cache"] = ver(lambda m: m["jobs"]["audit"]["steps"].insert(1, dict(CACHE)))
+MUTANTS["the-verification-asks-a-setup-action-to-cache"] = ver(lambda m: m["jobs"]["verify"]["steps"].insert(1, {"name": "p", "uses": "actions/setup-python@0000000000000000000000000000000000000000", "with": {"cache": "pip"}}))
+MUTANTS["the-rust-download-has-restore-keys"] = bld(lambda m: step(m, "sbom", "actions/download-artifact").setdefault("with", {}).update({"restore-keys": "x"}))
+for _j in ("sign", "sign-packages", "attest", "seal", "release"):
+    MUTANTS[f"{_j}-restores-a-cache"] = rel((lambda j: lambda m: m["jobs"][j]["steps"].insert(1, dict(CACHE)))(_j))
 
 dead, alive = 0, []
 for name, fn in MUTANTS.items():

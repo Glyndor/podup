@@ -184,7 +184,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ needs.verify.outputs.commit }}
+          ref: refs/tags/${{ inputs.tag }}
 
       - name: The checkout is the commit that was verified
         env:

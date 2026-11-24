@@ -22,6 +22,14 @@ REPO = os.path.abspath(os.path.join(HERE, "../../../../.."))
 ART = "${{ runner.temp }}/artifacts"
 REL = "${{ runner.temp }}/release"
 COMMIT = "${{ needs.verify.outputs.commit }}"
+# What every checkout after `verify` names: the tag, never a revision that an input or an output carries
+# (CodeQL reads that as code of a revision chosen by input, run in a workflow that can write the default
+# branch's cache). That it is the commit `verify` named is asserted right after, in every job.
+TAG_REF = "refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+TAG_REF_INPUT = "refs/tags/${{ inputs.tag }}"
+# The caches an Actions workflow can read and write: nothing a release restores or saves is shared with
+# the runs of pull requests and of the other workflows, so what is built is what the tag holds.
+CACHE_INPUTS = {"cache", "cache-dependency-path", "cache-from", "cache-to", "restore-keys", "enableCrossOsArchive"}
 
 # What each job is allowed to be granted. Anything else is a change to decide.
 PERMISSIONS = {
@@ -162,12 +170,12 @@ def problems(path):
     call = jobs["builds"]
     if call.get("uses") != "./.github/workflows/reusable-release-build.yml":
         bad("`builds` does not call the reusable of the builds")
-    if (call.get("with") or {}) != {"commit": COMMIT, "version": "${{ needs.verify.outputs.version }}"}:
-        bad("`builds` is not called with the commit and the version `verify` named")
+    if (call.get("with") or {}) != {"commit": COMMIT, "tag": "${{ needs.verify.outputs.tag }}", "version": "${{ needs.verify.outputs.version }}"}:
+        bad("`builds` is not called with the commit, the tag and the version `verify` named")
 
-    # 3. The commit: every checkout after `verify` is the one `verify` named, asserted, and none is of
-    # a tag. In the reusable the commit is its input.
-    for label, group, want in (("release.yml", jobs, COMMIT), ("the builds", rjobs, "${{ inputs.commit }}"), ("the verification", {"audit": vjobs["audit"]}, "${{ needs.verify.outputs.commit }}")):
+    # 3. The commit: every checkout after `verify` is the tag of the run, never a bare revision, and every job
+    # asserts right after that what it checked out is the commit `verify` named.
+    for label, group, want in (("release.yml", jobs, TAG_REF), ("the builds", rjobs, TAG_REF_INPUT), ("the verification", {"audit": vjobs["audit"]}, TAG_REF_INPUT)):
         for name, job in group.items():
             steps = job.get("steps") or []
             for i, s in enumerate(steps):
@@ -176,7 +184,7 @@ def problems(path):
                 if name == "verify":
                     continue
                 if (s.get("with") or {}).get("ref") != want:
-                    bad(f"{label}: `{name}` checks out {(s.get('with') or {}).get('ref')!r}, not the verified commit")
+                    bad(f"{label}: `{name}` checks out {(s.get('with') or {}).get('ref')!r}, not the tag of the run")
                 follow = str(steps[i + 1].get("run", "")) if i + 1 < len(steps) else ""
                 if 'git rev-parse HEAD' not in follow:
                     bad(f"{label}: `{name}` does not check that its checkout is the verified commit")
@@ -407,6 +415,14 @@ def problems(path):
             key = (s.get("env") or {}).get("GLYNDOR_RELEASE_ED25519_KEY")
             if key is not None and key != "${{ inputs.dry_run && env.REHEARSAL_SEED_B64 || secrets.GLYNDOR_RELEASE_ED25519_KEY }}":
                 bad(f"`{name}`: the key of `{s.get('name')}` is not the secret in a real run and the throwaway key in a rehearsal")
+    # 11. Nothing a release builds from or into is a cache shared with other runs: no cache action, no
+    # setup action asked to cache, no restore keys, in any job of the release or of its reusables.
+    for label, group in (("release.yml", jobs), ("the builds", rjobs), ("the verification", vjobs)):
+        for name, job in group.items():
+            for s in job.get("steps") or []:
+                with_keys = {str(k) for k in (s.get("with") or {})}
+                if "cache" in str(s.get("uses", "")).lower() or with_keys & CACHE_INPUTS:
+                    bad(f"{label} `{name}`: `{s.get('name') or s.get('uses')}` restores or saves a cache, which another run can poison")
     if "dry_run" not in (spec.get("on", spec.get(True)) or {}).get("workflow_dispatch", {}).get("inputs", {}):
         bad("release.yml has no `dry_run` input")
     return out

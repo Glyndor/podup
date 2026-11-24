@@ -2,7 +2,7 @@ name: Release builds (reusable)
 
 # The jobs of the release that compile, pack and describe what is published: the binaries, the
 # Debian, rpm and pacman packages and the SBOMs. They are called by release.yml with the commit
-# and the version its `verify` job named, and nothing else: they hold `contents: read`, no secret,
+# the tag and the version its `verify` job named, and nothing else: they hold `contents: read`, no secret,
 # and no permission that mints a token. The jobs that hold the key, mint the provenance or write
 # the release are in release.yml, where the guard that holds them whole reads them.
 
@@ -10,7 +10,11 @@ on:
   workflow_call:
     inputs:
       commit:
-        description: The full commit the tag was verified to point at; every checkout is that commit
+        description: The full commit the tag was verified to point at; every job checks that its checkout is that commit
+        required: true
+        type: string
+      tag:
+        description: The tag the release is cut from. Every checkout is this tag, and every job checks that it is the commit above
         required: true
         type: string
       version:
@@ -69,7 +73,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ inputs.commit }}
+          ref: refs/tags/${{ inputs.tag }}
 
       - name: The checkout is the commit that was verified
         env:
@@ -220,7 +224,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ inputs.commit }}
+          ref: refs/tags/${{ inputs.tag }}
 
       - name: The checkout is the commit that was verified
         env:
@@ -277,7 +281,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ inputs.commit }}
+          ref: refs/tags/${{ inputs.tag }}
 
       - name: The checkout is the commit that was verified
         env:
@@ -332,7 +336,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ inputs.commit }}
+          ref: refs/tags/${{ inputs.tag }}
 
       - name: The checkout is the commit that was verified
         env:
@@ -424,7 +428,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ inputs.commit }}
+          ref: refs/tags/${{ inputs.tag }}
 
       - name: The checkout is the commit that was verified
         env:

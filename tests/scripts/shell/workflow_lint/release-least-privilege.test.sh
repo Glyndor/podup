@@ -56,9 +56,10 @@ out = {}
 groups = [("release", jobs), ("builds", builds), ("verification", verifying)]
 checkouts = [(g, n, s) for g, grp in groups for n, j in grp.items() for s in j.get("steps", [])
              if str(s.get("uses", "")).startswith("actions/checkout")]
-out["the verify job is the only checkout of the tag"] = [(g, n) for g, n, s in checkouts if str(s["with"]["ref"]).startswith("refs/tags/")] == [("verification", "verify")]
-out["every other checkout is the commit verify named"] = all(
-    s["with"]["ref"] in ("${{ needs.verify.outputs.commit }}", "${{ inputs.commit }}") for g, n, s in checkouts if (g, n) != ("verification", "verify"))
+TAG_REFS = ("refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}", "refs/tags/${{ inputs.tag }}")
+out["every checkout is the tag of the run"] = all(s["with"]["ref"] in TAG_REFS for g, n, s in checkouts)
+out["no checkout takes a revision from an input or an output"] = not any(
+    "commit" in str(s["with"]["ref"]) or not str(s["with"]["ref"]).startswith("refs/tags/") for g, n, s in checkouts)
 out["verify checkout keeps no credential"] = next(
     s for s in verifying["verify"]["steps"] if str(s.get("uses", "")).startswith("actions/checkout")
 )["with"].get("persist-credentials") is False
