@@ -338,7 +338,11 @@ impl fmt::Display for ComposeError {
 				"build error: {}",
 				crate::errors::redact::redact_urls_in_text(s)
 			),
-			Self::ImagePull(s) => write!(f, "failed to pull image {s}"),
+			Self::ImagePull(s) => write!(
+				f,
+				"failed to pull image {}",
+				crate::errors::redact::redact_urls_in_text(s)
+			),
 			Self::Copy(s) => write!(f, "cp error: {s}"),
 			Self::Extends(s) => write!(f, "extends error: {s}"),
 			Self::Include(s) => write!(f, "include error: {s}"),

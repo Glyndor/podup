@@ -84,7 +84,11 @@ impl Client {
 		response_timeout: Option<std::time::Duration>,
 	) -> Result<BufferedResponse> {
 		self.refuse_in_dry_run(req.method(), req.uri().path())?;
-		tracing::debug!("libpod {} {}", req.method(), req.uri().path());
+		tracing::debug!(
+			"libpod {} {}",
+			req.method(),
+			crate::errors::redact::redact_request_path(req.uri().path())
+		);
 		let mut guard = tokio::time::timeout(CONNECT_TIMEOUT, self.pool.acquire())
 			.await
 			.map_err(|_| super::PodmanError::Api {

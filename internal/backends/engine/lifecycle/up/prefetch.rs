@@ -129,7 +129,10 @@ impl Engine {
 			// standalone `pull` printed it once. A prefetch I/O miss is still
 			// debug-only; only the validation error above escapes.
 			if let Err(e) = self.pull_image_quietly(name, service).await {
-				tracing::debug!("prefetch miss for {image}: {e}");
+				tracing::debug!(
+					"prefetch miss for {}: {e}",
+					crate::errors::redact::redact_label(image)
+				);
 			}
 			Ok(())
 		});

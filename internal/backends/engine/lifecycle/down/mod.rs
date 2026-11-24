@@ -380,10 +380,16 @@ impl Engine {
 				Ok(_) => crate::ui::progress_line("Image", &image, "Removed"),
 				Err(e) if e.is_status(404) => {}
 				Err(e) if e.is_image_in_use() => {
-					tracing::debug!("image {image} is still in use; skipping removal")
+					tracing::debug!(
+						"image {} is still in use; skipping removal",
+						crate::errors::redact::redact_label(&image)
+					)
 				}
 				Err(e) => {
-					tracing::warn!("could not remove image {image}: {e}");
+					tracing::warn!(
+						"could not remove image {}: {e}",
+						crate::errors::redact::redact_label(&image)
+					);
 					first_err.get_or_insert(crate::error::ComposeError::Podman(e));
 				}
 			}

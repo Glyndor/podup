@@ -34,6 +34,7 @@ pub fn progress_enabled() -> bool {
 /// …), tinted green on a colour sink. A no-op unless [`set_progress`] enabled
 /// progress output, so stdout consumers and machine output are never polluted.
 pub fn progress_line(kind: &str, name: &str, action: &str) {
+	let name = &crate::errors::redact::redact_label(name);
 	// Test-only recording: lives next to the gate so a test that runs with
 	// `PROGRESS_ENABLED=false` (the cargo-test default, and what every library
 	// embedder sees) can still observe that the closing verb reached

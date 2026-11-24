@@ -81,7 +81,12 @@ fn every_url_in_a_message_is_redacted_and_the_rest_is_kept() {
 
 #[test]
 fn text_without_a_url_is_unchanged() {
-	for text in ["", "no such container: web", "a:b@c d?e#f", "ends with ://"] {
+	for text in [
+		"",
+		"no such container: web",
+		"a:b c@d d?e#f",
+		"ends with ://",
+	] {
 		assert_eq!(redact_urls_in_text(text), text);
 	}
 }
@@ -395,4 +400,34 @@ fn the_end_of_a_token_that_is_punctuation_does_not_come_back_with_the_text() {
 		redact_urls_in_text("(https://h.example/x?token=ab)"),
 		"(https://h.example/x"
 	);
+}
+
+#[test]
+fn a_password_in_an_image_reference_put_into_any_text_never_comes_out() {
+	let mut rng = Rng(0x7a3c_91e5_55d2_0b17);
+	let around: &[&str] = &[
+		"",
+		" ",
+		"\"",
+		"'",
+		"(",
+		"\u{201c}",
+		"\u{e9}",
+		"\u{1f600}",
+		"parsing reference ",
+		"x\n",
+	];
+	for round in 0..20_000 {
+		let n = 1 + (rng.next() % 6) as usize;
+		let body: String = (0..n).map(|_| rng.pick(SECRET_CHARS)).collect();
+		let password = format!("PW{round:05}{body}");
+		let reference = format!("u{round}:{password}@registry.example/team/img:tag");
+		let before = rng.pick(around);
+		let after = rng.pick(around);
+		let shown = redact_urls_in_text(&format!("{before}{reference}{after} and {reference}"));
+		assert!(
+			!shown.contains(&password),
+			"the password came out at iteration {round}"
+		);
+	}
 }
