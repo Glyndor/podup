@@ -190,7 +190,7 @@ def problems(path):
                     continue
                 if (s.get("with") or {}).get("ref") != want:
                     bad(f"{label}: `{name}` checks out {(s.get('with') or {}).get('ref')!r}, not the tag of the run")
-                rest = [x for x in steps[i + 1:] if x.get("name") != OVERLAY]
+                rest = [x for x in steps[i + 1:] if x.get("name") not in (OVERLAY, "Trust the workspace")]
                 follow = str(rest[0].get("run", "")) if rest else ""
                 if 'git rev-parse HEAD' not in follow:
                     bad(f"{label}: `{name}` does not check that its checkout is the verified commit")
@@ -422,6 +422,18 @@ def problems(path):
             key = (s.get("env") or {}).get("GLYNDOR_RELEASE_ED25519_KEY")
             if key is not None and key != "${{ inputs.dry_run && env.REHEARSAL_SEED_B64 || secrets.GLYNDOR_RELEASE_ED25519_KEY }}":
                 bad(f"`{name}`: the key of `{s.get('name')}` is not the secret in a real run and the throwaway key in a rehearsal")
+    # 10b. A job that runs in a container is root in a workspace the runner's user owns: it trusts the workspace
+    # before the first git command, or git stops on "dubious ownership", the check of the checkout included.
+    for label, group in (("the builds", rjobs), ("release.yml", jobs), ("the verification", vjobs)):
+        for name, job in group.items():
+            if "container" not in job:
+                continue
+            steps = job.get("steps") or []
+            trust = next((i for i, st in enumerate(steps) if "safe.directory" in str(st.get("run", ""))), None)
+            first_git = next((i for i, st in enumerate(steps) if re.search(r"(^|[;&|(]|\$\(|xargs [^\n]*)\s*git\s+[a-z]", str(st.get("run", "")), re.M) and i != trust), None)
+            if trust is None or (first_git is not None and first_git < trust):
+                bad(f"{label} `{name}` runs in a container and uses git before it trusts the workspace")
+
     # 11. Nothing a release builds from or into is a cache shared with other runs: no cache action, no
     # setup action asked to cache, no restore keys, in any job of the release or of its reusables.
     for label, group in (("release.yml", jobs), ("the builds", rjobs), ("the verification", vjobs)):

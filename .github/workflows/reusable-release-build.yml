@@ -245,6 +245,12 @@ jobs:
           persist-credentials: false
           ref: refs/tags/${{ inputs.tag }}
 
+      - name: Trust the workspace
+        # The job runs as root in a container, and the workspace belongs to the runner's user: without
+        # this every git command after the checkout stops on "dubious ownership", the check that the
+        # checkout is the verified commit included.
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Take the release scripts from the commit that started the rehearsal
         if: ${{ inputs.dry_run }}
         shell: bash

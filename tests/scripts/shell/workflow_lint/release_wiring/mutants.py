@@ -238,6 +238,11 @@ MUTANTS["release-provenance-after-create"] = rel(lambda m: m["jobs"]["release"][
     m["jobs"]["release"]["steps"].index(step(m, "release", "Verify the provenance of the binaries")))))
 MUTANTS["release-cannot-read-attestations"] = rel(lambda m: m["jobs"]["release"]["permissions"].pop("attestations"))
 
+# --- git in the container ---------------------------------------------------------------------------
+MUTANTS["the-container-job-does-not-trust-the-workspace"] = bld(lambda m: m["jobs"]["build-deb"]["steps"].remove(step(m, "build-deb", "Trust the workspace")))
+MUTANTS["the-container-job-trusts-the-workspace-too-late"] = bld(lambda m: m["jobs"]["build-deb"]["steps"].append(
+    m["jobs"]["build-deb"]["steps"].pop(m["jobs"]["build-deb"]["steps"].index(step(m, "build-deb", "Trust the workspace")))))
+
 # --- no shared cache ------------------------------------------------------------------------------
 CACHE = {"name": "cache", "uses": "actions/cache@0000000000000000000000000000000000000000", "with": {"path": "target", "key": "k"}}
 for _j in ("build", "build-deb", "build-rpm", "build-pacman", "sbom"):

@@ -105,7 +105,9 @@ for path, spec, skip in (("reusable-release-verify.yml", ver, ()), ("reusable-re
         for i, s in enumerate(steps):
             if not str(s.get("uses", "")).startswith("actions/checkout@") or job in skip:
                 continue
-            nxt = steps[i + 1] if i + 1 < len(steps) else {}
+            # A container job trusts its workspace first, so that git works at all; the scripts follow.
+            after = [x for x in steps[i + 1:] if x.get("name") != "Trust the workspace"]
+            nxt = after[0] if after else {}
             if nxt.get("name") != OVERLAY:
                 print(f"{path}: job `{job}` does not take the scripts of a rehearsal right after its checkout")
                 continue
