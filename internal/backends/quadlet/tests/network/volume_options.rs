@@ -109,3 +109,67 @@ fn the_generator_keeps_a_unit_whose_type_has_no_device() {
 	assert!(exec.contains("--opt type=tmpfs"), "{exec}");
 	assert!(exec.contains("--opt o=size=1g"), "{exec}");
 }
+
+// --- `driver: image` ---------------------------------------------------------
+
+#[test]
+fn the_image_driver_reads_its_image_from_the_native_key() {
+	let vol = volume_unit(
+		"      image: docker.io/library/busybox:latest\n",
+		Some("image"),
+	);
+	assert!(vol.contains("\nDriver=image\n"), "in:\n{vol}");
+	assert!(
+		vol.contains("\nImage=docker.io/library/busybox:latest\n"),
+		"in:\n{vol}"
+	);
+	assert!(!vol.contains("PodmanArgs="), "in:\n{vol}");
+}
+
+/// `image` is only the image of the `image` driver: under another driver it is
+/// an option like any other and stays in `--opt`.
+#[test]
+fn an_option_named_image_under_another_driver_stays_an_option() {
+	let vol = volume_unit("      image: foo\n", Some("custom"));
+	assert!(!vol.contains("\nImage="), "in:\n{vol}");
+	assert!(
+		vol.contains("PodmanArgs=--opt \"image\"=\"foo\""),
+		"in:\n{vol}"
+	);
+}
+
+#[test]
+fn the_image_driver_without_an_image_is_reported() {
+	let file = parse_str(
+		"services:\n  web:\n    image: nginx\n    volumes:\n      - data:/data\nvolumes:\n  data:\n    driver: image\n",
+	)
+	.unwrap();
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
+	assert!(
+		out.warnings
+			.iter()
+			.any(|w| w.contains("volume 'data'") && w.contains("driver_opts.image")),
+		"{:?}",
+		out.warnings
+	);
+}
+
+#[test]
+fn the_generator_keeps_an_image_volume_and_hands_podman_the_image() {
+	let Some(generator) = generator() else {
+		return;
+	};
+	let exec = generated_exec(
+		&generator,
+		&volume_unit(
+			"      image: docker.io/library/busybox:latest\n",
+			Some("image"),
+		),
+	)
+	.expect("the generator dropped an image volume");
+	assert!(exec.contains("--driver image "), "{exec}");
+	assert!(
+		exec.contains("--opt image=docker.io/library/busybox:latest"),
+		"{exec}"
+	);
+}

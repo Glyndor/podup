@@ -31,8 +31,14 @@ pub(crate) fn volume_unit(name: &str, project: &str, config: Option<&VolumeConfi
 		// other driver option goes through `PodmanArgs=`, as does a mount-option
 		// string Quadlet would not read back byte for byte.
 		let has_device = cfg.driver_opts.contains_key("device");
+		// The `image` driver reads its image from `Image=`: measured on Podman
+		// 6.2.0, a `Driver=image` unit with no `Image=` is dropped by the
+		// generator (`--opt image=` through `PodmanArgs=` does not help), and
+		// `Image=` alone gives the volume no driver.
+		let image_driver = cfg.driver.as_deref() == Some("image");
 		for (key, val) in sorted_label_pairs(cfg.driver_opts.clone()) {
 			match key.as_str() {
+				"image" if image_driver => vol.add("Image", val),
 				"type" if has_device => vol.add("Type", val),
 				"device" => vol.add("Device", val),
 				"o" => vol.add_native("Options", "--opt o=", &val),
