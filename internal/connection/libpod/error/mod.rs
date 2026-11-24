@@ -83,10 +83,15 @@ impl fmt::Display for PodmanError {
 			Self::Json(e) => write!(f, "json error: {e}"),
 			Self::StreamTooLarge => write!(f, "stream exceeds the 1048576 byte limit"),
 			Self::StreamEndedEarly => write!(f, "stream ended early"),
-			Self::Api { status, message } => match conflict_hint(message) {
-				Some(hint) => write!(f, "{hint} (podman: {message})"),
-				None => write!(f, "podman API error (HTTP {status}): {message}"),
-			},
+			Self::Api { status, message } => {
+				// Podman repeats the URL of a build context it failed to clone,
+				// credentials and query included.
+				let shown = crate::errors::redact::redact_urls_in_text(message);
+				match conflict_hint(message) {
+					Some(hint) => write!(f, "{hint} (podman: {shown})"),
+					None => write!(f, "podman API error (HTTP {status}): {shown}"),
+				}
+			}
 			Self::Field {
 				service,
 				field,

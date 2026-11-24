@@ -333,7 +333,11 @@ impl fmt::Display for ComposeError {
 			}
 			Self::InvalidPort(s) => write!(f, "invalid port mapping: {s}"),
 			Self::InvalidSignal(s) => write!(f, "invalid signal: {s}"),
-			Self::Build(s) => write!(f, "build error: {s}"),
+			Self::Build(s) => write!(
+				f,
+				"build error: {}",
+				crate::errors::redact::redact_urls_in_text(s)
+			),
 			Self::ImagePull(s) => write!(f, "failed to pull image {s}"),
 			Self::Copy(s) => write!(f, "cp error: {s}"),
 			Self::Extends(s) => write!(f, "extends error: {s}"),
