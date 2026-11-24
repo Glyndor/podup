@@ -13,7 +13,6 @@
 .github/scripts/checks/check-branch-conclusion.sh	C N N R N
 .github/scripts/checks/check-caller-with-defaults.py	C N N R N
 .github/scripts/checks/check-local-reusables.py	C N N R N
-.github/scripts/checks/check-merge-group-triggers.py	C N N R N
 .github/scripts/checks/check-planning-words.sh	C N N R N
 .github/scripts/checks/check-private-document-references.sh	C N N R N
 .github/scripts/checks/check-tooling-isolation.py	C N N R N
@@ -27,6 +26,7 @@
 .github/scripts/checks/rust-build-inputs.sh	R B N R N
 .github/scripts/checks/rust-ci-inputs.sh	R N N R N
 .github/scripts/checks/signing-key-isolation.py	C N N R N
+.github/scripts/checks/triggers/*	C N N R N
 .github/scripts/checks/workflow-lint-inputs.sh	C N N R N
 .github/scripts/ci/*	C B N R V
 .github/scripts/fedora_image/*	C B N R V
@@ -128,6 +128,7 @@ tests/scripts/shell/workflow_behaviour/workflow-lint-inputs.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/write-token-jobs.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/check-pins.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/lint-shell-covers-the-contract.test.sh	N N N R N
+tests/scripts/shell/workflow_lint/push-triggers.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-gate.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-least-privilege.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-wiring.test.sh	N N N R N
