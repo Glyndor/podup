@@ -1,0 +1,7 @@
+# The rpm builder: the pinned AlmaLinux 9 image plus rpm-build, nothing else.
+# `build-rpm.sh` passes the base by digest (images.env) as BASE.
+ARG BASE
+FROM ${BASE}
+RUN dnf -y --setopt=install_weak_deps=0 install rpm-build \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf /var/log/dnf*.log /var/log/hawkey.log
