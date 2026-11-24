@@ -6,22 +6,15 @@
 //! position it did not get from the string itself, so no input can split a
 //! multibyte character.
 
-use std::sync::{Mutex, OnceLock};
+mod known;
 
-/// The shortest part of a known URL (user, password, query value) that is
-/// replaced wherever it appears in a message. A shorter one would garble every
-/// message it happens to be a substring of, and the structure of the URL is
-/// what hides it.
-const MIN_PART_LEN: usize = 4;
+#[cfg(test)]
+use known::parts_of;
+use known::{forget_known, percent_decoded, MARK, MARK_CHAR};
+pub(crate) use known::{remember_url, remember_userinfo};
 
 /// What stands where a known credential was.
 const HIDDEN: &str = "<redacted>";
-
-/// How many remembered URLs are kept; the oldest goes first.
-const MAX_KNOWN: usize = 32;
-
-/// The shortest user name of a reference that is remembered on its own.
-const MIN_USER_LEN: usize = 6;
 
 /// Punctuation that ends a sentence and is not worth reading as part of the
 /// URL in front of it.
@@ -131,153 +124,6 @@ fn redact_run(run: &str) -> String {
 		.collect()
 }
 
-/// One URL the engine was given in full, with what has to be hidden from any
-/// message that repeats it.
-struct Known {
-	url: String,
-	shown: String,
-	parts: Vec<String>,
-}
-
-fn known() -> &'static Mutex<Vec<Known>> {
-	static KNOWN: OnceLock<Mutex<Vec<Known>>> = OnceLock::new();
-	KNOWN.get_or_init(|| Mutex::new(Vec::new()))
-}
-
-/// `value` with its `%XX` escapes decoded, when that is valid UTF-8.
-fn percent_decoded(value: &str) -> Option<String> {
-	let bytes = value.as_bytes();
-	let mut out = Vec::with_capacity(bytes.len());
-	let mut i = 0;
-	while i < bytes.len() {
-		if bytes[i] == b'%' && i + 2 < bytes.len() {
-			let byte = std::str::from_utf8(&bytes[i + 1..i + 3])
-				.ok()
-				.and_then(|hex| u8::from_str_radix(hex, 16).ok());
-			if let Some(byte) = byte {
-				out.push(byte);
-				i += 3;
-				continue;
-			}
-		}
-		out.push(bytes[i]);
-		i += 1;
-	}
-	String::from_utf8(out)
-		.ok()
-		.filter(|decoded| decoded != value)
-}
-
-/// The user, the password and every value of the query of `url`, as written
-/// and decoded, longest first.
-fn parts_of(url: &str) -> Vec<String> {
-	let no_fragment = url.split('#').next().unwrap_or(url);
-	let (head, query) = match no_fragment.split_once('?') {
-		Some((head, query)) => (head, Some(query)),
-		None => (no_fragment, None),
-	};
-	let mut found: Vec<&str> = Vec::new();
-	if let Some((_, rest)) = head.split_once("://") {
-		if let (Some(userinfo), _) = split_userinfo(rest) {
-			match userinfo.split_once(':') {
-				Some((user, password)) => found.extend([user, password]),
-				None => found.push(userinfo),
-			}
-		}
-	}
-	for pair in query.into_iter().flat_map(|q| q.split('&')) {
-		found.push(pair.split_once('=').map_or(pair, |(_, value)| value));
-	}
-	let mut parts: Vec<String> = Vec::new();
-	for part in found {
-		if part.chars().count() < MIN_PART_LEN {
-			continue;
-		}
-		parts.push(part.to_string());
-		parts.extend(percent_decoded(part));
-	}
-	parts.sort_by_key(|part| std::cmp::Reverse(part.len()));
-	parts.dedup();
-	parts
-}
-
-/// Remember a URL the engine was given, so that a message that repeats it
-/// exactly, or one of its credentials on its own (a tool that echoes only the
-/// password, or the URL with the escapes undone), is cleaned even where the
-/// shape of the URL does not say what is a credential.
-pub(crate) fn remember_url(url: &str) {
-	let shown = redact_url(url);
-	if shown == url {
-		return;
-	}
-	let mut known = known()
-		.lock()
-		.unwrap_or_else(|poisoned| poisoned.into_inner());
-	if known.iter().all(|entry| entry.url != url) {
-		// A process builds a handful of contexts; the bound keeps one that
-		// builds many from growing without limit.
-		if known.len() >= MAX_KNOWN {
-			known.remove(0);
-		}
-		known.push(Known {
-			url: url.to_string(),
-			shown,
-			parts: parts_of(url),
-		});
-	}
-}
-
-/// What stands for a hidden part while the text still has to be read for its
-/// URLs: unlike [`HIDDEN`] it holds no `<`, which ends a URL, so a part that
-/// sits inside a longer secret cannot cut the rest of that secret loose.
-const MARK: &str = "\u{0}";
-
-/// [`MARK`] as a character.
-const MARK_CHAR: char = '\u{0}';
-
-/// `text` with the URLs remembered by [`remember_url`], and their credentials,
-/// replaced; each credential by `mark`.
-fn forget_known(text: &str, mark: &str) -> String {
-	let known = known()
-		.lock()
-		.unwrap_or_else(|poisoned| poisoned.into_inner());
-	// Longest first: a known value that holds another one is hidden whole, not
-	// from where the shorter one starts.
-	let mut urls: Vec<(&str, String)> = known
-		.iter()
-		.map(|entry| {
-			// What shows as [`HIDDEN`] is user information. While the text is
-			// still to be read, it keeps the `:` the reading looks for.
-			let shown = match (entry.shown == HIDDEN, mark == MARK) {
-				(true, true) => format!("{MARK}:{MARK}"),
-				(true, false) => mark.to_string(),
-				(false, _) => entry.shown.clone(),
-			};
-			(entry.url.as_str(), shown)
-		})
-		.collect();
-	urls.sort_by_key(|(url, _)| std::cmp::Reverse(url.len()));
-	let mut parts: Vec<&str> = known
-		.iter()
-		.flat_map(|entry| {
-			entry
-				.parts
-				.iter()
-				.filter(|part| !entry.shown.contains(part.as_str()))
-				.map(String::as_str)
-		})
-		.collect();
-	parts.sort_by_key(|part| std::cmp::Reverse(part.len()));
-	let mut out = text.to_string();
-	for (url, shown) in urls {
-		out = out.replace(url, &shown);
-	}
-	for part in parts {
-		out = out.replace(part, mark);
-	}
-	out
-}
-
 /// The characters that end a word of text, as they end a URL.
 fn ends_a_word(c: char) -> bool {
 	c.is_whitespace() || matches!(c, '"' | '<' | '>')
@@ -317,47 +163,12 @@ fn is_digest(text: &str) -> bool {
 	})
 }
 
-/// Remember the user information of a reference, so a message that repeats the
-/// user or the password on its own is cleaned too.
-fn remember_userinfo(userinfo: &str) {
-	let mut parts: Vec<String> = Vec::new();
-	// A short user name (`git`, `admin`) is a word of ordinary text, and hiding
-	// it everywhere would garble messages that say nothing of a credential. A
-	// token alone, with no `:`, is a secret.
-	let pieces = match userinfo.split_once(':') {
-		Some((user, secret)) => vec![(user, MIN_USER_LEN), (secret, MIN_PART_LEN)],
-		None => vec![(userinfo, MIN_PART_LEN)],
-	};
-	for (part, least) in pieces {
-		if part.chars().count() >= least && !part.contains(MARK) {
-			parts.push(part.to_string());
-			parts.extend(percent_decoded(part));
-		}
-	}
-	if parts.is_empty() {
-		return;
-	}
-	parts.sort_by_key(|part| std::cmp::Reverse(part.len()));
-	parts.dedup();
-	let mut known = known()
-		.lock()
-		.unwrap_or_else(|poisoned| poisoned.into_inner());
-	if known.iter().all(|entry| entry.url != userinfo) {
-		if known.len() >= MAX_KNOWN {
-			known.remove(0);
-		}
-		known.push(Known {
-			url: userinfo.to_string(),
-			shown: HIDDEN.to_string(),
-			parts,
-		});
-	}
-}
-
 /// The user information of a value that is one image reference, as a name or a
 /// segment of a path is: what comes before the last `@` that is not the one of
 /// a digest, whatever it holds (a `/`, a number after a `:`, no `:` at all, a
-/// blank). A `scheme://` in front is left out and given back as the prefix.
+/// blank). A `scheme://` in front is left out and given back as the prefix; a
+/// `://` further in is part of what comes before the `@`, as in a nested proxy
+/// reference.
 /// Returns the prefix, the user information, and what follows it.
 fn reference_userinfo(value: &str) -> Option<(&str, &str, &str)> {
 	let scheme_end = value.find("://").filter(|at| {
@@ -370,9 +181,6 @@ fn reference_userinfo(value: &str) -> Option<(&str, &str, &str)> {
 		Some(at) => value.split_at(at + "://".len()),
 		None => ("", value),
 	};
-	if rest.contains("://") {
-		return None;
-	}
 	let base = match rest.rfind('@') {
 		Some(at) if is_digest(&rest[at + 1..]) => &rest[..at],
 		_ => rest,
@@ -380,6 +188,19 @@ fn reference_userinfo(value: &str) -> Option<(&str, &str, &str)> {
 	let at = base.rfind('@')?;
 	let (userinfo, after) = (&rest[..at], &rest[at + 1..]);
 	(!userinfo.is_empty() && !after.is_empty()).then_some((prefix, userinfo, after))
+}
+
+/// Remember the credentials of a build context, or of an image a build takes
+/// as a context: what the URL carries in its user information and query, and
+/// the user information of the name when it is a reference.
+pub(crate) fn remember_context(context: &str) {
+	remember_url(context);
+	// As it is written, and then without the query and the fragment: a `#` or a
+	// `?` in a password cuts the user information short in the first reading,
+	// and a query that holds an `@` misleads the second. Remembering more only
+	// hides more.
+	remember_reference(context);
+	remember_reference(context.split(['?', '#']).next().unwrap_or(context));
 }
 
 /// Remember the credentials of an image reference the configuration or the
@@ -479,12 +300,10 @@ fn redact_text(text: &str, whole: bool) -> String {
 	// A value that is known to be one reference (a name, a segment of a path) is
 	// read whole first: a password may hold a blank, a quote or a bracket, which
 	// end a word of a message and would cut it in two.
-	if whole {
-		if let Some((prefix, _, after)) = reference_userinfo(&text) {
-			let shown = format!("{prefix}{after}");
-			return forget_known(&shown, HIDDEN).replace(MARK, HIDDEN);
-		}
-	}
+	let text = match reference_userinfo(&text).filter(|_| whole) {
+		Some((prefix, _, after)) => format!("{prefix}{after}"),
+		None => text,
+	};
 	let mut rest = text.as_str();
 	let mut out = String::with_capacity(text.len());
 	while let Some(at) = rest.find("://") {

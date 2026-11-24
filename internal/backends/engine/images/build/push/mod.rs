@@ -8,7 +8,7 @@ use tracing::{info, warn};
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::image::ImagePullProgress;
-use crate::libpod::{urlencoded, PodmanError, API_PREFIX};
+use crate::libpod::{image_urlencoded, PodmanError, API_PREFIX};
 
 use crate::engine::Engine;
 
@@ -224,11 +224,14 @@ impl Engine {
 		} else {
 			crate::ui::progress_line("Image", image, "Pushing");
 		}
-		let mut query = format!("destination={}", urlencoded(image));
+		let mut query = format!("destination={}", image_urlencoded(image));
 		if let Some(tls) = opts.tls_verify {
 			query.push_str(&format!("&tlsVerify={tls}"));
 		}
-		let path = format!("{API_PREFIX}/images/{}/push?{query}", urlencoded(image));
+		let path = format!(
+			"{API_PREFIX}/images/{}/push?{query}",
+			image_urlencoded(image)
+		);
 
 		let resp = self
 			.client

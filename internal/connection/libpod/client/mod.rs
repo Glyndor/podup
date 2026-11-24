@@ -46,7 +46,7 @@ use link::stream;
 use link::transport;
 
 use pool::ConnPool;
-pub(crate) use request::encode::{is_valid_object_name, urlencoded};
+pub(crate) use request::encode::{image_urlencoded, is_valid_object_name, urlencoded};
 pub(crate) use response::path_stat::PathStat;
 pub(crate) use send::hijack::Hijacked;
 // Re-exports for `super::X` from the folders below. Kept here so the

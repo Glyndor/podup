@@ -8,8 +8,8 @@
 
 use crate::compose::types::BuildConfig;
 use crate::error::{ComposeError, Result};
-use crate::libpod::urlencoded;
 use crate::libpod::API_PREFIX;
+use crate::libpod::{image_urlencoded, urlencoded};
 
 use super::super::Engine;
 
@@ -50,10 +50,10 @@ impl Engine {
 				.rsplit_once(':')
 				.map(|(r, t)| (r.to_string(), t.to_string()))
 				.unwrap_or_else(|| (normalized.clone(), "latest".to_string()));
-			let encoded_source = urlencoded(wire_tag);
+			let encoded_source = image_urlencoded(wire_tag);
 			let tag_path = format!(
 				"{API_PREFIX}/images/{encoded_source}/tag?repo={}&tag={}",
-				urlencoded(&repo),
+				image_urlencoded(&repo),
 				urlencoded(&tag_str),
 			);
 			// Returning () here meant `build` could not report a failed tag at

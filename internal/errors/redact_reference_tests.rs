@@ -1,4 +1,7 @@
-use super::{redact_label, redact_request_path, redact_urls_in_text, remember_reference};
+use super::{
+	redact_label, redact_request_path, redact_urls_in_text, remember_context, remember_reference,
+	remember_url,
+};
 
 #[test]
 fn an_image_reference_with_credentials_loses_them_wherever_it_is_repeated() {
@@ -201,6 +204,7 @@ fn a_name_is_read_whole_whatever_its_user_information_holds() {
 		("docker://u:p@h/i", "docker://h/i"),
 		("docker://t@h/i", "docker://h/i"),
 		("docker://u:p@a/b@h/i", "docker://h/i"),
+		("proxy://u:p@a/https://v:q@h/i", "proxy://h/i"),
 	] {
 		assert_eq!(redact_label(name), expected);
 		let pinned = format!("{name}{digest}");
@@ -224,4 +228,53 @@ fn a_reference_that_was_remembered_is_hidden_in_a_message_that_names_only_its_us
 	assert!(redact_urls_in_text(&format!("unknown transport \"{user}\"")).contains(user));
 	remember_reference(&format!("{user}:pwE5xxxx@registry.example/img"));
 	assert!(!redact_urls_in_text(&format!("unknown transport \"{user}\"")).contains(user));
+}
+
+// What a build context or any other value teaches goes to a list of its own: a
+// run of them cannot push a reference out.
+#[test]
+fn a_run_of_build_contexts_does_not_push_a_remembered_reference_out() {
+	remember_reference("usrOP9xx:pwF6xxxx@registry.example/img");
+	for n in 0..200 {
+		remember_url(&format!("https://uc{n:03}xx:pc{n:03}xx@host.example/r.git"));
+	}
+	let shown = redact_urls_in_text("the password was pwF6xxxx");
+	assert!(
+		!shown.contains("pwF6xxxx"),
+		"the remembered password came out"
+	);
+}
+
+// The contexts of a build: an image named with a token alone, and a URL.
+#[test]
+fn the_credentials_of_a_build_context_are_remembered_before_the_request() {
+	remember_context("tkST1UVx@registry.example/team/base:1");
+	remember_context("https://usrWX2xx:pwH8xxxx@host.example/r.git?token=tkYZ3abc#main");
+	for secret in ["tkST1UVx", "pwH8xxxx", "tkYZ3abc", "usrWX2xx"] {
+		let shown = redact_urls_in_text(&format!("the engine refused {secret} for the context"));
+		assert!(
+			!shown.contains(secret),
+			"a credential of a context came out"
+		);
+	}
+}
+
+// The tag of a reference that is not split yet still holds the credentials.
+#[test]
+fn a_whole_reference_is_remembered_before_it_is_split() {
+	remember_reference("usrAB4xx:pwJ9xxxx@registry.example");
+	let shown = redact_urls_in_text("commit refused: pwJ9xxxx");
+	assert!(!shown.contains("pwJ9xxxx"), "the password came out");
+}
+
+// A `#` or a `?` in a password cuts the user information short when the query
+// and the fragment are taken off first.
+#[test]
+fn a_password_with_a_hash_or_a_question_mark_is_remembered_whole() {
+	remember_context("https://usrCD5xx:pa#ssKL1xx@host.example/r.git");
+	remember_context("usrEF6xx:pa?ssMN2xx@registry.example/img");
+	for secret in ["pa#ssKL1xx", "pa?ssMN2xx"] {
+		let shown = redact_urls_in_text(&format!("the engine refused {secret} for the context"));
+		assert!(!shown.contains(secret), "the rest of a password came out");
+	}
 }

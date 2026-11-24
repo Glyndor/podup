@@ -8,7 +8,7 @@ use http_body_util::BodyExt;
 
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
-use crate::libpod::{urlencoded, API_PREFIX};
+use crate::libpod::{image_urlencoded, urlencoded, API_PREFIX};
 
 use crate::engine::Engine;
 
@@ -83,7 +83,7 @@ fn commit_path(container: &str, repo: &str, tag: &str, pause: bool) -> String {
 	format!(
 		"{API_PREFIX}/commit?container={}&repo={}&tag={}&pause={pause}",
 		urlencoded(container),
-		urlencoded(repo),
+		image_urlencoded(repo),
 		urlencoded(tag),
 	)
 }
@@ -146,6 +146,9 @@ impl Engine {
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
 		let container = self.replica_name_at(service_name, service, index)?;
 
+		// The whole reference, before it is split: what is left of the credentials
+		// in a tag is still remembered.
+		crate::errors::redact::remember_reference(image);
 		let (repo, tag) = split_image_ref(image)?;
 		// `None` leaves Podman's default (pause on), matching `docker commit`.
 		let pause = opts.pause.unwrap_or(true);
