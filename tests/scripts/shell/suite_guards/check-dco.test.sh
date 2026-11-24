@@ -79,6 +79,38 @@ check "one matching sign-off among others passes" 0 "$(run "$base" HEAD)"
 sign "$(printf 'x\n\nSigned-off-by: t\n <t@x>')"
 check "a value folded onto the next line passes" 0 "$(run "$base" HEAD)"
 
+# The one exception: the commit GitHub writes for a Dependabot pull request. The pair of author
+# and trailer is accepted as a whole, and each attack on it is refused.
+dep_author='49699333+dependabot[bot]@users.noreply.github.com'
+dep_signoff='dependabot[bot] <support@github.com>'
+as_author() { # <name> <email> <message>: a commit by this author with exactly this message
+	g reset -q --hard "$base"
+	echo one > "$repo/b"; g add -A
+	git -C "$repo" -c user.name="$1" -c user.email="$2" -c commit.gpgSign=false commit -q -m "$3"
+}
+as_author dependabot[bot] "$dep_author" "$(printf 'x\n\nSigned-off-by: %s' "$dep_signoff")"
+check "Dependabot's author with the sign-off GitHub puts on it passes" 0 "$(run "$base" HEAD)"
+as_author dependabot[bot] "$dep_author" "$(printf 'x\n\nSigned-off-by: dependabot[bot] <%s>' "$dep_author")"
+check "Dependabot's author signing with its own address still passes" 0 "$(run "$base" HEAD)"
+as_author someone someone@elsewhere.example "$(printf 'x\n\nSigned-off-by: %s' "$dep_signoff")"
+check "another author with Dependabot's trailer fails" 1 "$(run "$base" HEAD)"
+as_author dependabot[bot] "$dep_author" "$(printf 'x\n\nSigned-off-by: dependabot[bot] <someone@elsewhere.example>')"
+check "Dependabot's author with another address in the trailer fails" 1 "$(run "$base" HEAD)"
+as_author dependabot[bot] "$dep_author" "$(printf 'x\n\nSigned-off-by: Dependabot <support@github.com>')"
+check "Dependabot's author with another name on the trailer fails" 1 "$(run "$base" HEAD)"
+as_author dependabot[bot] "$dep_author" "$(printf 'x\n\nSigned-off-by: %s and more' "$dep_signoff")"
+check "Dependabot's trailer with text after it fails" 1 "$(run "$base" HEAD)"
+as_author dependabot[bot] "$dep_author" "$(printf 'x\n\nSigned-off-by: dependabot[bot] <SUPPORT@github.com>')"
+check "the trailer is compared as written, not in another case" 1 "$(run "$base" HEAD)"
+as_author dependabot[bot] "12345+dependabot[bot]@users.noreply.github.com" "$(printf 'x\n\nSigned-off-by: %s' "$dep_signoff")"
+check "an author address that only looks like Dependabot's fails" 1 "$(run "$base" HEAD)"
+as_author dependabot[bot] "49699333+Dependabot[bot]@users.noreply.github.com" "$(printf 'x\n\nSigned-off-by: %s' "$dep_signoff")"
+check "and so does one that differs from it in case" 1 "$(run "$base" HEAD)"
+as_author t t@x "$(printf 'x\n\nSigned-off-by: t <support@github.com>')"
+check "a person signing with support@github.com fails" 1 "$(run "$base" HEAD)"
+as_author dependabot[bot] "$dep_author" "x"
+check "Dependabot's author with no sign-off at all fails" 1 "$(run "$base" HEAD)"
+
 check "an unreadable range fails" 1 "$(run "$base" nonexistent)"
 check "no arguments fails" 1 "$( (cd "$repo" && bash "$SCRIPT" > /dev/null 2>&1; echo $?) | sed 's/^2$/1/')"
 
