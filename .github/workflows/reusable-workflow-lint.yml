@@ -247,6 +247,9 @@ jobs:
               "reusable-rust-audit.yml": [
                   "cargo audit", "cargo deny",
               ],
+              "reusable-deprecation-notices.yml": [
+                  "no deprecation notices",
+              ],
           }
 
           # Required check names emitted directly by a job in this

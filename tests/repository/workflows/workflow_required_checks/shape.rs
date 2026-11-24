@@ -58,6 +58,7 @@ pub const REQUIRED_ON_MAIN: &[&str] = &[
 	// the two hygiene checks. They are not part of the Rust gate.
 	"audit / cargo audit",
 	"audit / cargo deny",
+	"deprecations / no deprecation notices",
 	"commit identity",
 	"secret scan",
 	"pin values",
@@ -67,6 +68,7 @@ pub const REQUIRED_ON_MAIN: &[&str] = &[
 	// a pull request whose base is `main`, which runs every suite.
 	"audit / cargo audit (promotion)",
 	"audit / cargo deny (promotion)",
+	"deprecations / no deprecation notices (promotion)",
 	"commit identity (promotion)",
 	"secret scan (promotion)",
 	"pin values (promotion)",
@@ -93,6 +95,7 @@ const MAIN_ONLY: &[&str] = &[
 	"develop-only / develop-only",
 	"audit / cargo audit (promotion)",
 	"audit / cargo deny (promotion)",
+	"deprecations / no deprecation notices (promotion)",
 	"commit identity (promotion)",
 	"secret scan (promotion)",
 	"pin values (promotion)",

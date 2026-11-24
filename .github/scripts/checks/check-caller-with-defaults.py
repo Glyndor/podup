@@ -66,6 +66,9 @@ REQUIRED_REUSABLES = {
     "reusable-rust-audit.yml": [
         "cargo audit", "cargo deny",
     ],
+    "reusable-deprecation-notices.yml": [
+        "no deprecation notices",
+    ],
 }
 
 

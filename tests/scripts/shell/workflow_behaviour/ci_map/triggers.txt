@@ -77,6 +77,7 @@
 .github/workflows/reusable-cancel-others.yml	lint-shell
 .github/workflows/reusable-dco.yml	lint-shell
 .github/workflows/reusable-dependabot-freshness.yml	lint-shell
+.github/workflows/reusable-deprecation-notices.yml	lint-shell
 .github/workflows/reusable-installer-contract.yml	asset-contract
 .github/workflows/reusable-line-limit.yml	lint-shell
 .github/workflows/reusable-main-guard.yml	lint-shell
