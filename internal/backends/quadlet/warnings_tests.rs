@@ -31,13 +31,8 @@ configs:
 	let warnings = generate_at(&file, "proj", std::path::Path::new("/srv/app")).warnings;
 	let joined = warnings.join("\n");
 
-	for field in [
-		"scale/replicas",
-		"configs",
-		"volumes_from",
-		"network_mode",
-		"profiles",
-	] {
+	// `configs` is not in the list: the units carry them as `Secret=` lines.
+	for field in ["scale/replicas", "volumes_from", "network_mode", "profiles"] {
 		assert!(
 			joined.contains(field),
 			"missing warning for {field}; got:\n{joined}"

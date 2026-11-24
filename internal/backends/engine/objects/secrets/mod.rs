@@ -53,6 +53,7 @@ use plan::{collect_native_plans, Payload};
 // `scoped_name` itself is the gate; this re-export just lifts it through
 // the (otherwise private) `plan` module.
 pub(crate) use plan::scoped_name;
+pub(crate) use secret_name::is_valid_secret_name;
 
 use crate::engine::Engine;
 

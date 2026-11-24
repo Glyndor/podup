@@ -29,6 +29,7 @@ pub(crate) use images::context;
 use images::image;
 use objects::network;
 use objects::secrets;
+pub(crate) use objects::secrets::{is_valid_secret_name, scoped_name};
 use objects::volume;
 pub(crate) use objects::volume_mounts;
 pub(crate) use observe::events;
@@ -46,6 +47,7 @@ pub use copy::CpOptions;
 pub use events::EventsOptions;
 pub use image::{resolve_image_digests, CommitOptions};
 pub use lifecycle::{validate_stop_timeout, ContainerSnapshot, RunOptions, RunOverrides};
+pub(crate) use project::lock::reject_dangerous_secret_mode;
 pub use project::ProjectLock;
 
 pub(crate) use container_config::build_log_config;

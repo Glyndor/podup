@@ -6,7 +6,7 @@
 /// name) and more than 128 characters. This is not the rule for a project name:
 /// that one is lowercase only and has no dots, and reusing it here refused
 /// `API_KEY` and `my.secret`, which Docker Compose accepts.
-pub(super) fn is_valid_secret_name(name: &str) -> bool {
+pub(crate) fn is_valid_secret_name(name: &str) -> bool {
 	!name.is_empty()
 		&& name.len() <= 128
 		&& !name.starts_with('.')

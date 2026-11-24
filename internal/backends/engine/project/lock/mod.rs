@@ -12,6 +12,7 @@
 
 pub(in crate::backends::engine) mod staging;
 pub use staging::is_safe_project_name;
+pub(crate) use staging::reject_dangerous_secret_mode;
 
 use crate::error::{ComposeError, Result};
 
