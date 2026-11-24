@@ -755,7 +755,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Podman from the Glyndor apt repository
-        timeout-minutes: 10
+        id: install
+        # Three tries of at most seven minutes each, and the waits between them.
+        timeout-minutes: 25
         run: |
           set -euo pipefail
           start=$SECONDS
@@ -792,17 +794,9 @@ jobs:
           sudo install -D -m 0644 "$key" /etc/apt/keyrings/glyndor.gpg
           printf 'Types: deb\nURIs: https://apt.glyndor.net\nSuites: stable\nComponents: main\nSigned-By: /etc/apt/keyrings/glyndor.gpg\n' |
             sudo tee /etc/apt/sources.list.d/glyndor.sources >/dev/null
-          export DEBIAN_FRONTEND=noninteractive
-          apt_opts=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::ForceIPv4=true)
-          sudo timeout 120 apt-get -q "${apt_opts[@]}" update
-          sudo timeout 600 apt-get -q "${apt_opts[@]}" install -y podman
-          ver="$(podman --version | awk '{print $3}')"
-          echo "podman: $ver"
-          if [ "$(printf '%s\n%s\n' "$ver" "$PODMAN_FLOOR" | LC_ALL=C sort -V | head -1)" != "$PODMAN_FLOOR" ]; then
-            echo "::error::the runner has Podman $ver, below the $PODMAN_FLOOR floor podup requires"
-            exit 1
-          fi
-          echo "podman=$ver" >> "$PHASES"
+          # The script tries the install up to three times, reads Glyndor's
+          # source list only, and fails the step when the packages cannot be had.
+          bash .github/scripts/podman_lane/install-podman.sh
           echo "install=$((SECONDS - start))" >> "$PHASES"
       - name: Install the Rust toolchain
         run: |
@@ -865,8 +859,11 @@ jobs:
           [ "$rc" -eq 0 ] && [ "$scan" -eq 0 ]
       - name: Run the Quadlet tests against the generator of this Podman
         # They skip where the generator is older than the minimum, which is
-        # every stock runner; here its absence is a failure.
-        if: always()
+        # every stock runner; here its absence is a failure. They run after a
+        # failed suite so both results show, but never after a failed install:
+        # without Podman 6.2 they could only fail for a reason that hides the
+        # real one.
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         env:
           PODUP_REQUIRE_QUADLET_GENERATOR: "1"
         run: |
@@ -895,7 +892,9 @@ jobs:
           {
             echo "### Podman native lane"
             echo ""
-            [ -f "$PHASES" ] && sed -E 's/^([a-z]+)=([0-9]+)$/- \1: \2 s/; s/^podman=(.*)$/- podman: \1/' "$PHASES"
+            if [ -f "$PHASES" ]; then
+              sed -E 's/^([a-z]+)=([0-9]+)$/- \1: \2 s/; s/^podman=(.*)$/- podman: \1/' "$PHASES"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   podman-majors:

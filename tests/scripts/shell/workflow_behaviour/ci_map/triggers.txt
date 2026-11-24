@@ -217,6 +217,7 @@ tests/scripts/shell/bench/*	debian-build,lint-shell
 tests/scripts/shell/fedora_image/*	debian-build,lint-shell
 tests/scripts/shell/hardening/*	debian-build,lint-shell
 tests/scripts/shell/install/*	debian-build,lint-shell
+tests/scripts/shell/podman_lane/*	debian-build,lint-shell
 tests/scripts/shell/suite_guards/*	debian-build,lint-shell
 tests/scripts/shell/workflow_behaviour/binary-budget-paths.test.sh	debian-build,lint-shell
 tests/scripts/shell/workflow_behaviour/branch-health-conclusion.test.sh	debian-build,lint-shell

@@ -465,7 +465,7 @@
      {},
      {
       "name": "Install Podman from the Glyndor apt repository",
-      "timeout-minutes": 10
+      "timeout-minutes": 25
      },
      {
       "name": "Install the Rust toolchain"
@@ -480,7 +480,7 @@
       "name": "Run the engine suite and the leak scan"
      },
      {
-      "if": "always()",
+      "if": "${{ !cancelled() && steps.install.outcome == 'success' }}",
       "name": "Run the Quadlet tests against the generator of this Podman"
      },
      {
