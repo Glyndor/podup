@@ -548,3 +548,17 @@ fn the_unit_does_not_wait_for_ever() {
 		.unwrap()
 		.contains("TimeoutStartSec=120\n"));
 }
+
+/// A path in a unit is the same on every host that generates it: the parts that
+/// mean nothing are dropped, `..` is not resolved.
+#[test]
+fn a_path_is_written_without_the_parts_that_mean_nothing() {
+	for (given, want) in [
+		("/srv//app/./x/../y/", "/srv/app/x/../y"),
+		("/", "/"),
+		("/srv/app/./tok", "/srv/app/tok"),
+		("rel/./a", "rel/a"),
+	] {
+		assert_eq!(super::tidy_path(given), want);
+	}
+}

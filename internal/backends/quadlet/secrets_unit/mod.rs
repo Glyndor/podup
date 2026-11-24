@@ -232,13 +232,7 @@ pub(crate) fn classify(
 	let to_create = format!("podman secret create --label podup.project={project} {scoped}");
 	if let Some(file) = def.file {
 		let path = crate::engine::container::resolve_bind_source(file, base_dir);
-		// `./` and `//` in the middle of a path mean nothing and read badly in a
-		// unit; the components drop them without touching `..`.
-		let path = std::path::Path::new(&path)
-			.components()
-			.collect::<std::path::PathBuf>()
-			.to_string_lossy()
-			.into_owned();
+		let path = tidy_path(&path);
 		if let Err(why) = checked_path(&path) {
 			return refused(format!(
 				"the file of {word} {name:?} is not exported ({why}); create it with \
@@ -298,6 +292,25 @@ pub(crate) fn classify(
 		)
 	};
 	Source::Operator { advice }
+}
+
+/// `./` and `//` in the middle of a path mean nothing and read badly in a unit;
+/// they are dropped without touching `..`. The path is read on the machine the
+/// units run on, a POSIX one, so the `\` of a Windows host that generates them is
+/// a separator.
+fn tidy_path(path: &str) -> String {
+	#[cfg(windows)]
+	let path = path.replace('\\', "/");
+	let joined: Vec<&str> = path
+		.split('/')
+		.filter(|part| !part.is_empty() && *part != ".")
+		.collect();
+	let joined = joined.join("/");
+	if path.starts_with('/') {
+		format!("/{joined}")
+	} else {
+		joined
+	}
 }
 
 /// What to tell the operator about a definition that gives more than one source.
