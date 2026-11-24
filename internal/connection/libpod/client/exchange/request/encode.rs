@@ -4,6 +4,9 @@
 /// everything outside the RFC 3986 unreserved set so container names, project
 /// names, and tags can contain arbitrary bytes without breaking the request.
 pub(crate) fn urlencoded(s: &str) -> String {
+	// Every image reference that goes to the engine goes through here, so what
+	// it holds of credentials is known before any message can repeat it.
+	crate::errors::redact::remember_reference(s);
 	let mut out = String::with_capacity(s.len());
 	for b in s.bytes() {
 		match b {

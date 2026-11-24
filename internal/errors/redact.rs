@@ -20,6 +20,9 @@ const HIDDEN: &str = "<redacted>";
 /// How many remembered URLs are kept; the oldest goes first.
 const MAX_KNOWN: usize = 32;
 
+/// The shortest user name of a reference that is remembered on its own.
+const MIN_USER_LEN: usize = 6;
+
 /// Punctuation that ends a sentence and is not worth reading as part of the
 /// URL in front of it.
 const TRAILING: &[char] = &[
@@ -224,26 +227,230 @@ pub(crate) fn remember_url(url: &str) {
 	}
 }
 
+/// What stands for a hidden part while the text still has to be read for its
+/// URLs: unlike [`HIDDEN`] it holds no `<`, which ends a URL, so a part that
+/// sits inside a longer secret cannot cut the rest of that secret loose.
+const MARK: &str = "\u{0}";
+
+/// [`MARK`] as a character.
+const MARK_CHAR: char = '\u{0}';
+
 /// `text` with the URLs remembered by [`remember_url`], and their credentials,
-/// replaced.
-fn forget_known(text: &str) -> String {
+/// replaced; each credential by `mark`.
+fn forget_known(text: &str, mark: &str) -> String {
 	let known = known()
 		.lock()
 		.unwrap_or_else(|poisoned| poisoned.into_inner());
+	// Longest first: a known value that holds another one is hidden whole, not
+	// from where the shorter one starts.
+	let mut urls: Vec<(&str, String)> = known
+		.iter()
+		.map(|entry| {
+			// What shows as [`HIDDEN`] is user information. While the text is
+			// still to be read, it keeps the `:` the reading looks for.
+			let shown = match (entry.shown == HIDDEN, mark == MARK) {
+				(true, true) => format!("{MARK}:{MARK}"),
+				(true, false) => mark.to_string(),
+				(false, _) => entry.shown.clone(),
+			};
+			(entry.url.as_str(), shown)
+		})
+		.collect();
+	urls.sort_by_key(|(url, _)| std::cmp::Reverse(url.len()));
+	let mut parts: Vec<&str> = known
+		.iter()
+		.flat_map(|entry| {
+			entry
+				.parts
+				.iter()
+				.filter(|part| !entry.shown.contains(part.as_str()))
+				.map(String::as_str)
+		})
+		.collect();
+	parts.sort_by_key(|part| std::cmp::Reverse(part.len()));
 	let mut out = text.to_string();
-	for entry in known.iter() {
-		out = out.replace(&entry.url, &entry.shown);
+	for (url, shown) in urls {
+		out = out.replace(url, &shown);
 	}
-	for entry in known.iter() {
-		for part in entry
-			.parts
-			.iter()
-			.filter(|part| !entry.shown.contains(part.as_str()))
-		{
-			out = out.replace(part.as_str(), HIDDEN);
+	for part in parts {
+		out = out.replace(part, mark);
+	}
+	out
+}
+
+/// The characters that end a word of text, as they end a URL.
+fn ends_a_word(c: char) -> bool {
+	c.is_whitespace() || matches!(c, '"' | '<' | '>')
+}
+
+/// The user information of an image reference, or of an address written
+/// `user:secret@host/path` with no scheme, and what follows it. The user
+/// information is found the way it is in a URL with a scheme, so a password
+/// that holds a `/` is told the same way. It holds a `:` with something on
+/// each side, and an address (`user@example.com`) has no `:`.
+///
+/// A reference pinned by digest ends in `@algorithm:hex`. That tail is set
+/// aside first, so `name:tag@sha256:...` is not read as user information and
+/// `user:secret@host/img@sha256:...` is read for the one that it holds.
+fn secret_userinfo(word: &str) -> Option<(&str, &str)> {
+	let (base, digest) = match word.rfind('@') {
+		Some(at) if is_digest(&word[at + 1..]) => (&word[..at], word.len() - at),
+		_ => (word, 0),
+	};
+	let (Some(userinfo), after) = split_userinfo(base) else {
+		return None;
+	};
+	let (user, secret) = userinfo.split_once(':')?;
+	let host = after.split('/').next().unwrap_or(after);
+	if user.is_empty() || secret.is_empty() || host.is_empty() {
+		return None;
+	}
+	// What follows the user information in the word, digest included.
+	let after = &word[word.len() - after.len() - digest..];
+	Some((userinfo, after))
+}
+
+/// Whether `text` is `algorithm:hex`, the way an image digest is written.
+fn is_digest(text: &str) -> bool {
+	text.split_once(':').is_some_and(|(algorithm, hex)| {
+		!algorithm.is_empty() && hex.len() >= 32 && hex.bytes().all(|b| b.is_ascii_hexdigit())
+	})
+}
+
+/// Remember the user information of a reference, so a message that repeats the
+/// user or the password on its own is cleaned too.
+fn remember_userinfo(userinfo: &str) {
+	let mut parts: Vec<String> = Vec::new();
+	// A short user name (`git`, `admin`) is a word of ordinary text, and hiding
+	// it everywhere would garble messages that say nothing of a credential. A
+	// token alone, with no `:`, is a secret.
+	let pieces = match userinfo.split_once(':') {
+		Some((user, secret)) => vec![(user, MIN_USER_LEN), (secret, MIN_PART_LEN)],
+		None => vec![(userinfo, MIN_PART_LEN)],
+	};
+	for (part, least) in pieces {
+		if part.chars().count() >= least && !part.contains(MARK) {
+			parts.push(part.to_string());
+			parts.extend(percent_decoded(part));
+		}
+	}
+	if parts.is_empty() {
+		return;
+	}
+	parts.sort_by_key(|part| std::cmp::Reverse(part.len()));
+	parts.dedup();
+	let mut known = known()
+		.lock()
+		.unwrap_or_else(|poisoned| poisoned.into_inner());
+	if known.iter().all(|entry| entry.url != userinfo) {
+		if known.len() >= MAX_KNOWN {
+			known.remove(0);
+		}
+		known.push(Known {
+			url: userinfo.to_string(),
+			shown: HIDDEN.to_string(),
+			parts,
+		});
+	}
+}
+
+/// The user information of a value that is one image reference, as a name or a
+/// segment of a path is: what comes before the last `@` that is not the one of
+/// a digest, whatever it holds (a `/`, a number after a `:`, no `:` at all, a
+/// blank). A `scheme://` in front is left out and given back as the prefix.
+/// Returns the prefix, the user information, and what follows it.
+fn reference_userinfo(value: &str) -> Option<(&str, &str, &str)> {
+	let scheme_end = value.find("://").filter(|at| {
+		*at > 0
+			&& value[..*at]
+				.chars()
+				.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+	});
+	let (prefix, rest) = match scheme_end {
+		Some(at) => value.split_at(at + "://".len()),
+		None => ("", value),
+	};
+	if rest.contains("://") {
+		return None;
+	}
+	let base = match rest.rfind('@') {
+		Some(at) if is_digest(&rest[at + 1..]) => &rest[..at],
+		_ => rest,
+	};
+	let at = base.rfind('@')?;
+	let (userinfo, after) = (&rest[..at], &rest[at + 1..]);
+	(!userinfo.is_empty() && !after.is_empty()).then_some((prefix, userinfo, after))
+}
+
+/// Remember the credentials of an image reference the configuration or the
+/// command line names, before any request carries it: what an error message
+/// repeats of it is then hidden whatever path the message takes, and whether or
+/// not anything is written about the reference at the log level in use.
+pub(crate) fn remember_reference(reference: &str) {
+	if reference.contains('@') {
+		if let Some((_, userinfo, _)) = reference_userinfo(reference) {
+			remember_userinfo(userinfo);
+		}
+	}
+}
+
+/// `text`, which holds no `scheme://`, with the user information of every word
+/// that is written `user:secret@host/path` taken out: an image reference with
+/// credentials in it, which Podman refuses and repeats in its message.
+fn redact_words(text: &str) -> String {
+	let mut out = String::with_capacity(text.len());
+	let mut rest = text;
+	while !rest.is_empty() {
+		let blanks = rest.find(|c: char| !ends_a_word(c)).unwrap_or(rest.len());
+		out.push_str(&rest[..blanks]);
+		rest = &rest[blanks..];
+		let end = rest.find(ends_a_word).unwrap_or(rest.len());
+		let word = &rest[..end];
+		rest = &rest[end..];
+		// A mark in front of the reference (a quote, a bracket) is not part of it.
+		// The mark of a known part may stand where the reference starts.
+		let lead = word
+			.find(|c: char| c.is_alphanumeric() || c == MARK_CHAR)
+			.unwrap_or(word.len());
+		let core = &word[lead..];
+		let kept = core.trim_end_matches(TRAILING).len();
+		match secret_userinfo(&core[..kept]) {
+			Some((_, after)) => {
+				out.push_str(&word[..lead]);
+				out.push_str(after);
+				out.push_str(&core[kept..]);
+			}
+			None => out.push_str(word),
 		}
 	}
 	out
+}
+
+/// A request path as a log line may show it: each segment with its escapes
+/// undone and then cleaned, so the reference an image is named by (one segment,
+/// its `/` written `%2F`) reads as it was written and what holds credentials
+/// is hidden. A segment with nothing to hide is kept as it came.
+pub(crate) fn redact_request_path(path: &str) -> String {
+	path.split('/')
+		.map(|segment| {
+			let decoded = percent_decoded(segment);
+			let text = decoded.as_deref().unwrap_or(segment);
+			let cleaned = redact_text(text, true);
+			if cleaned == text {
+				segment.to_string()
+			} else {
+				cleaned
+			}
+		})
+		.collect::<Vec<_>>()
+		.join("/")
+}
+
+/// `name` as a row or a line of progress may show it: the same cleaning as a
+/// message, for the image references and the URLs that name a resource. It
+/// formats and does not learn: see [`remember_reference`].
+pub(crate) fn redact_label(name: &str) -> String {
+	redact_text(name, true)
 }
 
 /// `text` with every URL in it passed through [`redact_url`], which for the
@@ -256,9 +463,30 @@ fn forget_known(text: &str) -> String {
 /// quoted URL are cut off the end and kept. A URL held inside another one, as a
 /// proxy is, is cleaned on its own.
 pub(crate) fn redact_urls_in_text(text: &str) -> String {
-	let text = forget_known(text);
-	let mut out = String::with_capacity(text.len());
+	redact_text(text, false)
+}
+
+/// [`redact_urls_in_text`]; with `whole` the text is one reference, read whole
+/// before it is read as a message. Nothing is learned here: what a message says
+/// is not trusted to teach what to hide, and what to hide is remembered where
+/// the configuration enters, by [`remember_reference`].
+///
+/// What is already known is hidden before the text is read for its URLs, and
+/// again after, so a credential written in a shape the reading does not
+/// recognise is still hidden.
+fn redact_text(text: &str, whole: bool) -> String {
+	let text = forget_known(text, MARK);
+	// A value that is known to be one reference (a name, a segment of a path) is
+	// read whole first: a password may hold a blank, a quote or a bracket, which
+	// end a word of a message and would cut it in two.
+	if whole {
+		if let Some((prefix, _, after)) = reference_userinfo(&text) {
+			let shown = format!("{prefix}{after}");
+			return forget_known(&shown, HIDDEN).replace(MARK, HIDDEN);
+		}
+	}
 	let mut rest = text.as_str();
+	let mut out = String::with_capacity(text.len());
 	while let Some(at) = rest.find("://") {
 		let start = scheme_start(rest, at);
 		let after = at + "://".len();
@@ -279,15 +507,19 @@ pub(crate) fn redact_urls_in_text(text: &str) -> String {
 		} else {
 			tail
 		};
-		out.push_str(&rest[..start]);
+		out.push_str(&redact_words(&rest[..start]));
 		out.push_str(&redact_run(url));
 		out.push_str(tail);
 		rest = &rest[end..];
 	}
-	out.push_str(rest);
-	out
+	out.push_str(&redact_words(rest));
+	forget_known(&out, HIDDEN).replace(MARK, HIDDEN)
 }
 
 #[cfg(test)]
 #[path = "redact_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "redact_reference_tests.rs"]
+mod reference_tests;

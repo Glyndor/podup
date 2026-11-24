@@ -231,8 +231,14 @@ impl Engine {
 			}
 			if opts.ignore_failures {
 				match &pull_err {
-					Some(e) => tracing::warn!("pull {name} ({image}) failed, ignored: {e}"),
-					None => tracing::warn!("pull {name} ({image}) failed, ignored"),
+					Some(e) => tracing::warn!(
+						"pull {name} ({}) failed, ignored: {e}",
+						crate::errors::redact::redact_label(image)
+					),
+					None => tracing::warn!(
+						"pull {name} ({}) failed, ignored",
+						crate::errors::redact::redact_label(image)
+					),
 				}
 			} else {
 				let detail = pull_err.map(|e| format!(": {e}")).unwrap_or_default();
@@ -348,7 +354,7 @@ impl Engine {
 		// silent got it anyway, and there was never a matching `Pulled`, so a
 		// pull that finished looked exactly like one that hung.
 		if quiet {
-			debug!("pulling {image}");
+			debug!("pulling {}", crate::errors::redact::redact_label(&image));
 		} else {
 			crate::ui::progress::start("Image", &image, "Pulling");
 		}
