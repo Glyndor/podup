@@ -14,11 +14,24 @@
 # something else. The flow here is squash only, so a merge commit inside a pull request is
 # rare and always avoidable by rebasing.
 #
+# One exception to the rule that the trailer carries the address of the author, and it is an
+# exception to a rule about identity, so it is as narrow as it can be. GitHub writes the commit
+# of a Dependabot pull request itself: the author is the bot's noreply address and the trailer is
+# `Signed-off-by: dependabot[bot] <support@github.com>`, a pair nobody on this side can change.
+# The pair is accepted as a whole, and only for a commit whose author is exactly that address:
+# the trailer on a commit by anybody else, the bot's author with any other trailer, and a person
+# signing with support@github.com are all refused as before.
+#
 # Usage: check-dco.sh <base> <head>
 
 set -euo pipefail
 
 base="${1:?base}"; head="${2:?head}"
+
+# The author address GitHub gives Dependabot, and the one trailer it signs off with. Both are
+# compared as they are, byte for byte: no pattern, no case folding.
+dependabot_author='49699333+dependabot[bot]@users.noreply.github.com'
+dependabot_signoff='dependabot[bot] <support@github.com>'
 
 commits="$(git rev-list --no-merges "$base..$head")" || {
 	echo "::error::could not list $base..$head; the range could not be checked" >&2
@@ -37,6 +50,11 @@ while IFS= read -r sha; do
 			[ "${BASH_REMATCH[1],,}" != "${author,,}" ] || signed=true
 		fi
 	done <<< "$values"
+	if [ "$signed" = false ] && [ "$author" = "$dependabot_author" ]; then
+		while IFS= read -r value; do
+			[ "$value" != "$dependabot_signoff" ] || signed=true
+		done <<< "$values"
+	fi
 	if [ "$signed" = false ]; then
 		echo "::error::commit $sha has no Signed-off-by: Name <address> trailer with the address of its author"
 		bad=1
