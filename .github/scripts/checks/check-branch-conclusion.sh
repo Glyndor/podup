@@ -43,10 +43,13 @@
 #          older run in its place. A run of the head that has been pending for more than
 #          PENDING_HOURS (24) is a suite that is stuck, and that is red;
 #        - when the head has NO run at all, the commit is given GRACE_HOURS
-#          (3) for its suite to be created: younger than that the answer is
-#          a warning and a pass, older is red ("head without CI"). Without
-#          this a bad commit that never ran anything would inherit the
-#          success of the one before it.
+#          (3) for its suite to be created, counted from when the SERVER
+#          recorded that the head arrived (the activity of the branch), not
+#          from the dates of the commit, which its author writes: younger
+#          than that the answer is a warning and a pass, older is red
+#          ("head without CI"). A time that is missing, unreadable, or in
+#          the future is red too. Without this a bad commit that never ran
+#          anything would inherit the success of the one before it.
 #        - a cancelled or skipped run of another commit says nothing about
 #          the branch and is passed over; one of the head's own is red.
 #      With runners saturated a suite takes longer than any wait this job
@@ -182,22 +185,37 @@ elif [ -n "$mine_pending" ]; then
 		exit 0
 	fi
 else
-	# The head has no run at all. A commit that was just pushed has not had time to start one;
-	# one that is older than the grace never ran anything, and the success of the commit before
-	# it is not its own.
-	cdate="$(gh api "repos/${repo}/commits/${head_sha}" --jq '.commit.committer.date // ""' 2>/dev/null)" || cdate=""
-	if [ -z "$cdate" ]; then
-		echo "::warning::could not read the date of commit ${short}, and ${workflow} has no run for it on ${branch}; there is no verdict"
-		exit 0
+	# The head has no run at all. A commit that has just arrived has not had time to start one; one
+	# that arrived more than the grace ago never ran anything, and the success of the commit before
+	# it is not its own. When it arrived is read from what the SERVER recorded (the push, or the
+	# merge that landed it, in the activity of the branch), never from the commit: its dates are
+	# written by whoever made it, and a date in the future or an empty one would stretch the grace
+	# for ever. A time that cannot be read, or that cannot be trusted, is red.
+	no_time() {
+		echo "::error::${workflow} on ${branch} for commit ${short}: it has no run, and when it arrived could not be established ($1)."
+		echo "  Unknown is not green: without a time the grace cannot be counted, and the commit before it does not answer for it." >&2
+		exit 1
+	}
+	if ! activity="$(gh api "repos/${repo}/activity?ref=refs%2Fheads%2F${branch}&per_page=30" 2>/dev/null)" || [ -z "$activity" ]; then
+		echo "::warning::gh api call failed or answered nothing (repos/${repo}/activity?ref=refs/heads/${branch})."
+		no_time "the activity of the branch could not be read"
 	fi
-	age=$((now - $(epoch_of "$cdate")))
+	arrived="$(jq -r --arg head "$head_sha" '[.[]? | select(.after == $head)][0].timestamp // ""' <<<"$activity" 2>/dev/null)" || arrived=""
+	[ -n "$arrived" ] || no_time "the activity of the branch has no entry for the head, or it has no time"
+	arrived_s="$(date -d "$arrived" +%s 2>/dev/null)" || no_time "the time '${arrived}' is not a date"
+	age=$((now - arrived_s))
+	# The server's clock and this runner's differ by seconds; a head that arrived minutes AHEAD of now
+	# is not a head that has not arrived yet, it is a time that cannot be believed.
+	if [ "$age" -lt -300 ]; then
+		no_time "the time ${arrived} is in the future"
+	fi
 	if [ "$age" -gt $((grace_hours * 3600)) ]; then
-		echo "::error::head without CI: ${workflow} has no run for commit ${short} on ${branch}, and the commit is older than ${grace_hours} hours (committed ${cdate})."
+		echo "::error::head without CI: ${workflow} has no run for commit ${short} on ${branch}, and it arrived more than ${grace_hours} hours ago (${arrived})."
 		echo "  Nothing tested this commit, so the runs of the commits before it do not answer for it." >&2
 		echo "  Open the workflow run list on ${branch}: the suite never started, or its run was deleted." >&2
 		exit 1
 	fi
-	echo "::warning::${workflow} has no run for commit ${short} on ${branch} yet (committed ${cdate}, inside the ${grace_hours}-hour grace); there is no verdict"
+	echo "::warning::${workflow} has no run for commit ${short} on ${branch} yet (it arrived ${arrived}, inside the ${grace_hours}-hour grace); there is no verdict"
 	exit 0
 fi
 run="${run}"$'\t'"${origin}"

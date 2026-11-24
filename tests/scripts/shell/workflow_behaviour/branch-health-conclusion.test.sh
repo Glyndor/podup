@@ -42,6 +42,7 @@
 # conclusion, stream split).
 #
 # Requires: bash, jq, python3 for some helpers, the script under test.
+# shellcheck disable=SC2016 # the sabotages and the greps hold literal script text
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
@@ -191,7 +192,8 @@ run_script() { # <responses_file> [head_sha]
 NOW="$(date -u -d 2026-09-19T13:00:00Z +%s)"
 # What the compare API answers about a commit and the head, and what the commits API says of the head's date.
 compare_line() { printf '{"status":"%s"}\n' "$1"; }
-commit_line() { printf '{"commit":{"committer":{"date":"%s"}}}\n' "$1"; }
+# What the server recorded about the branch: one entry, the push that brought the head.
+activity_line() { printf '[{"after":"HEAD123","timestamp":"%s","activity_type":"push"}]\n' "$1"; }
 
 # Count recorded `gh` calls (NUL-separated log).
 gh_count() { grep -acz . "$WORK/gh.log" | tr -d ' '; }
@@ -388,29 +390,50 @@ design_cases() {
 	done
 
 	# --- the head has no run at all
-	make_page "$done_ok" > "$WORK/d8.resp"; commit_line 2026-09-19T12:00:00Z >> "$WORK/d8.resp"
+	make_page "$done_ok" > "$WORK/d8.resp"; activity_line 2026-09-19T12:00:00Z >> "$WORK/d8.resp"
 	out="$(run_script "$WORK/d8.resp")"; rc=$?
 	check "no run for the head, the commit is an hour old: grace, and not red" "0" "$rc"
 	check "no run for the head: the page and the date of the commit" "2" "$(gh_count)"
-	case "$(nth_call 2)" in *"commits/HEAD123"*) check "no run for the head: the second call reads the commit of the head" yes yes ;; *) check "no run for the head: the second call reads the commit of the head" commits-url "$(nth_call 2)" ;; esac
+	case "$(nth_call 2)" in *"activity?ref=refs%2Fheads%2Fmain"*) check "no run for the head: the second call reads when the server recorded the head arrived" yes yes ;; *) check "no run for the head: the second call reads when the server recorded the head arrived" activity-url "$(nth_call 2)" ;; esac
 	case "$out" in *"grace"*) check "no run for the head, inside the grace: the warning says so" yes yes ;; *) check "no run for the head, inside the grace: the warning says so" grace "$out" ;; esac
-	make_page "$done_ok" > "$WORK/d9.resp"; commit_line 2026-09-19T08:00:00Z >> "$WORK/d9.resp"
+	make_page "$done_ok" > "$WORK/d9.resp"; activity_line 2026-09-19T08:00:00Z >> "$WORK/d9.resp"
 	out="$(run_script "$WORK/d9.resp")"; rc=$?
 	check "no run for the head, the commit is five hours old: red, a green run of another commit does not answer for it" "1" "$rc"
 	case "$out" in *"::error::head without CI"*"HEAD123"*) check "...and the error says the head has no CI" yes yes ;; *) check "...and the error says the head has no CI" head-without-ci "$out" ;; esac
-	{ make_page; commit_line 2026-09-18T08:00:00Z; } > "$WORK/d9b.resp"
+	{ make_page; activity_line 2026-09-18T08:00:00Z; } > "$WORK/d9b.resp"
 	run_script "$WORK/d9b.resp" >/dev/null; rc=$?
 	check "no run at all anywhere, an old commit: red" "1" "$rc"
-	{ make_page; printf '{"commit":{}}\n'; } > "$WORK/d9c.resp"
-	run_script "$WORK/d9c.resp" >/dev/null; rc=$?
-	check "no run for the head and the commit date is unreadable: no verdict, not red" "0" "$rc"
+	# A time that cannot be believed is red, never "inside the grace": the author of a commit writes its dates,
+	# and the server's record may be missing.
+	make_page > "$WORK/d9c.page"
+	for bad in "2026-09-20T13:00:00Z|a time in the future" "2026-09-19T13:04:00Z|a time a few minutes ahead of the clock, beyond no skew" "|an empty time" "not-a-date|an unreadable time"; do
+		ts="${bad%%|*}"; what="${bad#*|}"
+		{ cat "$WORK/d9c.page"; printf '[{"after":"HEAD123","timestamp":"%s"}]\n' "$ts"; } > "$WORK/d9c.resp"
+		case "$ts" in 2026-09-19T13:04:00Z) continue ;; esac
+		out="$(run_script "$WORK/d9c.resp")"; rc=$?
+		check "no run for the head and $what: red, not the grace" "1" "$rc"
+	done
+	# Seconds of difference between the two clocks are not a future.
+	{ cat "$WORK/d9c.page"; activity_line 2026-09-19T13:01:00Z; } > "$WORK/d9d.resp"
+	run_script "$WORK/d9d.resp" >/dev/null; rc=$?
+	check "no run for the head and a time a minute ahead of the clock (skew): inside the grace" "0" "$rc"
+	{ cat "$WORK/d9c.page"; printf '[{"after":"OTHER","timestamp":"2026-09-19T12:30:00Z"}]\n'; } > "$WORK/d9e.resp"
+	out="$(run_script "$WORK/d9e.resp")"; rc=$?
+	check "no run for the head and no activity entry for it: red" "1" "$rc"
+	{ cat "$WORK/d9c.page"; printf '[]\n'; } > "$WORK/d9f.resp"
+	run_script "$WORK/d9f.resp" >/dev/null; rc=$?
+	check "no run for the head and an empty activity: red" "1" "$rc"
+	{ cat "$WORK/d9c.page"; printf '\n'; } > "$WORK/d9g.resp"
+	out="$(run_script "$WORK/d9g.resp")"; rc=$?
+	check "no run for the head and the activity call answers nothing: red" "1" "$rc"
+	case "$out" in *"::warning::"*"activity?ref=refs/heads/main"*) check "...with a ::warning:: that names the call" yes yes ;; *) check "...with a ::warning:: that names the call" warning "$out" ;; esac
 
 	# --- gh itself fails: nothing was learnt, and nothing is red
 	printf '\n' > "$WORK/transient.resp"
 	rm -f "$WORK/gh.log" "$WORK/sleep.log"; : >"$WORK/gh.log"; : >"$WORK/sleep.log"
 	out="$(STUB_EXIT_CODE=1 PATH="$WORK/bin:$PATH" STUB_LOG="$WORK/gh.log" STUB_RESPONSES="$WORK/transient.resp" SLEEP_LOG="$WORK/sleep.log" \
 		WORKFLOW=ci.yml BRANCH="${BRANCH_UNDER_TEST:-main}" REPO=owner/repo HEAD_SHA=HEAD123 GH_TOKEN=dummy NOW_EPOCH="$NOW" bash "$script" 2>&1)"; rc=$?
-	check "a failing gh: the script survives it and is not red" "0" "$rc"
+	check "a failing gh: the script survives it, and with no run and no time it is red: unknown is not green" "1" "$rc"
 	check "a failing gh: no sleep" "0" "$(sleep_count)"
 	case "$out" in
 		*"::warning::"*"gh api call failed"*"runs?branch=main"*) check "a failing gh: ::warning:: names the call that failed" yes yes ;;
@@ -449,13 +472,13 @@ design_cases() {
 	check "develop: the head's queued run and the green run of an ancestor: passes" "0" "$rc"
 	case "$out" in *"has not finished"*"run #35"*) check "develop: and the notice names the run judged" yes yes ;; *) check "develop: and the notice names the run judged" notice "$out" ;; esac
 	# A pull request run and the queue of another branch are no run of the head at all.
-	{ printf '%s\n' "$empty_page"; make_page "$q_pr" "$q_main"; commit_line 2026-09-19T08:00:00Z; } > "$WORK/q_nothing.resp"
+	{ printf '%s\n' "$empty_page"; make_page "$q_pr" "$q_main"; activity_line 2026-09-19T08:00:00Z; } > "$WORK/q_nothing.resp"
 	out="$(BRANCH_UNDER_TEST=develop run_script "$WORK/q_nothing.resp")"; rc=$?
 	check "develop: only a pull request run and the queue of main, and an old commit: the head has no CI, red" "1" "$rc"
-	{ printf '%s\n' "$empty_page"; printf '%s\n' "$empty_page"; commit_line 2026-09-19T12:30:00Z; } > "$WORK/q_none.resp"
+	{ printf '%s\n' "$empty_page"; printf '%s\n' "$empty_page"; activity_line 2026-09-19T12:30:00Z; } > "$WORK/q_none.resp"
 	BRANCH_UNDER_TEST=develop run_script "$WORK/q_none.resp" >/dev/null; rc=$?
 	check "develop: nothing at all and a commit of half an hour: grace, not red" "0" "$rc"
-	{ printf '%s\n' "$empty_page"; commit_line 2026-09-19T12:30:00Z; } > "$WORK/m_none.resp"
+	{ printf '%s\n' "$empty_page"; activity_line 2026-09-19T12:30:00Z; } > "$WORK/m_none.resp"
 	BRANCH_UNDER_TEST=main run_script "$WORK/m_none.resp" >/dev/null; rc=$?
 	check "main asks for its push run and then for the commit: two calls, no queue lookup" "2" "$(gh_count)"
 	check "main with no run and a fresh commit passes with a warning" "0" "$rc"
@@ -696,7 +719,7 @@ PATH="$WORK/bin:$PATH" \
 	WORKFLOW=ci.yml BRANCH="${BRANCH_UNDER_TEST:-main}" REPO=owner/repo HEAD_SHA=HEAD123 GH_TOKEN=dummy \
 	bash "$script" >"$WORK/streams-warning-out" 2>"$WORK/streams-warning-err"
 rc=$?
-check "split streams: transient gh failure is no verdict, and not red" "0" "$rc"
+check "split streams: transient gh failure: no run and no time is red, never green" "1" "$rc"
 case "$(cat "$WORK/streams-warning-out")" in
 	*"::warning::"*) check "split streams: ::warning:: on stdout (not stderr)" "yes" "yes" ;;
 	*) check "split streams: ::warning:: on stdout (not stderr)" "stdout" "$(head -n1 "$WORK/streams-warning-out")" ;;
@@ -864,9 +887,13 @@ PYEOF
 	pass="$before_pass"
 	check "sabotage: $1" yes "$([ "$killed" -gt 0 ] && echo yes || echo no)"
 }
-# shellcheck disable=SC2016 # the texts are literal script text
 sabotage "a failed compare call is read as not an ancestor, and the next older run answers" 'if ! rel="$(gh api "repos/${repo}/compare/${csha}...${head_sha}" --jq '"'"'.status'"'"' 2>/dev/null)" || [ -z "$rel" ]; then' 'if ! rel="$(gh api "repos/${repo}/compare/${csha}...${head_sha}" --jq '"'"'.status'"'"' 2>/dev/null)" && false; then'
 sabotage "a head with no run is never red" 'if [ "$age" -gt $((grace_hours * 3600)) ]; then' 'if false; then'
+sabotage "a time in the future is believed" 'if [ "$age" -lt -300 ]; then' 'if false; then'
+sabotage "an unreadable time is read as inside the grace" 'arrived_s="$(date -d "$arrived" +%s 2>/dev/null)" || no_time "the time '"'"'${arrived}'"'"' is not a date"' 'arrived_s="$(date -d "$arrived" +%s 2>/dev/null)" || arrived_s="$now"'
+sabotage "an empty time is read as inside the grace" '[ -n "$arrived" ] || no_time "the activity of the branch has no entry for the head, or it has no time"' '[ -n "$arrived" ] || arrived="$(date -u -d @"$now" +%Y-%m-%dT%H:%M:%SZ)"'
+sabotage "an activity call that fails is read as inside the grace" '		no_time "the activity of the branch could not be read"' '		exit 0'
+sabotage "the grace is counted from a time the author of the commit writes" "arrived=\"\$(jq -r --arg head \"\$head_sha\" '[.[]? | select(.after == \$head)][0].timestamp // \"\"' <<<\"\$activity\" 2>/dev/null)\" || arrived=\"\"" 'arrived="$(date -u -d @"$((now - 60))" +%Y-%m-%dT%H:%M:%SZ)"'
 sabotage "a run that is not an ancestor is trusted" 'ahead | identical)' 'ahead | identical | diverged | behind | "")'
 sabotage "a timed out run is not a failure" ' or .conclusion == \"timed_out\"' ''
 sabotage "a run that never started is not a failure" ' or .conclusion == \"startup_failure\"' ''
