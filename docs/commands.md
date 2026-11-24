@@ -52,7 +52,7 @@ A container that already exists is left in place when two facts both hold: its r
 |---|---|---|
 | `-d, --detach` | Run containers in the background. | off |
 | `--build` | Build images before starting. | off |
-| `-w, --watch` | After starting, watch for changes per `develop.watch`. | off |
+| `-w, --watch` | After starting, watch for changes per `develop.watch`, and report the rules and each sync as `watch` does. | off |
 | `--remove-orphans` | Remove containers for services no longer in the file. | off |
 | `--no-recreate` | Leave existing containers as they are: a stopped one is started without applying configuration changes. | off |
 | `--force-recreate` | Recreate containers even if their config is unchanged. | off |
