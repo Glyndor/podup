@@ -100,7 +100,7 @@ fn a_url_at_the_end_of_the_text_and_two_in_a_row_are_handled() {
 
 #[test]
 fn text_that_is_not_ascii_in_front_of_a_url_does_not_panic_and_is_kept() {
-	for (text, expected) in [
+	for (index, (text, expected)) in [
 		(
 			"\u{201c}https://u:p@h/x\u{201d}",
 			"\u{201c}https://h/x\u{201d}",
@@ -121,8 +121,13 @@ fn text_that_is_not_ascii_in_front_of_a_url_does_not_panic_and_is_kept() {
 		),
 		("\u{e9}://", "\u{e9}://"),
 		("\u{1f600}://u:p@h", "\u{1f600}://h"),
-	] {
-		assert_eq!(redact_urls_in_text(text), expected, "{text:?}");
+	]
+	.into_iter()
+	.enumerate()
+	{
+		// The message names the case and never the text: the text holds the
+		// credentials the case checks for.
+		assert!(redact_urls_in_text(text) == expected, "case {index}");
 	}
 }
 
@@ -140,20 +145,26 @@ fn a_url_held_inside_another_one_is_cleaned_too() {
 
 #[test]
 fn punctuation_that_is_valid_in_a_password_or_a_token_does_not_end_the_url() {
-	for password in ["pa,ss", "pa'ss", "pa(ss", "pa)ss", "pa(s)s,'", "a,b(c)d'e"] {
+	// The messages name the case and never the value: the values are the
+	// credentials the case checks for.
+	for (index, password) in ["pa,ss", "pa'ss", "pa(ss", "pa)ss", "pa(s)s,'", "a,b(c)d'e"]
+		.into_iter()
+		.enumerate()
+	{
 		let text = format!("cloning https://user:{password}@host.example/x.git failed");
-		assert_eq!(
-			redact_urls_in_text(&text),
-			"cloning https://host.example/x.git failed",
-			"{password}"
+		assert!(
+			redact_urls_in_text(&text) == "cloning https://host.example/x.git failed",
+			"password case {index}"
 		);
 	}
-	for token in ["to,k", "to'k", "to(k", "to)k", "(t,o'k)"] {
+	for (index, token) in ["to,k", "to'k", "to(k", "to)k", "(t,o'k)"]
+		.into_iter()
+		.enumerate()
+	{
 		let text = format!("cloning https://host.example/x.git?token={token} failed");
-		assert_eq!(
-			redact_urls_in_text(&text),
-			"cloning https://host.example/x.git failed",
-			"{token}"
+		assert!(
+			redact_urls_in_text(&text) == "cloning https://host.example/x.git failed",
+			"token case {index}"
 		);
 	}
 }
@@ -201,17 +212,29 @@ fn a_known_url_is_cleaned_wherever_it_is_repeated_and_so_are_its_parts() {
 	);
 	let echoed = "fatal: bad password Sl4sh/Pw9 and token Qy7TokenZ for ciusr9x";
 	let shown = redact_urls_in_text(echoed);
-	for secret in ["Sl4sh/Pw9", "Qy7TokenZ", "ciusr9x"] {
-		assert!(!shown.contains(secret), "{secret}: {shown}");
+	for (index, secret) in ["Sl4sh/Pw9", "Qy7TokenZ", "ciusr9x"]
+		.into_iter()
+		.enumerate()
+	{
+		assert!(
+			!shown.contains(secret),
+			"part {index} of the known URL came out"
+		);
 	}
-	assert!(shown.contains("fatal: bad password"), "{shown}");
+	assert!(
+		shown.contains("fatal: bad password"),
+		"the text around the credentials was lost"
+	);
 }
 
 #[test]
 fn a_known_url_in_its_percent_encoded_form_hides_the_decoded_credential() {
 	super::remember_url("https://rbusr7q:p%40ss%2Fw0rd@host.example/x.git");
 	let shown = redact_urls_in_text("could not log in with p@ss/w0rd");
-	assert!(!shown.contains("p@ss/w0rd"), "{shown}");
+	assert!(
+		!shown.contains("p@ss/w0rd"),
+		"the decoded credential came out"
+	);
 }
 
 #[test]
@@ -349,11 +372,16 @@ fn a_password_and_a_token_put_into_any_text_never_come_out() {
 		let after = rng.pick(around);
 		let text = format!("{before}{url}{after} and again {url}");
 		let shown = redact_urls_in_text(&text);
+		// The failure names the iteration of a fixed seed, never the values,
+		// so it can be reproduced without printing a credential.
 		assert!(
 			!shown.contains(&password),
-			"password in {shown:?} from {text:?}"
+			"the password came out at iteration {round}"
 		);
-		assert!(!shown.contains(&token), "token in {shown:?} from {text:?}");
+		assert!(
+			!shown.contains(&token),
+			"the token came out at iteration {round}"
+		);
 	}
 }
 

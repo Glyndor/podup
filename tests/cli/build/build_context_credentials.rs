@@ -81,10 +81,12 @@ fn no_log_level_shows_the_password_or_the_token() {
 	for level in ["error", "warn", "info", "debug", "trace"] {
 		for command in [&["build"][..], &["up", "-d", "--build"]] {
 			let output = build(level, command);
+			// The messages count what leaked and never show it: the output
+			// would hold the credentials.
 			assert!(
 				leaks(&output).is_empty(),
-				"{level} {command:?} showed {:?}:\n{output}",
-				leaks(&output)
+				"{level} {command:?} showed {} piece(s) of a credential",
+				leaks(&output).len()
 			);
 		}
 	}
@@ -95,7 +97,7 @@ fn the_line_that_says_what_is_built_still_names_the_host_and_the_path() {
 	let output = build("info", &["build"]);
 	assert!(
 		output.contains("building from remote context https://host.example/org/repo.git#main"),
-		"{output}"
+		"the line that names the context is missing"
 	);
 }
 
@@ -106,12 +108,12 @@ fn a_clone_that_fails_does_not_repeat_the_credentials_in_the_error() {
 			let output = run(clone_fails, level, command);
 			assert!(
 				output.contains("host.example/org/repo.git"),
-				"{level} {command:?} lost the host and the path:\n{output}"
+				"{level} {command:?} lost the host and the path"
 			);
 			assert!(
 				leaks(&output).is_empty(),
-				"{level} {command:?} repeated {:?}:\n{output}",
-				leaks(&output)
+				"{level} {command:?} repeated {} piece(s) of a credential",
+				leaks(&output).len()
 			);
 		}
 	}
@@ -144,7 +146,11 @@ fn a_build_step_that_echoes_a_url_does_not_repeat_its_credentials() {
 		engine.run_with_status(None, &[], &["-f", "compose.yaml", "-p", "proj", "build"]);
 	assert!(
 		output.contains("STEP 1/2: ADD https://host.example/f.tgz"),
-		"{output}"
+		"the step is missing or still has its credentials"
 	);
-	assert!(leaks(&output).is_empty(), "{:?}:\n{output}", leaks(&output));
+	assert!(
+		leaks(&output).is_empty(),
+		"the step repeated {} piece(s) of a credential",
+		leaks(&output).len()
+	);
 }
