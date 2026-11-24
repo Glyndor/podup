@@ -128,7 +128,7 @@ jobs:
       - name: Install the pinned toolchain
         if: steps.inputs.outputs.build == 'true'
         env:
-          # Keep in step with release.yml's build job.
+          # Keep in step with the build job of reusable-release-build.yml.
           RUST_TOOLCHAIN: "1.100"
         shell: bash
         run: |

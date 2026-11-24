@@ -100,12 +100,20 @@ jobs:
       - run: |
           RUST_LOG=podup=warn cargo install cargo-llvm-cov --locked --version "=0.8.7" >/tmp/log 2>&1
 YML
-	cat >"$w/release.yml" <<'YML'
+	cat >"$w/reusable-release-verify.yml" <<'YML'
 jobs:
   x:
     steps:
       - run: |
           cargo install cargo-audit --version "=0.22.2" --locked
+YML
+	cat >"$w/reusable-release-build.yml" <<'YML'
+jobs:
+  x:
+    env:
+      RUSTUP_VERSION: "1.29.3"
+    steps:
+      - run: |
           cargo install --locked cargo-cyclonedx --version "=0.5.9"
           cargo install --locked --features cli cargo-about --version "=0.9.2"
 YML
@@ -123,7 +131,8 @@ write_upstream() {
 		EmbarkStudios/cargo-about 0.9.2 "0.9.2" \
 		koalaman/shellcheck v0.11.0 "v0.11.0" \
 		rhysd/actionlint v1.7.12 "v1.7.12" \
-		PowerShell/PSScriptAnalyzer 1.25.0 "1.25.0" >"$1"
+		PowerShell/PSScriptAnalyzer 1.25.0 "1.25.0" \
+		rust-lang/rustup 1.29.3 "1.29.3" >"$1"
 }
 
 # Run the fixture's script. Sets RC, OUT (stdout) and ERR (stderr).
@@ -147,7 +156,7 @@ fresh a
 run "$WORK/a" "$WORK/a.up"
 check "pins equal to the latest releases: success" 0 "$RC"
 check "...and no row on stdout" "" "$OUT"
-check "...reporting the size of what it watched" 1 "$(grep -c 'watched 10 tools over 16 pin sites' "$WORK/err")"
+check "...reporting the size of what it watched" 1 "$(grep -c 'watched 11 tools over 17 pin sites' "$WORK/err")"
 check "...through gh release view and list only, never the API" 0 "$(grep -vcE '^release (view|list) ' "$WORK/gh.log")"
 
 # --- drift, with and without a prefix on the tag ----------------------------
@@ -173,7 +182,7 @@ check "a pin that holds the tag with its v is told the newer tag with its v (bot
 
 # --- sites of one tool that disagree ----------------------------------------
 fresh e
-sed -i 's|=0.9.2|=0.9.0|' "$WORK/e/.github/workflows/release.yml"
+sed -i 's|=0.9.2|=0.9.0|' "$WORK/e/.github/workflows/reusable-release-build.yml"
 run "$WORK/e" "$WORK/e.up"
 check "two sites of one tool with different versions are reported as a disagreement" 1 "$(printf '%s\n' "$OUT" | grep -c 'cargo-about (2 sites disagree)')"
 check "...and the site that is behind is reported against the latest" 1 "$(printf '%s\n' "$OUT" | grep -c 'cargo-about (install).*0.9.0.0.9.2$')"
@@ -202,7 +211,7 @@ check "...and prints no table" "" "$OUT"
 
 fresh g
 # shellcheck disable=SC2016
-sed -i 's|--version "=0.9.2"|--version "$ABOUT"|' "$WORK/g/.github/workflows/release.yml"
+sed -i 's|--version "=0.9.2"|--version "$ABOUT"|' "$WORK/g/.github/workflows/reusable-release-build.yml"
 run "$WORK/g" "$WORK/g.up"
 check "an install line whose version is not a literal fails the run" 1 "$RC"
 
@@ -233,14 +242,14 @@ check "a new *-version input that no site reads fails the run" 1 "$RC"
 check "...naming the file and the key" 1 "$(printf '%s\n' "$ERR" | grep -c 'reusable-new.yml has the pin new-tool-version')"
 
 fresh l
-echo '          cargo install brand-new-tool --version "=1.0.0" --locked' >>"$WORK/l/.github/workflows/release.yml"
+echo '          cargo install brand-new-tool --version "=1.0.0" --locked' >>"$WORK/l/.github/workflows/reusable-release-verify.yml"
 run "$WORK/l" "$WORK/l.up"
 check "a cargo install at an exact version of a tool no table names fails the run" 1 "$RC"
 
 fresh m
 # shellcheck disable=SC2016
-echo '          cargo install cargo-deny --locked --version "$VERSION"' >>"$WORK/m/.github/workflows/release.yml"
-echo "  OTHER_TOOL: 1" >>"$WORK/m/.github/workflows/release.yml"
+echo '          cargo install cargo-deny --locked --version "$VERSION"' >>"$WORK/m/.github/workflows/reusable-release-verify.yml"
+echo "  OTHER_TOOL: 1" >>"$WORK/m/.github/workflows/reusable-release-verify.yml"
 run "$WORK/m" "$WORK/m.up"
 check "an install whose version is a variable, and unrelated keys, are not mistaken for pins" 0 "$RC"
 
@@ -270,8 +279,8 @@ while IFS="|" read -r _ repo prefix; do
 done <"$WORK/tools.txt"
 run "$real" "$WORK/real.up"
 check "the shipped tables read every pin of the real workflows" 0 "$RC"
-check "...all 16 sites, none skipped" 1 "$(grep -c 'watched 10 tools over 16 pin sites' "$WORK/err")"
-check "...and every site comes out behind 999.0.0" 16 "$(printf '%s\n' "$OUT" | grep -c '999.0.0$')"
+check "...all 17 sites, none skipped" 1 "$(grep -c 'watched 11 tools over 17 pin sites' "$WORK/err")"
+check "...and every site comes out behind 999.0.0" 17 "$(printf '%s\n' "$OUT" | grep -c '999.0.0$')"
 
 echo
 echo "passed: $pass  failed: $fail"

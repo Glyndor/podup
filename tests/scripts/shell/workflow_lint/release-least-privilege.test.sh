@@ -19,6 +19,8 @@ set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 RELEASE="$HERE/.github/workflows/release.yml"
+BUILDS="$HERE/.github/workflows/reusable-release-build.yml"
+VERIFYING="$HERE/.github/workflows/reusable-release-verify.yml"
 CHECK_DIR="$HERE/.github/scripts/release/check-artifact-dir.sh"
 CHECK_TAG="$HERE/.github/scripts/release/check-tag.sh"
 VERIFY_PROV="$HERE/.github/scripts/release/verify-provenance.sh"
@@ -40,50 +42,59 @@ check() { # <description> <expected> <actual>
 	fi
 }
 
-# --- the shipped workflow, read as data ------------------------------------
-facts="$(python3 - "$RELEASE" <<'PY'
+# --- the shipped workflows, read as data -------------------------------------
+facts="$(python3 - "$RELEASE" "$BUILDS" "$VERIFYING" <<'PY'
 import sys, yaml
 jobs = yaml.safe_load(open(sys.argv[1]))["jobs"]
+builds = yaml.safe_load(open(sys.argv[2]))["jobs"]
+verifying = yaml.safe_load(open(sys.argv[3]))["jobs"]
 
 def text(job):
     return yaml.safe_dump(job)
 
 out = {}
-refs = [s["with"]["ref"] for j in jobs.values() for s in j["steps"]
-        if str(s.get("uses", "")).startswith("actions/checkout")]
-out["checkout refs all name the tag"] = all(r.startswith("refs/tags/") for r in refs)
+groups = [("release", jobs), ("builds", builds), ("verification", verifying)]
+checkouts = [(g, n, s) for g, grp in groups for n, j in grp.items() for s in j.get("steps", [])
+             if str(s.get("uses", "")).startswith("actions/checkout")]
+TAG_REFS = ("refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}", "refs/tags/${{ inputs.tag }}")
+out["every checkout is the tag of the run"] = all(s["with"]["ref"] in TAG_REFS for g, n, s in checkouts)
+out["no checkout takes a revision from an input or an output"] = not any(
+    "commit" in str(s["with"]["ref"]) or not str(s["with"]["ref"]).startswith("refs/tags/") for g, n, s in checkouts)
 out["verify checkout keeps no credential"] = next(
-    s for s in jobs["verify"]["steps"] if str(s.get("uses", "")).startswith("actions/checkout")
+    s for s in verifying["verify"]["steps"] if str(s.get("uses", "")).startswith("actions/checkout")
 )["with"].get("persist-credentials") is False
-names = [s.get("name", "") for s in jobs["verify"]["steps"]]
-tag = next(i for i, s in enumerate(jobs["verify"]["steps"]) if "check-tag.sh" in str(s.get("run", "")))
-install = next(i for i, s in enumerate(jobs["verify"]["steps"]) if "cargo install" in str(s.get("run", "")))
-out["the tag is checked before anything is installed"] = tag < install
-out["build holds no minting permission"] = not (set(jobs["build"]["permissions"]) & {"id-token", "attestations"})
-out["build-deb holds no minting permission"] = not (set(jobs["build-deb"]["permissions"]) & {"id-token", "attestations"})
-out["no attestation step in build or build-deb"] = not any(
-    "attest-build-provenance" in text(jobs[j]) for j in ("build", "build-deb"))
+tag = next(i for i, s in enumerate(verifying["verify"]["steps"]) if "check-tag.sh" in str(s.get("run", "")))
+pin = next(i for i, s in enumerate(verifying["verify"]["steps"]) if s.get("id") == "pin")
+out["the tag is checked and the commit is read in a job that installs nothing"] = not any("cargo install" in str(s.get("run", "")) for s in verifying["verify"]["steps"])
+out["the audit installs its tool in a job of its own with no outputs"] = any("cargo install" in str(s.get("run", "")) for s in verifying["audit"]["steps"]) and not verifying["audit"].get("outputs")
+for name in ("build", "build-deb", "build-rpm", "build-pacman", "sbom", "sbom-tools"):
+    out[f"{name} holds no minting permission"] = not (set(builds[name].get("permissions", {})) & {"id-token", "attestations"})
+out["no attestation step in the builds"] = not any("attest-build-provenance" in text(j) for j in builds.values())
+out["the builds never see a secret"] = "secrets" not in text(builds)
 a = jobs["attest"]
 out["attest compiles nothing"] = "cargo" not in text(a)
-out["attest waits for both builds"] = set(a["needs"]) == {"build", "build-deb"}
+out["attest waits for the builds"] = "builds" in a["needs"]
 out["attest checks the names before attesting"] = [
     i for i, s in enumerate(a["steps"]) if "check-artifact-dir.sh" in str(s.get("run", ""))
 ][0] < [i for i, s in enumerate(a["steps"]) if "attest-build-provenance" in str(s.get("uses", ""))][0]
-rel = jobs["release"]
-out["release waits for attest"] = "attest" in rel["needs"]
-dl = next(s for s in rel["steps"] if "download-artifact" in str(s.get("uses", "")))
-out["release does not merge on download"] = "merge-multiple" not in dl.get("with", {})
-steps = rel["steps"]
+seal = jobs["seal"]
+out["seal waits for attest and both signers"] = {"attest", "sign", "sign-packages"} <= set(seal["needs"])
+out["seal does not merge on download"] = all("merge-multiple" not in s.get("with", {}) for s in seal["steps"] if "download-artifact" in str(s.get("uses", "")))
+steps = seal["steps"]
 def at(needle):
     return next(i for i, s in enumerate(steps) if needle in str(s.get("run", "")))
-out["release gathers with duplicate detection"] = "gather" in str(steps[at("check-artifact-dir.sh")]["run"])
-out["provenance is verified before signing"] = at("verify-provenance.sh") < next(
-    i for i, s in enumerate(steps) if "ED25519_KEY" in str(s))
-out["the provenance step cannot be skipped"] = "if" not in steps[at("verify-provenance.sh")] and not steps[at("verify-provenance.sh")].get("continue-on-error")
-out["release may read attestations"] = rel["permissions"].get("attestations") == "read"
-out["the sign job's signature artifacts do not match podup-*"] = all(
+out["seal gathers with duplicate detection"] = "gather" in str(steps[at("check-artifact-dir.sh")]["run"])
+out["provenance is verified before signing"] = at("verify-provenance.sh") < at("sign.py")
+out["the provenance step is skipped only in a rehearsal"] = steps[at("verify-provenance.sh")].get("if") == "${{ !inputs.dry_run }}" and not steps[at("verify-provenance.sh")].get("continue-on-error")
+out["seal may read attestations"] = seal["permissions"].get("attestations") == "read"
+out["the signature artifacts do not match podup-*"] = all(
     not s["with"]["name"].startswith("podup-")
-    for s in jobs["sign"]["steps"] if "upload-artifact" in str(s.get("uses", "")))
+    for j in ("sign", "sign-packages") for s in jobs[j]["steps"] if "upload-artifact" in str(s.get("uses", "")))
+rel = jobs["release"]
+out["release waits for seal and not for the signers alone"] = "seal" in rel["needs"]
+out["release has the right to write, may read attestations, and has no key"] = rel["permissions"] == {"contents": "write", "attestations": "read"} and "secrets.GLYNDOR" not in text(rel)
+out["no job has the key and the right to write"] = not any(
+    "secrets.GLYNDOR" in text(j) and "write" in (j.get("permissions") or {}).values() for j in jobs.values())
 for k, v in out.items():
     print(("1 " if v else "0 ") + k)
 PY
@@ -147,8 +158,15 @@ mkdir -p "$WORK/g4/a"; ln -s /etc/passwd "$WORK/g4/a/podup-linux-x86_64"
 check "a link inside an artifact is refused" 1 "$(gather "$WORK/g4")"
 
 # attest mode: binaries and packages, nothing else
-mkdir -p "$WORK/at1"; : >"$WORK/at1/podup-linux-x86_64"; : >"$WORK/at1/podup_5.16.0_amd64.deb"; 
+mkdir -p "$WORK/at1"; : >"$WORK/at1/podup-linux-x86_64"; : >"$WORK/at1/podup_5.16.0_amd64.deb"
 check "binaries and packages pass the attest check" 0 "$(bash "$CHECK_DIR" "$WORK/at1" attest >/dev/null 2>&1; echo $?)"
+: >"$WORK/at1/podup-5.16.0-1.glyndor.any.x86_64.rpm"; : >"$WORK/at1/podup-5.16.0-1.glyndor.any.aarch64.rpm"; : >"$WORK/at1/podup-5.16.0-1-x86_64.pkg.tar.zst"
+check "the rpm and the pacman packages pass the attest check" 0 "$(bash "$CHECK_DIR" "$WORK/at1" attest >/dev/null 2>&1; echo $?)"
+: >"$WORK/at1/podup-5.16.0-1.glyndor.any.riscv64.rpm"
+check "a package of an architecture nobody builds is refused" 1 "$(bash "$CHECK_DIR" "$WORK/at1" attest >/dev/null 2>&1; echo $?)"
+rm "$WORK/at1/podup-5.16.0-1.glyndor.any.riscv64.rpm"; : >"$WORK/at1/podup-5.16.0-1-x86_64.pkg.tar.zst.sig"
+check "a signature beside a package is refused" 1 "$(bash "$CHECK_DIR" "$WORK/at1" attest >/dev/null 2>&1; echo $?)"
+rm "$WORK/at1/podup-5.16.0-1-x86_64.pkg.tar.zst.sig"
 : >"$WORK/at1/podup-linux-x86_64.sig"
 check "a signature among them is refused" 1 "$(bash "$CHECK_DIR" "$WORK/at1" attest >/dev/null 2>&1; echo $?)"
 rm "$WORK/at1/podup-linux-x86_64.sig"; : >"$WORK/at1/NOTICES.html"
@@ -162,12 +180,24 @@ echo "$*" >>"$GH_LOG"
 [ -z "${GH_FAIL_ON:-}" ] || ! printf '%s' "$*" | grep -q "$GH_FAIL_ON"
 GH
 chmod +x "$WORK/bin/gh"
-for n in podup-linux-x86_64 podup-linux-arm64 podup-darwin-arm64 podup-darwin-x86_64 podup-windows-x86_64.exe podup-windows-arm64.exe podup_5.16.0_amd64.deb podup_5.16.0_arm64.deb; do : >"$WORK/prov/$n"; done
-prov() { GH_LOG="$WORK/gh.log" PATH="$WORK/bin:$PATH" bash "$VERIFY_PROV" "$WORK/prov" Glyndor/podup >/dev/null 2>&1; echo $?; }
+COMMIT_SHA="$(printf 'a%.0s' $(seq 40))"
+prov() { # <version> <ref> <commit>
+	SOURCE_REF="$2" SOURCE_COMMIT="$3" GH_LOG="$WORK/gh.log" PATH="$WORK/bin:$PATH" bash "$VERIFY_PROV" "$WORK/prov" Glyndor/podup "$1" >/dev/null 2>&1
+	echo $?
+}
 : >"$WORK/gh.log"
-check "every binary and package is verified against the release workflow" 0 "$(prov)"
-check "...eight of them, pinned to the signer workflow" 8 "$(grep -c -- '--signer-workflow Glyndor/podup/.github/workflows/release.yml' "$WORK/gh.log")"
-check "one failed verification fails the step" 1 "$(GH_FAIL_ON=darwin-arm64 prov)"
+check "every binary and package is verified against the release workflow" 0 "$(prov 5.16.0 refs/tags/v5.16.0 "$COMMIT_SHA")"
+check "...eleven of them, pinned to the signer workflow" 11 "$(grep -c -- '--signer-workflow Glyndor/podup/.github/workflows/release.yml' "$WORK/gh.log")"
+check "...each for the tag the release is cut from" 11 "$(grep -c -- '--source-ref refs/tags/v5.16.0' "$WORK/gh.log")"
+check "...and for the commit that tag was verified to point at" 11 "$(grep -c -- "--source-digest $COMMIT_SHA" "$WORK/gh.log")"
+check "...the names being the ones the version gives" 1 "$(grep -c 'podup-5.16.0-1.glyndor.any.aarch64.rpm' "$WORK/gh.log")"
+check "one failed verification fails the step" 1 "$(GH_FAIL_ON=darwin-arm64 prov 5.16.0 refs/tags/v5.16.0 "$COMMIT_SHA")"
+check "one failed verification of a package fails the step" 1 "$(GH_FAIL_ON=pkg.tar.zst prov 5.16.0 refs/tags/v5.16.0 "$COMMIT_SHA")"
+check "a ref that is not the tag of the version is refused" 1 "$(prov 5.16.0 refs/heads/main "$COMMIT_SHA")"
+check "a ref of another version is refused" 1 "$(prov 5.16.0 refs/tags/v5.15.0 "$COMMIT_SHA")"
+check "a commit that is not a full hash is refused" 1 "$(prov 5.16.0 refs/tags/v5.16.0 abc123)"
+check "a version that is not three numbers is refused" 1 "$(prov '5.16' refs/tags/v5.16 "$COMMIT_SHA" | awk '{ print ($1 != 0) }')"
+check "no ref at all is refused" 1 "$(SOURCE_COMMIT="$COMMIT_SHA" PATH="$WORK/bin:$PATH" GH_LOG="$WORK/gh.log" bash "$VERIFY_PROV" "$WORK/prov" Glyndor/podup 5.16.0 >/dev/null 2>&1; echo $?)"
 
 echo
 echo "passed: $pass  failed: $fail"

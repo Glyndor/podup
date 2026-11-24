@@ -5,10 +5,11 @@
 #   1. Per-asset .sig loop - verify-signing-key.py walks every *.sig in the
 #      fixture directory (issue #1359 M1: previously only SHA256SUMS.sig was
 #      checked at release time, so a per-binary substitution could pass).
-#   2. SLOT_RE recognises the third rotation slot - the fixture install.sh
-#      ships three populated slots, with the matching key in slot 3 only. If
-#      the SLOT_RE change had not landed, slot 3 would be silently ignored
-#      and the verifier would fail (issue #1359 M2).
+#   2. The verifier reads exactly the slots the consumers read - the fixture
+#      install.sh ships two, with the matching key in slot 2 only, so a
+#      verifier that dropped slot 2 would fail (issue #1359 M2); a third slot
+#      is refused, because no installer, updater or channel reads it and a
+#      release signed with it would pass here and be refused everywhere else.
 #   3. ed25519_verify classifies errors correctly - a malformed key produces
 #      exit code 3 (configuration problem), not 1 (release-tampering). Also
 #      verifies the canonical base64 padding formula tolerates a key whose
@@ -41,9 +42,9 @@ fail() {
 }
 
 # -----------------------------------------------------------------------------
-# Part 1: per-asset .sig loop, with three populated rotation slots.
+# Part 1: per-asset .sig loop, with the two rotation slots.
 # -----------------------------------------------------------------------------
-echo "Part 1: per-asset .sig verification (3 rotation slots)"
+echo "Part 1: per-asset .sig verification (2 rotation slots)"
 
 # The inventory comes from the assets in the directory, not from the signatures:
 # a glob over *.sig only sees the signatures that exist, so a release that lost
@@ -93,11 +94,11 @@ rm -rf "$tampered_dir"
 echo "  OK    a changed byte is refused as a signature mismatch for every asset"
 
 # -----------------------------------------------------------------------------
-# Part 2: third slot is the one that verifies - proves SLOT_RE picks it up.
-# Corrupt slot 3 to a wrong pubkey and confirm the verifier falls back to
-# "no embedded key accepts the signature".
+# Part 2: the second slot is the one that verifies - proves it is read - and a
+# third slot is refused. Corrupt slot 2 to a wrong pubkey and confirm the
+# verifier falls back to "no embedded key accepts the signature".
 # -----------------------------------------------------------------------------
-echo "Part 2: SLOT_RE picks up the third rotation slot"
+echo "Part 2: the second rotation slot is read, a third is refused"
 
 # A valid Ed25519 public key that is NOT the test key. The crypto library
 # accepts any curve point; using a fresh keypair keeps the negative test
@@ -111,20 +112,50 @@ raw = Ed25519PrivateKey.from_private_bytes(b"\x99" * 32).public_key().public_byt
 print(base64.b64encode(raw).decode().rstrip("="))
 ')"
 
-# Rewrite slot 3 with the wrong key. The verifier must now fail because only
-# slots 1 and 2 are populated, and they do not match the test signatures.
+# Rewrite slot 2 with the wrong key. The verifier must now fail because only
+# slot 1 is populated with a key that does not match the test signatures.
 tmp_install="$(mktemp)"
 trap 'rm -rf "$tmp_install" "$tmp_helpers" "$TMP_DIR"' EXIT
-sed "s|^PODUP_RELEASE_PUBKEY3_B64=.*|PODUP_RELEASE_PUBKEY3_B64=\"\${PODUP_RELEASE_PUBKEY3_B64:-$WRONG_PK}\"|" \
+sed "s|^PODUP_RELEASE_PUBKEY2_B64=.*|PODUP_RELEASE_PUBKEY2_B64=\"\${PODUP_RELEASE_PUBKEY2_B64:-$WRONG_PK}\"|" \
 	"$FIXTURE_DIR/install.sh" > "$tmp_install"
 
 if err="$(python3 "$VERIFIER" "$FIXTURE_DIR/podup-linux-x86_64" \
 		"$FIXTURE_DIR/signatures/podup-linux-x86_64.sig" "$tmp_install" 2>&1 >/dev/null)"; then
-	fail "verifier accepted a signature with the matching key in slot 3 replaced"
+	fail "verifier accepted a signature with the matching key in slot 2 replaced"
 fi
-# A missing file fails too; only the mismatch proves slot 3 was the one in use.
-grep -q "verifies against NONE" <<<"$err" || fail "slot 3 replaced: failed for the wrong reason: $err"
-echo "  OK    slot 3 is recognised (its absence flips the verifier to a no-match error)"
+# A missing file fails too; only the mismatch proves slot 2 was the one in use.
+grep -q "verifies against NONE" <<<"$err" || fail "slot 2 replaced: failed for the wrong reason: $err"
+echo "  OK    slot 2 is read (its absence flips the verifier to a no-match error)"
+
+# A third slot, with the key that does verify in it, is refused for being a slot
+# that nobody reads, and not accepted for the key it carries.
+# shellcheck disable=SC2016  # the text is the installer's own, with its ${...} unexpanded
+printf 'PODUP_RELEASE_PUBKEY3_B64="${PODUP_RELEASE_PUBKEY3_B64:-%s}"\n' "$(tr -d '=\n' <"$FIXTURE_DIR/test-key.b64")" >> "$tmp_install"
+if err="$(python3 "$VERIFIER" "$FIXTURE_DIR/podup-linux-x86_64" \
+		"$FIXTURE_DIR/signatures/podup-linux-x86_64.sig" "$tmp_install" 2>&1 >/dev/null)"; then
+	fail "verifier accepted a signature through a third slot that no consumer reads"
+fi
+grep -q "a key in a slot nobody reads" <<<"$err" || fail "a third slot was refused for the wrong reason: $err"
+echo "  OK    a third slot is refused, whatever key it carries"
+
+# A slot whose default comes from another slot's variable is refused too.
+# shellcheck disable=SC2016  # the pattern is the installer's own text
+sed 's|^PODUP_RELEASE_PUBKEY2_B64="${PODUP_RELEASE_PUBKEY2_B64:-|PODUP_RELEASE_PUBKEY2_B64="${PODUP_RELEASE_PUBKEY_B64:-|' "$FIXTURE_DIR/install.sh" > "$tmp_install"
+if python3 "$VERIFIER" "$FIXTURE_DIR/podup-linux-x86_64" "$FIXTURE_DIR/signatures/podup-linux-x86_64.sig" "$tmp_install" >/dev/null 2>&1; then
+	fail "verifier accepted a slot that takes its default from another slot"
+fi
+echo "  OK    a slot that defaults from another slot's variable is refused"
+
+# The throwaway key of a rehearsal replaces the embedded ones, and only then.
+ONLY="$(tr -d '=\n' <"$FIXTURE_DIR/test-key.b64")"
+PODUP_VERIFY_ONLY_KEY_B64="$ONLY" python3 "$VERIFIER" "$FIXTURE_DIR/podup-linux-x86_64" \
+	"$FIXTURE_DIR/signatures/podup-linux-x86_64.sig" "$tmp_install" >/dev/null 2>&1 \
+	|| fail "the throwaway key did not verify what it signed"
+if PODUP_VERIFY_ONLY_KEY_B64="$WRONG_PK" python3 "$VERIFIER" "$FIXTURE_DIR/podup-linux-x86_64" \
+		"$FIXTURE_DIR/signatures/podup-linux-x86_64.sig" "$tmp_install" >/dev/null 2>&1; then
+	fail "a throwaway key that did not sign this verified it"
+fi
+echo "  OK    the key of a rehearsal replaces the embedded keys, and has to be the one that signed"
 
 # -----------------------------------------------------------------------------
 # Part 3: L7 error classification - a malformed key produces rc=3, not rc=1.

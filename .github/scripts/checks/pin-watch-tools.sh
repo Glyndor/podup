@@ -186,6 +186,7 @@ cargo-about|EmbarkStudios/cargo-about|
 shellcheck|koalaman/shellcheck|v
 actionlint|rhysd/actionlint|v
 PSScriptAnalyzer|PowerShell/PSScriptAnalyzer|
+rustup|rust-lang/rustup|
 TOOLS
 
 # ---- the sites that pin them -----------------------------------------------
@@ -210,13 +211,14 @@ cargo-deny|.github/workflows/reusable-rust-audit.yml|input|cargo-deny-version
 cargo-fuzz|.github/workflows/reusable-rust-fuzz.yml|input|cargo-fuzz-version
 cargo-cyclonedx|.github/workflows/reusable-rust-supply-chain.yml|input|cyclonedx-version
 cargo-about|.github/workflows/reusable-rust-supply-chain.yml|input|cargo-about-version
-cargo-about|.github/workflows/release.yml|install|cargo-about
-cargo-audit|.github/workflows/release.yml|install|cargo-audit
-cargo-cyclonedx|.github/workflows/release.yml|install|cargo-cyclonedx
+cargo-about|.github/workflows/reusable-release-build.yml|install|cargo-about
+cargo-audit|.github/workflows/reusable-release-verify.yml|install|cargo-audit
+cargo-cyclonedx|.github/workflows/reusable-release-build.yml|install|cargo-cyclonedx
 shellcheck|.github/workflows/reusable-shell-ci.yml|input|shellcheck-version
 shellcheck|.github/workflows/reusable-workflow-lint.yml|input|shellcheck-version
 actionlint|.github/workflows/reusable-workflow-lint.yml|env|ACTIONLINT_VERSION
 PSScriptAnalyzer|.github/workflows/reusable-powershell-ci.yml|input|pssa-version
+rustup|.github/workflows/reusable-release-build.yml|env|RUSTUP_VERSION
 SITES
 )
 while IFS='|' read -r tool file shape key; do

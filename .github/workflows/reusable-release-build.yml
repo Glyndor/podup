@@ -1,0 +1,524 @@
+name: Release builds (reusable)
+
+# The jobs of the release that compile, pack and describe what is published: the binaries, the
+# Debian, rpm and pacman packages and the SBOMs. They are called by release.yml with the commit
+# the tag and the version its `verify` job named, and nothing else: they hold `contents: read`, no secret,
+# and no permission that mints a token. The jobs that hold the key, mint the provenance or write
+# the release are in release.yml, where the guard that holds them whole reads them.
+
+on:
+  workflow_call:
+    inputs:
+      commit:
+        description: The full commit the tag was verified to point at; every job checks that its checkout is that commit
+        required: true
+        type: string
+      tag:
+        description: The tag the release is cut from. Every checkout is this tag, and every job checks that it is the commit above
+        required: true
+        type: string
+      version:
+        description: The version the tag, Cargo.toml, debian/changelog and Cargo.lock agree on
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.asset }}
+    runs-on: ${{ matrix.runner }}
+    # Bound: worst of the last three successful runs on 2026-09-02 was 347s; the slowest leg is Windows arm64. Ten times that, rounded up, never under ten
+    # minutes; the six-hour default is what a hang would otherwise cost.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - asset: podup-linux-x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            bin: podup
+          - asset: podup-linux-arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            bin: podup
+          - asset: podup-darwin-arm64
+            runner: macos-latest
+            target: aarch64-apple-darwin
+            bin: podup
+          - asset: podup-darwin-x86_64
+            runner: macos-latest
+            target: x86_64-apple-darwin
+            bin: podup
+          - asset: podup-windows-x86_64.exe
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: podup.exe
+          # Built and run on the arm64 runner (#1683).
+          - asset: podup-windows-arm64.exe
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            bin: podup.exe
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: The checkout is the commit that was verified
+        env:
+          COMMIT: ${{ inputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$COMMIT"
+
+      - name: Install build target
+        env:
+          TARGET: ${{ matrix.target }}
+          # Keep this in step with the `toolchain` default in this repository's
+          # reusable-rust-ci.yml, which is where that file lives since #1568.
+          # pin-watch.yml reads both, along with the other seven sites that
+          # write this number, and reports them disagreeing.
+          #
+          # It is NOT a repo-root rust-toolchain.toml on purpose: that
+          # file is a directory override that beats `rustup default`, so it would
+          # silently pull the MSRV job (which does `rustup default <msrv>`) up to
+          # this version and defeat the MSRV gate. A release still must not float
+          # on whatever Rust the runner ships, so pin it here, in the release path
+          # only.
+          RUST_TOOLCHAIN: "1.100"
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq musl-tools
+          fi
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          rustup target add "$TARGET"
+
+      - name: Build binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Stage artifact
+        run: cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "${{ matrix.asset }}"
+
+      - name: Run the binary once
+        # A link that produced something the loader refuses would otherwise
+        # be signed, attested and published; the static-PIE link the aarch64
+        # musl target gets from .cargo/config.toml is the case this was
+        # written for. Every leg now builds on the architecture it ships for.
+        run: ./"${{ matrix.asset }}" --version
+
+      # PE / Mach-O hardening gate, parallel to the Linux ELF one in the
+      # release job below. The Windows legs read DllCharacteristics with a
+      # PowerShell script; the macOS legs read mach_header.flags and the
+      # symbol table with `otool`/`nm`. Each script is a property check
+      # that runs over the staged asset before anything is signed, so a
+      # missing flag burns nothing. Both Windows legs run this gate even
+      # though the arm64 one cannot execute its binary (#1648): reading
+      # the PE header does not require the host the binary targets.
+      - name: Verify Windows hardening (DllCharacteristics)
+        if: matrix.target == 'x86_64-pc-windows-msvc' || matrix.target == 'aarch64-pc-windows-msvc'
+        shell: pwsh
+        run: pwsh -NoProfile -File .github/scripts/hardening/check-hardening.ps1 "${{ matrix.asset }}"
+
+      - name: Verify macOS hardening (MH_PIE + stripped symbol table)
+        if: matrix.target == 'aarch64-apple-darwin' || matrix.target == 'x86_64-apple-darwin'
+        run: bash .github/scripts/hardening/check-hardening-macos.sh "${{ matrix.asset }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          retention-days: 1
+          if-no-files-found: error
+
+  build-deb:
+    name: Build Debian package (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    # Bound: worst of the last three successful runs on 2026-09-02 was 438s. Ten times that, rounded up, never under ten
+    # minutes; the six-hour default is what a hang would otherwise cost.
+    timeout-minutes: 60
+    # debian:trixie, digest-pinned. Sid was a moving tag:
+    # two releases built from identical source could land in different
+    # environments with nothing in history recording which, and Dependabot's
+    # github-actions ecosystem does not bump a workflow's `container:` image,
+    # so a digest of sid would have no bump path and freeze. Trixie is stable
+    # and matches the suite CI validates against.
+    #
+    # It is meant to be the same image reusable-rust-debian.yml defaults to,
+    # so the release that ships to users comes out of the environment the
+    # debian-build lane exercised. tests/repository/workflows/workflow_debian_image.rs asserts
+    # the two are the same value on every pull request, and pin-watch.yml
+    # compares them with the digest the registry serves.
+    container: debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Install build tooling
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            build-essential \
+            dpkg-dev \
+            debhelper \
+            curl \
+            git \
+            musl-tools
+
+      - name: Install the pinned Rust toolchain and the musl target
+        env:
+          # The same pin the `build` job uses, and the same one rust-ci.yml
+          # defaults to. Before this the package was compiled by Debian's rustc
+          # while CI validated with 1.97, so the binary users installed came
+          # from a compiler the suite had never run against.
+          RUST_TOOLCHAIN: "1.100"
+          # rustup-init is downloaded at a version and checked against its sum before it runs,
+          # as every other tool of the release is. It used to be piped from a URL that moves,
+          # with no hash, into a shell, and what it installed compiled the package that is
+          # signed. Each sum is the one static.rust-lang.org serves for that version and
+          # architecture, checked against the file itself on 2026-11-23.
+          RUSTUP_VERSION: "1.29.3"
+          RUSTUP_SHA256_AMD64: b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55
+          RUSTUP_SHA256_ARM64: 9f608c142e0e38a78957d0661ba1dfaf0b6fb37184cfaa4b9a0aa57af6184282
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          case "$ARCH" in
+            amd64) target=x86_64-unknown-linux-musl; host=x86_64-unknown-linux-gnu; sum="$RUSTUP_SHA256_AMD64" ;;
+            arm64) target=aarch64-unknown-linux-musl; host=aarch64-unknown-linux-gnu; sum="$RUSTUP_SHA256_ARM64" ;;
+            *) echo "::error::no musl target mapped for $ARCH"; exit 1 ;;
+          esac
+          init="$RUNNER_TEMP/rustup-init"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "$init" \
+            "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${host}/rustup-init"
+          echo "${sum}  ${init}" | sha256sum -c -
+          chmod +x "$init"
+          "$init" -y --no-modify-path --profile minimal --default-toolchain "$RUST_TOOLCHAIN"
+          . "$HOME/.cargo/env"
+          # Targets are per-toolchain, so this has to name the pinned one
+          # rather than whatever happens to be default.
+          rustup target add "$target" --toolchain "$RUST_TOOLCHAIN"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: The checkout is the commit that was verified
+        env:
+          COMMIT: ${{ inputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$COMMIT"
+
+      - name: Build the package
+        run: |
+          # dpkg-buildpackage builds for the host architecture, so each runner
+          # produces its own arch's .deb natively.
+          dpkg-checkbuilddeps
+          dpkg-buildpackage -us -uc -b
+
+      - name: Stage the .deb into the workspace
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          deb=$(find .. -maxdepth 1 -name "podup_*_${ARCH}.deb" | sort | head -n1)
+          if [ -z "$deb" ]; then
+            echo "::error::no ${ARCH} .deb artifact was produced"
+            exit 1
+          fi
+          cp "$deb" "$(basename "$deb")"
+          echo "Staged $(basename "$deb")"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: podup-deb-${{ matrix.arch }}
+          path: podup_*_${{ matrix.arch }}.deb
+          retention-days: 1
+          if-no-files-found: error
+
+  # The rpm and the pacman package are packed from the payload of the .deb the release makes,
+  # so the three install the same bytes and nothing is compiled again. They hold no secret and
+  # no permission beyond reading, and what they download is checked to be the one package.
+  build-rpm:
+    name: Build RPM (${{ matrix.rpm_arch }})
+    needs: build-deb
+    runs-on: ubuntu-latest
+    # Bound: a container image build and one rpmbuild, with no network.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - deb_arch: amd64
+            rpm_arch: x86_64
+          - deb_arch: arm64
+            rpm_arch: aarch64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: The checkout is the commit that was verified
+        env:
+          COMMIT: ${{ inputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$COMMIT"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: podup-deb-${{ matrix.deb_arch }}
+          path: ${{ runner.temp }}/deb
+
+      - name: Check the artifact is the one package expected
+        env:
+          VERSION: ${{ inputs.version }}
+          DEB_ARCH: ${{ matrix.deb_arch }}
+        run: bash .github/scripts/release/check-artifact-dir.sh "$RUNNER_TEMP/deb" sign "podup_${VERSION}_${DEB_ARCH}.deb"
+
+      - name: Stage the payload of the .deb
+        env:
+          VERSION: ${{ inputs.version }}
+          COMMIT: ${{ inputs.commit }}
+          DEB_ARCH: ${{ matrix.deb_arch }}
+        run: |
+          set -euo pipefail
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$COMMIT")" >>"$GITHUB_ENV"
+          python3 -I .github/scripts/packaging/stage-payload.py --deb "$RUNNER_TEMP/deb/podup_${VERSION}_${DEB_ARCH}.deb" \
+            --version "$VERSION" --arch "$DEB_ARCH" --license LICENSE --out "$RUNNER_TEMP/stage"
+
+      - name: Build the rpm
+        env:
+          VERSION: ${{ inputs.version }}
+          RPM_ARCH: ${{ matrix.rpm_arch }}
+        run: bash .github/scripts/packaging/build-rpm.sh "$RUNNER_TEMP/stage" "$RUNNER_TEMP/out" "$VERSION" "$RPM_ARCH"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: podup-rpm-${{ matrix.rpm_arch }}
+          path: ${{ runner.temp }}/out/podup-${{ inputs.version }}-1.glyndor.any.${{ matrix.rpm_arch }}.rpm
+          retention-days: 1
+          if-no-files-found: error
+
+  build-pacman:
+    name: Build pacman package (x86_64)
+    needs: build-deb
+    runs-on: ubuntu-latest
+    # Bound: a container image build and one repack, with no network.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: The checkout is the commit that was verified
+        env:
+          COMMIT: ${{ inputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$COMMIT"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: podup-deb-amd64
+          path: ${{ runner.temp }}/deb
+
+      - name: Check the artifact is the one package expected
+        env:
+          VERSION: ${{ inputs.version }}
+        run: bash .github/scripts/release/check-artifact-dir.sh "$RUNNER_TEMP/deb" sign "podup_${VERSION}_amd64.deb"
+
+      - name: Stage the payload of the .deb
+        env:
+          VERSION: ${{ inputs.version }}
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$COMMIT")" >>"$GITHUB_ENV"
+          python3 -I .github/scripts/packaging/stage-payload.py --deb "$RUNNER_TEMP/deb/podup_${VERSION}_amd64.deb" \
+            --version "$VERSION" --arch amd64 --license LICENSE --out "$RUNNER_TEMP/stage"
+
+      - name: Build the pacman package
+        env:
+          VERSION: ${{ inputs.version }}
+        run: bash .github/scripts/packaging/build-pacman.sh "$RUNNER_TEMP/stage" "$RUNNER_TEMP/out" "$VERSION"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: podup-pacman-x86_64
+          path: ${{ runner.temp }}/out/podup-${{ inputs.version }}-1-x86_64.pkg.tar.zst
+          retention-days: 1
+          if-no-files-found: error
+
+  # The two tools that make the SBOMs are built in a job of their own, with no checkout:
+  # `cargo install` runs the build scripts of 427 crates from outside this organisation, and
+  # a build script has the whole filesystem of the runner. Whatever one of them does lands
+  # here, in a job that holds `contents: read`, no key and no source, and what comes out is
+  # two executables that the job below runs but does not build.
+  sbom-tools:
+    name: Build the SBOM tools
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    # Bound: worst of the last three successful runs on 2026-09-02 was 216s. Ten times that, rounded up, never under ten
+    # minutes; the six-hour default is what a hang would otherwise cost.
+    timeout-minutes: 40
+    steps:
+      - name: Install Rust toolchain
+        env:
+          RUST_TOOLCHAIN: "1.100"
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+
+      - name: Build cargo-cyclonedx and cargo-about
+        run: |
+          set -euo pipefail
+          cargo install --locked --root "$RUNNER_TEMP/tools" cargo-cyclonedx --version "=0.5.10"
+          cargo install --locked --root "$RUNNER_TEMP/tools" --features cli cargo-about --version "=0.9.3"
+
+      - name: Upload the tools
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-tools
+          path: |
+            ${{ runner.temp }}/tools/bin/cargo-cyclonedx
+            ${{ runner.temp }}/tools/bin/cargo-about
+          retention-days: 1
+          if-no-files-found: error
+
+  # The SBOMs are made here, from the lockfile of the commit that was verified, in a workspace
+  # that holds the source and nothing else: the tools come from the job above already built, no
+  # build script of a dependency runs, and the job checks at the end that it changed no file of
+  # the source and wrote exactly the files it was meant to. An SBOM is signed and published, and
+  # it has to describe the dependencies the binaries have.
+  sbom:
+    name: Generate SBOM and license attribution
+    needs: sbom-tools
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    # Bound: `cargo metadata` and a template, a few seconds each.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: The checkout is the commit that was verified
+        env:
+          COMMIT: ${{ inputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$COMMIT"
+
+      - name: Install Rust toolchain
+        # Pin rather than `stable`: a release runs once at tag time and is
+        # immutable, so it must not be built by whatever Rust the runner ships
+        # that day. Keep in step with rust-ci.yml's toolchain default (see the
+        # build job for why this is not a repo-root rust-toolchain.toml).
+        env:
+          RUST_TOOLCHAIN: "1.100"
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sbom-tools
+          path: ${{ runner.temp }}/tools
+
+      - name: Generate per-target SBOMs and license attribution
+        env:
+          VERSION: ${{ inputs.version }}
+        # Government/enterprise consumers require a machine-readable SBOM
+        # (CycloneDX, per US EO 14028). Generate one CycloneDX per released artifact with that
+        # artifact's exact target triple and feature set, so each lists only what
+        # its binary actually contains. cargo-cyclonedx's --target uses cargo's
+        # --filter-platform resolution, which needs only the triple, not an installed std.
+        # The binaries carry the default feature set; the .debs are built
+        # --no-default-features --features watch,completions (debian/rules), so
+        # their SBOMs pass the same flags or they would misdeclare the package.
+        # License attribution (NOTICES.html) stays a single union: over-listing
+        # licenses is the safe direction for attribution, never under-listing.
+        run: |
+          set -euo pipefail
+          chmod +x "$RUNNER_TEMP/tools/cargo-cyclonedx" "$RUNNER_TEMP/tools/cargo-about"
+          export PATH="$RUNNER_TEMP/tools:$PATH"
+
+          # $1 = output basename (the artifact the SBOM describes; ".cdx.json" is
+          #      appended), $2 = target triple, $3.. = extra cargo-cyclonedx flags.
+          gen_sbom() {
+            local out="$1" target="$2"
+            shift 2
+            cargo cyclonedx --format json --target "$target" \
+              --override-filename "${out}.cdx" "$@"
+          }
+
+          gen_sbom podup-linux-x86_64        x86_64-unknown-linux-musl
+          gen_sbom podup-linux-arm64         aarch64-unknown-linux-musl
+          gen_sbom podup-darwin-arm64        aarch64-apple-darwin
+          gen_sbom podup-darwin-x86_64       x86_64-apple-darwin
+          gen_sbom podup-windows-x86_64.exe  x86_64-pc-windows-msvc
+          gen_sbom podup-windows-arm64.exe   aarch64-pc-windows-msvc
+
+          # Debian packages: the packaged binary drops the `update` feature and
+          # links glibc (gnu), not musl. Each SBOM is named after its own .deb, which
+          # is a name the version gives, so no package has to be here to read it from.
+          gen_sbom "podup_${VERSION}_amd64.deb" x86_64-unknown-linux-gnu  --no-default-features --features watch,completions
+          gen_sbom "podup_${VERSION}_arm64.deb" aarch64-unknown-linux-gnu --no-default-features --features watch,completions
+
+          cargo about generate about.hbs > NOTICES.html
+
+      - name: Nothing of the source changed and only the SBOMs were written
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          changed="$(git status --porcelain --untracked-files=no)"
+          if [ -n "$changed" ]; then
+            echo "::error::the SBOM tools changed files of the source:"
+            echo "$changed"
+            exit 1
+          fi
+          here=.github/scripts/release
+          want="$( { python3 -I "$here/expected-assets.py" "$VERSION" sboms; echo NOTICES.html; } | LC_ALL=C sort)"
+          got="$(git ls-files --others --exclude-standard | LC_ALL=C sort)"
+          if [ "$got" != "$want" ]; then
+            echo "::error::the SBOM job wrote other files than the SBOMs and NOTICES.html (left: written, right: expected):"
+            diff <(printf '%s\n' "$got") <(printf '%s\n' "$want") || true
+            exit 1
+          fi
+
+      - name: Upload SBOM and NOTICE artifacts
+        # if-no-files-found: error matters: a silent empty upload would let the
+        # release job sign nothing and still succeed, defeating the SBOM gate.
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom
+          path: |
+            *.cdx.json
+            NOTICES.html
+          if-no-files-found: error
+          retention-days: 1

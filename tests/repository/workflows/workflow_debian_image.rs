@@ -1,6 +1,6 @@
 //! The two workflows that build the `.deb` must build it in the same image.
 //!
-//! `release.yml`'s `build-deb` job names a `container:`, and
+//! `reusable-release-build.yml`'s `build-deb` job names a `container:`, and
 //! `reusable-rust-debian.yml` carries a `debian-image` default that the
 //! `debian-build` lane takes on every pull request. A `container:` needs a
 //! literal and cannot read the reusable's default, so the value exists twice
@@ -81,7 +81,7 @@ fn read(name: &str) -> String {
 
 #[test]
 fn both_deb_builds_pin_the_same_debian_image() {
-	let release = pinned_image(&read("release.yml"), None, "container:");
+	let release = pinned_image(&read("reusable-release-build.yml"), None, "container:");
 	let lane = pinned_image(
 		&read("reusable-rust-debian.yml"),
 		Some("debian-image:"),
@@ -90,7 +90,7 @@ fn both_deb_builds_pin_the_same_debian_image() {
 
 	assert_eq!(
 		release, lane,
-		"release.yml builds the published .deb in {release:?} while the \
+		"reusable-release-build.yml builds the published .deb in {release:?} while the \
 		 debian-build lane builds it in {lane:?}. A difference means the \
 		 package that ships was never built in an environment any pull \
 		 request exercised, and a published release cannot be corrected."
@@ -100,7 +100,7 @@ fn both_deb_builds_pin_the_same_debian_image() {
 #[test]
 fn the_pinned_image_is_a_digest_and_not_a_moving_tag() {
 	for (name, scope, key) in [
-		("release.yml", None, "container:"),
+		("reusable-release-build.yml", None, "container:"),
 		(
 			"reusable-rust-debian.yml",
 			Some("debian-image:"),

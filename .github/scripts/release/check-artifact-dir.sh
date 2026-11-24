@@ -2,7 +2,7 @@
 #
 # Usage: check-artifact-dir.sh DIR sign ASSET
 #        check-artifact-dir.sh DIR attest
-#        check-artifact-dir.sh DIR release
+#        check-artifact-dir.sh DIR exact VERSION SET
 #        check-artifact-dir.sh DIR gather DEST
 #
 # Fails unless DIR holds exactly what the next step expects and nothing else:
@@ -11,10 +11,10 @@
 # stay where it was put; this runs from the checkout, before anything signs.
 #
 #   sign ASSET   the one file named ASSET.
-#   attest       binaries and Debian packages, nothing else.
-#   release      the names a release is made of: the six binaries with their
-#                signatures and SBOMs, the Debian packages and their SBOMs, and
-#                NOTICES.html.
+#   attest       binaries and packages, nothing else.
+#   exact V SET  exactly the names of the set SET of expected-assets.py for the
+#                version V: none missing, none extra. The version is the one the
+#                tag was verified to carry.
 #   gather DEST  DIR holds one directory per downloaded artifact, each with
 #                plain files only; they are copied flat into DEST, and a name
 #                carried by two artifacts is an error, where merging them on
@@ -22,7 +22,7 @@
 set -euo pipefail
 
 dir="${1:?directory}"
-mode="${2:?sign, attest, release or gather}"
+mode="${2:?sign, attest, exact or gather}"
 
 [ -d "$dir" ] || { echo "::error::$dir is not a directory" >&2; exit 1; }
 
@@ -81,22 +81,23 @@ case "$mode" in
 		;;
 	attest)
 		binary='podup-(linux-x86_64|linux-arm64|darwin-arm64|darwin-x86_64|windows-x86_64\.exe|windows-arm64\.exe)'
-		deb='podup_[0-9A-Za-z.+~-]+_(amd64|arm64)\.deb'
-		stray="$(printf '%s\n' "$names" | grep -Ev "^(${binary}|${deb})\$" || true)"
+		version='[0-9]+\.[0-9]+\.[0-9]+'
+		package="podup_${version}_(amd64|arm64)\\.deb|podup-${version}-1\\.glyndor\\.any\\.(x86_64|aarch64)\\.rpm|podup-${version}-1-x86_64\\.pkg\\.tar\\.zst"
+		stray="$(printf '%s\n' "$names" | grep -Ev "^(${binary}|${package})\$" || true)"
 		if [ -n "$stray" ]; then
 			echo "::error::the artifacts to attest contain other names:" >&2
 			printf '%s\n' "$stray" >&2
 			exit 1
 		fi
 		;;
-	release)
-		binary='podup-(linux-x86_64|linux-arm64|darwin-arm64|darwin-x86_64|windows-x86_64\.exe|windows-arm64\.exe)'
-		deb='podup_[0-9A-Za-z.+~-]+_(amd64|arm64)\.deb'
-		allowed="^(${binary}(\.sig|\.cdx\.json)?|${deb}(\.cdx\.json)?|NOTICES\.html)\$"
-		stray="$(printf '%s\n' "$names" | grep -Ev "$allowed" || true)"
-		if [ -n "$stray" ]; then
-			echo "::error::the artifacts contain names a release is not made of:" >&2
-			printf '%s\n' "$stray" >&2
+	exact)
+		version="${3:?version}"
+		set_name="${4:?set}"
+		here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+		wanted="$(python3 -I "$here/expected-assets.py" "$version" "$set_name")" || exit 1
+		if [ "$names" != "$wanted" ]; then
+			echo "::error::the files are not the set '$set_name' of version $version; the left side is what is here, the right side what is expected:" >&2
+			diff <(printf '%s\n' "$names") <(printf '%s\n' "$wanted") >&2 || true
 			exit 1
 		fi
 		;;

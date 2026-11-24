@@ -3,7 +3,7 @@ name: Linux release binaries are hardened
 # The release verifies the Linux binaries are static PIE, full RELRO, NX
 # stack and stripped before it signs them (.github/scripts/hardening/check-hardening.sh).
 # That gate fires at tag time, when a failure costs a release run. This job
-# builds the two Linux release targets the way release.yml does, on the same
+# builds the two Linux release targets the way reusable-release-build.yml does, on the same
 # runners, runs the binary once and reads the same properties off it, so the
 # change that would fail the release fails here first. The aarch64 leg is the
 # reason it exists: that target is not static PIE by rustc's defaults, and
@@ -21,6 +21,8 @@ on:
       - ".github/scripts/hardening/check-hardening.sh"
       - ".github/workflows/linux-hardening.yml"
       - ".github/workflows/release.yml"
+      - ".github/workflows/reusable-release-build.yml"
+      - ".github/workflows/reusable-release-verify.yml"
   pull_request:
     branches:
       - main
@@ -33,6 +35,8 @@ on:
       - ".github/scripts/hardening/check-hardening.sh"
       - ".github/workflows/linux-hardening.yml"
       - ".github/workflows/release.yml"
+      - ".github/workflows/reusable-release-build.yml"
+      - ".github/workflows/reusable-release-verify.yml"
   workflow_dispatch:
 
 permissions:
@@ -65,7 +69,7 @@ jobs:
       - name: Install the pinned toolchain and the musl target
         env:
           TARGET: ${{ matrix.target }}
-          # Keep in step with release.yml's build job.
+          # Keep in step with the build job of reusable-release-build.yml.
           RUST_TOOLCHAIN: "1.100"
         run: |
           set -euo pipefail

@@ -13,8 +13,18 @@ on:
       tag:
         description: "Tag to release (e.g. v0.3.0)"
         required: true
+      dry_run:
+        description: "Rehearsal: build, sign with a throwaway key that nobody trusts, check everything, publish nothing"
+        type: boolean
+        default: false
 
 permissions: {}
+
+env:
+  # The key of a rehearsal. It is public on purpose: no installer, updater or channel embeds
+  # the key it makes, so what it signs verifies nowhere and the rehearsal can never be mistaken
+  # for a release. A run with `dry_run` never reads the real key.
+  REHEARSAL_SEED_B64: zVnFFv3VpjbGd6UB3cU4loQoojjHKh7Y3fw6d4/VU+c=
 
 # Serialize runs that observe or publish the same resource without interruption.
 concurrency:
@@ -22,265 +32,50 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # What is checked before anything is built, and the commit, the version and the tag everything else builds
+  # from, are in reusable-release-verify.yml. The audit of the dependencies runs there in a job of its own, and
+  # nothing below starts until the whole of it has passed.
   verify:
-    name: Verify tag matches crate version
-    runs-on: ubuntu-latest
-    # Bound: worst of the last three successful runs on 2026-09-02 was 189s. Ten times that, rounded up, never under ten
-    # minutes; the six-hour default is what a hang would otherwise cost.
-    timeout-minutes: 30
+    name: verify
     permissions:
       contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        # No credential is left in the checkout: this job installs a tool from
-        # source further down, and the fetches it makes (the tag, `main`) are of
-        # a public repository and need none.
-        with:
-          persist-credentials: false
-          ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    uses: ./.github/workflows/reusable-release-verify.yml
+    with:
+      tag: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
-      - name: Validate tag format
-        env:
-          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-        run: |
-          if ! echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::Tag '${TAG}' does not match required format v<major>.<minor>.<patch>."
-            exit 1
-          fi
-
-      - name: Tag must be an existing tag object at the checked-out commit
-        # Before anything is built: the ref has to be a tag (not a branch of
-        # the same name), an annotated one like every release tag so far, and it
-        # has to point at the commit this run has checked out.
-        env:
-          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-        run: bash .github/scripts/release/check-tag.sh "$TAG"
-
-      - name: Refuse an already published release
-        # Publication follows asset verification. Refuse a second publication
-        # after waiting for another run of the same tag to finish. `gh release
-        # create` at the end would refuse it too, but only after every build.
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-        run: |
-          set -euo pipefail
-          published=$(gh api --paginate "repos/$GH_REPO/releases" --jq '.[] | select(.draft == false) | .tag_name')
-          if grep -Fxq -- "$TAG" <<< "$published"; then
-            echo "::error::Release $TAG is already published; refusing to rebuild or publish it again."
-            exit 1
-          fi
-
-      - name: Tag must equal Cargo.toml version
-        env:
-          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-        run: |
-          VERSION="${TAG#v}"
-          CRATE_VERSION="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
-          if [ "$VERSION" != "$CRATE_VERSION" ]; then
-            echo "::error::Tag ${TAG} does not match Cargo.toml version ${CRATE_VERSION}."
-            exit 1
-          fi
-          echo "Releasing version ${VERSION}."
-
-      - name: Debian package version must equal Cargo.toml version
-        # dpkg-buildpackage takes the .deb version from debian/changelog, which
-        # is a separate hand-maintained file. 1.9.0 shipped with the bump applied
-        # to Cargo.toml but not here, so the release carried podup_1.8.0_*.deb:
-        # apt saw the version it already had, reported no upgrade, and Debian
-        # users were stranded, with no self-update either, since podup redirects
-        # a dpkg-owned binary to `apt upgrade`. The tag check above cannot catch
-        # this; only comparing the two versions can.
-        run: |
-          # Read the version off the first line rather than with
-          # dpkg-parsechangelog: that tool lives in dpkg-dev, which this job
-          # never installs, and a gate that only runs at tag time must not
-          # depend on what happens to be on the runner image. The first-line
-          # format is fixed by Debian policy.
-          DEB_VERSION="$(sed -n '1s/^[^(]*(\([^)]*\)).*/\1/p' debian/changelog)"
-          CRATE_VERSION="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
-          if [ "$DEB_VERSION" != "$CRATE_VERSION" ]; then
-            echo "::error::debian/changelog is at ${DEB_VERSION} but Cargo.toml is at ${CRATE_VERSION}; add a changelog entry so the .deb carries the released version."
-            exit 1
-          fi
-          echo "Debian package version ${DEB_VERSION} matches."
-
-      - name: Cargo.lock must record the released version
-        # Cargo.lock carries podup's own version too, and `cargo build --locked`
-        # in the build jobs would catch a stale one, but only after the matrix
-        # has started, mid-release. Gate it here in verify, before anything is
-        # built, so all three version files (Cargo.toml, debian/changelog,
-        # Cargo.lock) are proven to agree at the same fail-fast point. Match the
-        # version on the line right after the podup package's name entry, not any
-        # dependency that happens to share the number.
-        run: |
-          CRATE_VERSION="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
-          LOCK_VERSION="$(awk -F'"' '/^name = "podup"$/{getline; if ($0 ~ /^version = /) {print $2; exit}}' Cargo.lock)"
-          if [ "$LOCK_VERSION" != "$CRATE_VERSION" ]; then
-            echo "::error::Cargo.lock records podup ${LOCK_VERSION:-<none>} but Cargo.toml is at ${CRATE_VERSION}; run cargo update -p podup so the lockfile matches."
-            exit 1
-          fi
-          echo "Cargo.lock version ${LOCK_VERSION} matches."
-
-      - name: Tag must be on main
-        # Releases are cut only from `main` (develop → main merge, then tag).
-        # Refuse a tag pushed to any other branch so an unreviewed commit can
-        # never be published.
-        run: |
-          git fetch --unshallow --no-tags origin main 2>/dev/null \
-            || git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor HEAD origin/main; then
-            echo "::error::Tagged commit is not reachable from origin/main; releases must be cut from main."
-            exit 1
-          fi
-
-      - name: Audit dependencies for known advisories
-        # Gate the release on `cargo audit`: a RUSTSEC advisory in a pinned
-        # dependency must block publishing, not wait for the weekly cron scan.
-        #
-        # `--deny warnings`, matching reusable-rust-audit.yml. Without it this
-        # step was the WEAKER of the two gates: the weekly cron failed on a
-        # warning-level advisory and the release did not, so the check standing
-        # in front of the immutable artifact was the more permissive one. An
-        # unmaintained or yanked crate is a warning, and a release is the one
-        # place a warning cannot be looked at again later.
-        #
-        # The third-party-timing rule that keeps this off ordinary pull requests
-        # does not apply here and the asymmetry is deliberate: a blocked release
-        # is fixed by releasing again, and a published one cannot be fixed at
-        # all.
-        run: |
-          cargo install cargo-audit --version "=0.23.0" --locked
-          cargo audit --deny warnings
-
-  build:
-    name: Build ${{ matrix.asset }}
+  # What is compiled, packed and described is in reusable-release-build.yml, called with the
+  # commit and the version that `verify` named. It holds `contents: read` and nothing else.
+  builds:
+    name: builds
     needs: verify
-    runs-on: ${{ matrix.runner }}
-    # Bound: worst of the last three successful runs on 2026-09-02 was 347s; the slowest leg is Windows arm64. Ten times that, rounded up, never under ten
-    # minutes; the six-hour default is what a hang would otherwise cost.
-    timeout-minutes: 60
     permissions:
       contents: read
+    uses: ./.github/workflows/reusable-release-build.yml
+    with:
+      commit: ${{ needs.verify.outputs.commit }}
+      version: ${{ needs.verify.outputs.version }}
+      tag: ${{ needs.verify.outputs.tag }}
 
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - asset: podup-linux-x86_64
-            runner: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            bin: podup
-          - asset: podup-linux-arm64
-            runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-musl
-            bin: podup
-          - asset: podup-darwin-arm64
-            runner: macos-latest
-            target: aarch64-apple-darwin
-            bin: podup
-          - asset: podup-darwin-x86_64
-            runner: macos-latest
-            target: x86_64-apple-darwin
-            bin: podup
-          - asset: podup-windows-x86_64.exe
-            runner: windows-latest
-            target: x86_64-pc-windows-msvc
-            bin: podup.exe
-          # Built and run on the arm64 runner (#1683).
-          - asset: podup-windows-arm64.exe
-            runner: windows-11-arm
-            target: aarch64-pc-windows-msvc
-            bin: podup.exe
-
-    defaults:
-      run:
-        shell: bash
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-
-      - name: Install build target
-        env:
-          TARGET: ${{ matrix.target }}
-          # Keep this in step with the `toolchain` default in this repository's
-          # reusable-rust-ci.yml, which is where that file lives since #1568.
-          # pin-watch.yml reads both, along with the other seven sites that
-          # write this number, and reports them disagreeing.
-          #
-          # It is NOT a repo-root rust-toolchain.toml on purpose: that
-          # file is a directory override that beats `rustup default`, so it would
-          # silently pull the MSRV job (which does `rustup default <msrv>`) up to
-          # this version and defeat the MSRV gate. A release still must not float
-          # on whatever Rust the runner ships, so pin it here, in the release path
-          # only.
-          RUST_TOOLCHAIN: "1.100"
-        run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq musl-tools
-          fi
-          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
-          rustup default "$RUST_TOOLCHAIN"
-          rustup target add "$TARGET"
-
-      - name: Build binary
-        run: cargo build --release --locked --target ${{ matrix.target }}
-
-      - name: Stage artifact
-        run: cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "${{ matrix.asset }}"
-
-      - name: Run the binary once
-        # A link that produced something the loader refuses would otherwise
-        # be signed, attested and published; the static-PIE link the aarch64
-        # musl target gets from .cargo/config.toml is the case this was
-        # written for. Every leg now builds on the architecture it ships for.
-        run: ./"${{ matrix.asset }}" --version
-
-      # PE / Mach-O hardening gate, parallel to the Linux ELF one in the
-      # release job below. The Windows legs read DllCharacteristics with a
-      # PowerShell script; the macOS legs read mach_header.flags and the
-      # symbol table with `otool`/`nm`. Each script is a property check
-      # that runs over the staged asset before anything is signed, so a
-      # missing flag burns nothing. Both Windows legs run this gate even
-      # though the arm64 one cannot execute its binary (#1648): reading
-      # the PE header does not require the host the binary targets.
-      - name: Verify Windows hardening (DllCharacteristics)
-        if: matrix.target == 'x86_64-pc-windows-msvc' || matrix.target == 'aarch64-pc-windows-msvc'
-        shell: pwsh
-        run: pwsh -NoProfile -File .github/scripts/hardening/check-hardening.ps1 "${{ matrix.asset }}"
-
-      - name: Verify macOS hardening (MH_PIE + stripped symbol table)
-        if: matrix.target == 'aarch64-apple-darwin' || matrix.target == 'x86_64-apple-darwin'
-        run: bash .github/scripts/hardening/check-hardening-macos.sh "${{ matrix.asset }}"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ matrix.asset }}
-          path: ${{ matrix.asset }}
-          retention-days: 1
-          if-no-files-found: error
 
   # The binaries are signed here, in a job of their own, and not in the job
   # that compiled them. `build` runs the build scripts and proc-macros of every
   # dependency, which is code from outside this organisation with the run of the
-  # runner. This job checks the tag out afresh, downloads only the finished
+  # runner. This job checks the commit out afresh, downloads only the finished
   # binary, and runs nothing but Python with hashed requirements, so nothing a
   # build left in a workspace is here for the key to meet. It holds
-  # `contents: read` and the key, and no other permission.
+  # `contents: read` and the key, and no other permission, and it runs in the
+  # environment `release`, which allows only `main` and the `v*` tags.
   sign:
     name: Sign ${{ matrix.asset }}
-    needs: build
+    needs: [verify, builds, attest]
+    if: ${{ !cancelled() && needs.verify.result == 'success' && needs.builds.result == 'success' && (needs.attest.result == 'success' || inputs.dry_run && needs.attest.result == 'skipped') }}
     runs-on: ubuntu-latest
     # Bound: the job installs three wheels and signs one file.
     timeout-minutes: 10
+    environment: release
     permissions:
       contents: read
+      attestations: read
 
     strategy:
       fail-fast: false
@@ -292,6 +87,21 @@ jobs:
         with:
           persist-credentials: false
           ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+      - name: The checkout is the commit that was verified
+        env:
+          COMMIT: ${{ needs.verify.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$COMMIT"
+
+      - name: The tag still points at the commit that was verified
+        env:
+          TAG: ${{ needs.verify.outputs.tag }}
+          COMMIT: ${{ needs.verify.outputs.commit }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/tags/${TAG}:refs/tags/${TAG}"
+          now="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+          [ "$now" = "$COMMIT" ] || { echo "::error::the tag $TAG points at $now now, and the release was verified at $COMMIT"; exit 1; }
 
       # Into a directory of its own, outside the checkout: the artifact comes
       # from the job that ran the build, so what it holds must not be able to
@@ -306,10 +116,23 @@ jobs:
           ASSET: ${{ matrix.asset }}
         run: bash .github/scripts/release/check-artifact-dir.sh "$RUNNER_TEMP/artifacts" sign "$ASSET"
 
+      # What is signed has to be the bytes the attestation covers, for this tag and this commit, and that is
+      # checked on the file that was downloaded and before anything is signed. A rehearsal makes no attestation.
+      - name: Verify the provenance of the file about to be signed
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          SOURCE_REF: refs/tags/${{ needs.verify.outputs.tag }}
+          SOURCE_COMMIT: ${{ needs.verify.outputs.commit }}
+          NAME: ${{ matrix.asset }}
+        run: bash .github/scripts/release/verify-provenance.sh "$RUNNER_TEMP/artifacts" "$GH_REPO" "$VERSION" "$NAME"
+
       - name: Sign binary
         env:
-          GLYNDOR_RELEASE_ED25519_KEY: ${{ secrets.GLYNDOR_RELEASE_ED25519_KEY }}
-          PYTHONUTF8: "1"
+          # A rehearsal signs with the public throwaway key and never reads the secret.
+          GLYNDOR_RELEASE_ED25519_KEY: ${{ inputs.dry_run && env.REHEARSAL_SEED_B64 || secrets.GLYNDOR_RELEASE_ED25519_KEY }}
           ASSET: ${{ matrix.asset }}
         run: |
           # The installer/updater verifies this Ed25519 signature; a release
@@ -323,13 +146,15 @@ jobs:
           fi
           # Install the signing dependencies into an isolated virtual
           # environment so the pinned cryptography is honoured whatever the
-          # runner image ships.
-          python3 -m venv "$RUNNER_TEMP/signvenv"
+          # runner image ships. Every Python here runs with -I: the scripts live in a
+          # directory of the tag, and Python puts a script's directory first on its
+          # path, so a module planted beside them would be imported by the signer.
+          python3 -I -m venv "$RUNNER_TEMP/signvenv"
           venv_py="$RUNNER_TEMP/signvenv/bin/python"
-          "$venv_py" -m pip install --quiet --require-hashes --only-binary=:all: -r .github/scripts/release/sign-requirements.txt
+          "$venv_py" -I -m pip install --quiet --require-hashes --only-binary=:all: -r .github/scripts/release/sign-requirements.txt
           # Keys are passed via the environment, not argv, so they never appear
           # in the process argument list.
-          "$venv_py" .github/scripts/release/sign.py "$RUNNER_TEMP/artifacts/$ASSET" "$RUNNER_TEMP/artifacts/$ASSET.sig"
+          "$venv_py" -I -X utf8 .github/scripts/release/sign.py "$RUNNER_TEMP/artifacts/$ASSET" "$RUNNER_TEMP/artifacts/$ASSET.sig"
 
       - name: Upload signature
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -339,115 +164,119 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  build-deb:
-    name: Build Debian package (${{ matrix.arch }})
-    needs: verify
-    runs-on: ${{ matrix.runner }}
-    # Bound: worst of the last three successful runs on 2026-09-02 was 438s. Ten times that, rounded up, never under ten
-    # minutes; the six-hour default is what a hang would otherwise cost.
-    timeout-minutes: 60
-    # debian:trixie, digest-pinned. Sid was a moving tag:
-    # two releases built from identical source could land in different
-    # environments with nothing in history recording which, and Dependabot's
-    # github-actions ecosystem does not bump a workflow's `container:` image,
-    # so a digest of sid would have no bump path and freeze. Trixie is stable
-    # and matches the suite CI validates against.
-    #
-    # It is meant to be the same image reusable-rust-debian.yml defaults to,
-    # so the release that ships to users comes out of the environment the
-    # debian-build lane exercised. tests/repository/workflows/workflow_debian_image.rs asserts
-    # the two are the same value on every pull request, and pin-watch.yml
-    # compares them with the digest the registry serves.
-    container: debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6
+
+  # The packages are signed in a job of their own, like the binaries, and not in the job that
+  # holds the right to write a release. Each artifact is one package, and its name is derived
+  # from the version the tag was verified to carry.
+  sign-packages:
+    name: Sign ${{ matrix.artifact }}
+    needs: [verify, builds, attest]
+    if: ${{ !cancelled() && needs.verify.result == 'success' && needs.builds.result == 'success' && (needs.attest.result == 'success' || inputs.dry_run && needs.attest.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    # Bound: the job installs three wheels and signs one file.
+    timeout-minutes: 10
+    environment: release
     permissions:
       contents: read
+      attestations: read
+
     strategy:
       fail-fast: false
       matrix:
         include:
-          - arch: amd64
-            runner: ubuntu-latest
-          - arch: arm64
-            runner: ubuntu-24.04-arm
+          - artifact: podup-deb-amd64
+            file: podup_%V_amd64.deb
+          - artifact: podup-deb-arm64
+            file: podup_%V_arm64.deb
+          - artifact: podup-rpm-x86_64
+            file: podup-%V-1.glyndor.any.x86_64.rpm
+          - artifact: podup-rpm-aarch64
+            file: podup-%V-1.glyndor.any.aarch64.rpm
+          - artifact: podup-pacman-x86_64
+            file: podup-%V-1-x86_64.pkg.tar.zst
+
     steps:
-      - name: Install build tooling
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends \
-            ca-certificates \
-            build-essential \
-            dpkg-dev \
-            debhelper \
-            curl \
-            musl-tools
-
-      - name: Install the pinned Rust toolchain and the musl target
-        env:
-          # The same pin the `build` job uses, and the same one rust-ci.yml
-          # defaults to. Before this the package was compiled by Debian's rustc
-          # while CI validated with 1.97, so the binary users installed came
-          # from a compiler the suite had never run against.
-          RUST_TOOLCHAIN: "1.100"
-          ARCH: ${{ matrix.arch }}
-        run: |
-          set -euo pipefail
-          case "$ARCH" in
-            amd64) target=x86_64-unknown-linux-musl ;;
-            arm64) target=aarch64-unknown-linux-musl ;;
-            *) echo "::error::no musl target mapped for $ARCH"; exit 1 ;;
-          esac
-          curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain "$RUST_TOOLCHAIN"
-          . "$HOME/.cargo/env"
-          # Targets are per-toolchain, so this has to name the pinned one
-          # rather than whatever happens to be default.
-          rustup target add "$target" --toolchain "$RUST_TOOLCHAIN"
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
-      - name: Build the package
-        run: |
-          # dpkg-buildpackage builds for the host architecture, so each runner
-          # produces its own arch's .deb natively.
-          dpkg-checkbuilddeps
-          dpkg-buildpackage -us -uc -b
-
-      - name: Stage the .deb into the workspace
+      - name: The checkout is the commit that was verified
         env:
-          ARCH: ${{ matrix.arch }}
+          COMMIT: ${{ needs.verify.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$COMMIT"
+
+      - name: The tag still points at the commit that was verified
+        env:
+          TAG: ${{ needs.verify.outputs.tag }}
+          COMMIT: ${{ needs.verify.outputs.commit }}
         run: |
-          deb=$(find .. -maxdepth 1 -name "podup_*_${ARCH}.deb" | sort | head -n1)
-          if [ -z "$deb" ]; then
-            echo "::error::no ${ARCH} .deb artifact was produced"
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/tags/${TAG}:refs/tags/${TAG}"
+          now="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+          [ "$now" = "$COMMIT" ] || { echo "::error::the tag $TAG points at $now now, and the release was verified at $COMMIT"; exit 1; }
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/artifacts
+
+      - name: Check the artifact is the one package expected
+        env:
+          TEMPLATE: ${{ matrix.file }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          echo "ASSET=${TEMPLATE//%V/$VERSION}" >>"$GITHUB_ENV"
+          bash .github/scripts/release/check-artifact-dir.sh "$RUNNER_TEMP/artifacts" sign "${TEMPLATE//%V/$VERSION}"
+
+      # What is signed has to be the bytes the attestation covers, for this tag and this commit, and that is
+      # checked on the file that was downloaded and before anything is signed. A rehearsal makes no attestation.
+      - name: Verify the provenance of the file about to be signed
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          SOURCE_REF: refs/tags/${{ needs.verify.outputs.tag }}
+          SOURCE_COMMIT: ${{ needs.verify.outputs.commit }}
+          NAME: ${{ env.ASSET }}
+        run: bash .github/scripts/release/verify-provenance.sh "$RUNNER_TEMP/artifacts" "$GH_REPO" "$VERSION" "$NAME"
+
+      - name: Sign package
+        env:
+          GLYNDOR_RELEASE_ED25519_KEY: ${{ inputs.dry_run && env.REHEARSAL_SEED_B64 || secrets.GLYNDOR_RELEASE_ED25519_KEY }}
+        run: |
+          if [ -z "$GLYNDOR_RELEASE_ED25519_KEY" ]; then
+            echo "::error::GLYNDOR_RELEASE_ED25519_KEY is not configured; refusing to release unsigned packages."
             exit 1
           fi
-          cp "$deb" "$(basename "$deb")"
-          echo "Staged $(basename "$deb")"
+          python3 -I -m venv "$RUNNER_TEMP/signvenv"
+          venv_py="$RUNNER_TEMP/signvenv/bin/python"
+          "$venv_py" -I -m pip install --quiet --require-hashes --only-binary=:all: -r .github/scripts/release/sign-requirements.txt
+          "$venv_py" -I -X utf8 .github/scripts/release/sign.py "$RUNNER_TEMP/artifacts/$ASSET" "$RUNNER_TEMP/artifacts/$ASSET.sig"
 
-      - name: Upload artifact
+      - name: Upload signature
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: podup-deb-${{ matrix.arch }}
-          path: podup_*_${{ matrix.arch }}.deb
+          name: sig-${{ matrix.artifact }}
+          path: ${{ runner.temp }}/artifacts/${{ env.ASSET }}.sig
           retention-days: 1
           if-no-files-found: error
+
 
   # The provenance is attested here, in a job that compiles nothing. The
   # permissions that mint it (`id-token`, `attestations`) are for the whole
   # job, so they cannot sit in the jobs that run the build scripts of the
   # dependencies. This job downloads the finished artifacts into a directory
-  # outside the checkout, checks their names, and attests exactly those files.
+  # outside the checkout, checks their names, and attests exactly those files. A rehearsal makes no
+  # attestation: it would leave in GitHub a record of provenance for binaries that are never published.
   attest:
     name: Attest build provenance
-    needs: [build, build-deb]
+    needs: [verify, builds]
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
-    # Bound: the job downloads eight files and attests them.
+    # Bound: the job downloads thirteen files and attests them.
     timeout-minutes: 10
     permissions:
       contents: read
@@ -458,6 +287,21 @@ jobs:
         with:
           persist-credentials: false
           ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+      - name: The checkout is the commit that was verified
+        env:
+          COMMIT: ${{ needs.verify.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$COMMIT"
+
+      - name: The tag still points at the commit that was verified
+        env:
+          TAG: ${{ needs.verify.outputs.tag }}
+          COMMIT: ${{ needs.verify.outputs.commit }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/tags/${TAG}:refs/tags/${TAG}"
+          now="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+          [ "$now" = "$COMMIT" ] || { echo "::error::the tag $TAG points at $now now, and the release was verified at $COMMIT"; exit 1; }
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -476,119 +320,32 @@ jobs:
             ${{ runner.temp }}/artifacts/podup-darwin-*
             ${{ runner.temp }}/artifacts/podup-windows-*
             ${{ runner.temp }}/artifacts/podup_*.deb
+            ${{ runner.temp }}/artifacts/podup-*.rpm
+            ${{ runner.temp }}/artifacts/podup-*.pkg.tar.zst
 
-  # SBOM generation runs here, in its own job, so a third-party build script
-  # executed by `cargo install` cannot reach the signing step. cargo install
-  # builds every crate in the dependency tree of cargo-cyclonedx and
-  # cargo-about (427 crates across the two, several under live RustSec
-  # advisories), and `build.rs` has full filesystem access on the runner that
-  # runs it. The release job holds GLYNDOR_RELEASE_ED25519_KEY on its signing
-  # step; if SBOM generation lived in the same job, a malicious build script
-  # could persist in the workspace and rewrite `.github/scripts/release/sign.py` or
-  # `.github/scripts/release/sign-requirements.txt` before the signing step ran them
-  # with the key in its environment. This job holds `contents: read` and no
-  # secrets, so persistence here has nothing to land on.
-  sbom:
-    name: Generate SBOM and license attribution
-    needs: [build, build-deb]
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    # Bound: worst of the last three successful runs on 2026-09-02 was 216s. Ten times that, rounded up, never under ten
-    # minutes; the six-hour default is what a hang would otherwise cost.
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
-      - name: Install Rust toolchain
-        # Pin rather than `stable`: a release runs once at tag time and is
-        # immutable, so it must not be built by whatever Rust the runner ships
-        # that day. Keep in step with rust-ci.yml's toolchain default (see the
-        # build job for why this is not a repo-root rust-toolchain.toml).
-        env:
-          RUST_TOOLCHAIN: "1.100"
-        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
-
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          merge-multiple: true
-
-      - name: Generate per-target SBOMs and license attribution
-        # Government/enterprise consumers require a machine-readable SBOM
-        # (CycloneDX, per US EO 14028). A single --all-features run over-declares
-        # every artifact: the .deb drops the self-update stack (ureq/TLS/Ed25519)
-        # and each OS pulls different cfg-gated deps, yet all shipped the same
-        # union SBOM. Generate one CycloneDX per released artifact with that
-        # artifact's exact target triple and feature set, so each lists only what
-        # its binary actually contains: the per-artifact SBOM
-        # lists only that platform's dependencies.
-        #
-        # cargo-cyclonedx's --target uses cargo's --filter-platform resolution,
-        # which needs only the triple, not an installed std, so the six
-        # cross-platform binary targets resolve here without `rustup target add`.
-        # The binaries carry the default feature set; the .debs are built
-        # --no-default-features --features watch,completions (debian/rules), so
-        # their SBOMs pass the same flags or they would misdeclare the package.
-        # License attribution (NOTICES.html) stays a single union: over-listing
-        # licenses is the safe direction for attribution, never under-listing.
-        run: |
-          cargo install --locked cargo-cyclonedx --version "=0.5.10"
-          cargo install --locked --features cli cargo-about --version "=0.9.3"
-
-          # $1 = output basename (the artifact the SBOM describes; ".cdx.json" is
-          #      appended), $2 = target triple, $3.. = extra cargo-cyclonedx flags.
-          gen_sbom() {
-            local out="$1" target="$2"
-            shift 2
-            cargo cyclonedx --format json --target "$target" \
-              --override-filename "${out}.cdx" "$@"
-          }
-
-          # Binaries: default feature set, one SBOM per target triple.
-          gen_sbom podup-linux-x86_64        x86_64-unknown-linux-musl
-          gen_sbom podup-linux-arm64         aarch64-unknown-linux-musl
-          gen_sbom podup-darwin-arm64        aarch64-apple-darwin
-          gen_sbom podup-darwin-x86_64       x86_64-apple-darwin
-          gen_sbom podup-windows-x86_64.exe  x86_64-pc-windows-msvc
-          gen_sbom podup-windows-arm64.exe   aarch64-pc-windows-msvc
-
-          # Debian packages: the packaged binary drops the `update` feature and
-          # links glibc (gnu), not musl. Name each SBOM after its own .deb.
-          for arch in amd64 arm64; do
-            case "$arch" in
-              amd64) triple=x86_64-unknown-linux-gnu ;;
-              arm64) triple=aarch64-unknown-linux-gnu ;;
-            esac
-            deb="$(ls podup_*_"${arch}".deb)"
-            gen_sbom "$deb" "$triple" --no-default-features --features watch,completions
-          done
-
-          cargo about generate about.hbs > NOTICES.html
-
-      - name: Upload SBOM and NOTICE artifacts
-        # if-no-files-found: error matters: a silent empty upload would let the
-        # release job sign nothing and still succeed, defeating the SBOM gate.
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: sbom
-          path: |
-            *.cdx.json
-            NOTICES.html
-          if-no-files-found: error
-
-  release:
-    name: Publish release
-    needs: [build, sign, build-deb, sbom, attest]
+  # The set is sealed here: everything the release is made of is gathered, checked against the
+  # exact list of names the verified version gives, its provenance checked, the checksums made, and
+  # what is still unsigned (the checksums, the SBOMs, the notices and the installers) signed. This job
+  # holds the key and `contents: read`; it has no right to write a release, and the job that has it
+  # never sees the key. What it produces is one artifact, the final set, that the publishing job
+  # checks again before anything leaves.
+  seal:
+    name: Seal the release set
+    needs: [verify, builds, sign, sign-packages, attest]
+    if: ${{ !cancelled() && needs.verify.result == 'success' && needs.builds.result == 'success' && needs.sign.result == 'success' && needs['sign-packages'].result == 'success' && (needs.attest.result == 'success' || inputs.dry_run && needs.attest.result == 'skipped') }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 33s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
-    timeout-minutes: 10
+    timeout-minutes: 15
+    environment: release
     permissions:
-      contents: write
+      contents: read
       attestations: read
+    # The digest of the checksums that were signed: the publishing job takes the set from an artifact
+    # and compares it with this before it uses anything of it.
+    outputs:
+      sums: ${{ steps.sums.outputs.sha256 }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -596,32 +353,64 @@ jobs:
           persist-credentials: false
           ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
-      # The artifacts are downloaded outside the checkout, for the reason given
-      # in the `sign` job, and every step that works on them runs in that
-      # directory. The scripts and the requirements are read from the checkout.
-      # One directory per artifact, not merged on download: merging lets two
-      # artifacts that carry a file of the same name replace one another
-      # without a word, and the step below refuses that.
+      - name: The checkout is the commit that was verified
+        env:
+          COMMIT: ${{ needs.verify.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$COMMIT"
+
+      - name: The tag still points at the commit that was verified
+        env:
+          TAG: ${{ needs.verify.outputs.tag }}
+          COMMIT: ${{ needs.verify.outputs.commit }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/tags/${TAG}:refs/tags/${TAG}"
+          now="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+          [ "$now" = "$COMMIT" ] || { echo "::error::the tag $TAG points at $now now, and the release was verified at $COMMIT"; exit 1; }
+
+      # The artifacts are downloaded outside the checkout, for the reason given in the `sign` job,
+      # one directory per artifact and not merged on download: merging lets two artifacts that carry a
+      # file of the same name replace one another without a word, and the step below refuses that. Three
+      # patterns, so that the tools of the SBOM job are not among them.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          pattern: podup-*
           path: ${{ runner.temp }}/downloaded
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: sig-*
+          path: ${{ runner.temp }}/downloaded
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sbom
+          path: ${{ runner.temp }}/downloaded/sbom
 
-      - name: Gather the artifacts and check they are what a release is made of
+      - name: Gather the artifacts and check they are exactly what the version is made of
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
         run: |
+          set -euo pipefail
           bash .github/scripts/release/check-artifact-dir.sh "$RUNNER_TEMP/downloaded" gather "$RUNNER_TEMP/artifacts"
-          bash .github/scripts/release/check-artifact-dir.sh "$RUNNER_TEMP/artifacts" release
           # The installers are the repository's own, from the checkout.
           cp install.sh install.ps1 "$RUNNER_TEMP/artifacts/"
+          bash .github/scripts/release/check-artifact-dir.sh "$RUNNER_TEMP/artifacts" exact "$VERSION" staged
 
       - name: Verify the provenance of the binaries and packages
-        # What is signed below has to be the bytes the attestation covers.
+        # What is signed below has to be the bytes the attestation covers, for this tag and this commit.
+        # A rehearsal makes no attestation, so it has none to verify; a real run cannot skip this.
+        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: bash .github/scripts/release/verify-provenance.sh "$RUNNER_TEMP/artifacts" "$GH_REPO"
+          VERSION: ${{ needs.verify.outputs.version }}
+          SOURCE_REF: refs/tags/${{ needs.verify.outputs.tag }}
+          SOURCE_COMMIT: ${{ needs.verify.outputs.commit }}
+        run: bash .github/scripts/release/verify-provenance.sh "$RUNNER_TEMP/artifacts" "$GH_REPO" "$VERSION"
 
       - name: Verify the Linux binaries carry the hardening they are documented with
         working-directory: ${{ runner.temp }}/artifacts
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -euo pipefail
           # Static PIE, full RELRO, non-executable stack, stripped: measured by
@@ -634,8 +423,7 @@ jobs:
           # so a failure burns nothing: the release is not immutable yet.
           # The script's own tests build one control per property.
           for arch in amd64 arm64; do
-            ls podup_*_"${arch}".deb >/dev/null || { echo "::error::Debian package artifact for ${arch} is missing"; exit 1; }
-            dpkg-deb -x podup_*_"${arch}".deb "$RUNNER_TEMP/deb-${arch}"
+            dpkg-deb -x "podup_${VERSION}_${arch}.deb" "$RUNNER_TEMP/deb-${arch}"
           done
           bash "$GITHUB_WORKSPACE/.github/scripts/hardening/check-hardening.sh" \
             podup-linux-x86_64 \
@@ -645,59 +433,67 @@ jobs:
 
       - name: Generate checksums
         working-directory: ${{ runner.temp }}/artifacts
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
         run: |
-          bins=(podup-linux-x86_64 podup-linux-arm64 podup-darwin-arm64 podup-darwin-x86_64 podup-windows-x86_64.exe podup-windows-arm64.exe)
-          sha256sum "${bins[@]}" podup_*_{amd64,arm64}.deb "${bins[@]/%/.cdx.json}" \
-            podup_*_{amd64,arm64}.deb.cdx.json NOTICES.html install.sh install.ps1 > SHA256SUMS
+          set -euo pipefail
+          # The names come from the list the version gives, not from a glob over what is here.
+          python3 -I "$GITHUB_WORKSPACE/.github/scripts/release/expected-assets.py" "$VERSION" checksummed \
+            | xargs sha256sum > SHA256SUMS
 
-      - name: Sign SHA256SUMS and the Debian packages
+      - name: Sign SHA256SUMS, the SBOMs, the notices and the installers
         working-directory: ${{ runner.temp }}/artifacts
         env:
-          GLYNDOR_RELEASE_ED25519_KEY: ${{ secrets.GLYNDOR_RELEASE_ED25519_KEY }}
-          PYTHONUTF8: "1"
+          GLYNDOR_RELEASE_ED25519_KEY: ${{ inputs.dry_run && env.REHEARSAL_SEED_B64 || secrets.GLYNDOR_RELEASE_ED25519_KEY }}
+          VERSION: ${{ needs.verify.outputs.version }}
         run: |
+          set -euo pipefail
           if [ -z "$GLYNDOR_RELEASE_ED25519_KEY" ]; then
             echo "::error::GLYNDOR_RELEASE_ED25519_KEY is not configured; refusing to release unsigned checksums."
             exit 1
           fi
-          # Isolated venv so the pinned cryptography is honoured regardless of
-          # any system-managed copy on the runner (see the per-binary sign step).
-          # setup-python puts `python` first on PATH; the runner images also
-          # carry `python3`. Prefer whichever a setup step put there.
-          py=python; command -v python >/dev/null 2>&1 || py=python3
-          "$py" -m venv "$RUNNER_TEMP/signvenv"
+          # Isolated venv so the pinned cryptography is honoured regardless of any system-managed copy
+          # on the runner (see the per-binary sign step), and every Python runs with -I.
+          python3 -I -m venv "$RUNNER_TEMP/signvenv"
           venv_py="$RUNNER_TEMP/signvenv/bin/python"
-          [ -x "$venv_py" ] || venv_py="$RUNNER_TEMP/signvenv/Scripts/python.exe"
-          "$venv_py" -m pip install --quiet --require-hashes --only-binary=:all: -r "$GITHUB_WORKSPACE/.github/scripts/release/sign-requirements.txt"
-          # The key is read from GLYNDOR_RELEASE_ED25519_KEY in the environment, not argv.
-          # Sign the checksums, the packages, every per-target SBOM, the notices and
-          # the installers, so a user pinning PODUP_VERSION can verify the script they
+          "$venv_py" -I -m pip install --quiet --require-hashes --only-binary=:all: -r "$GITHUB_WORKSPACE/.github/scripts/release/sign-requirements.txt"
+          # The key is read from GLYNDOR_RELEASE_ED25519_KEY in the environment, not argv. What the
+          # binaries and the packages are signed with is done already, by the jobs before this one;
+          # the rest is signed here, so a user pinning PODUP_VERSION can verify the script they
           # pipe to a shell as well as the binaries it fetches.
-          for file in SHA256SUMS podup_*_amd64.deb podup_*_arm64.deb *.cdx.json NOTICES.html install.sh install.ps1; do
-            "$venv_py" "$GITHUB_WORKSPACE/.github/scripts/release/sign.py" "$file"
-          done
-      - name: Verify every signature against the keys consumers embed
+          while IFS= read -r file; do
+            "$venv_py" -I -X utf8 "$GITHUB_WORKSPACE/.github/scripts/release/sign.py" "$file"
+          done < <(python3 -I "$GITHUB_WORKSPACE/.github/scripts/release/expected-assets.py" "$VERSION" sealed)
+
+      - name: Verify every signature against the keys consumers embed, and that the set is whole
         working-directory: ${{ runner.temp }}/artifacts
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          REHEARSAL: ${{ inputs.dry_run }}
         run: |
+          set -euo pipefail
           # sign.py only checks the seed is base64 of 32 bytes, so a wrong-but-
           # well-formed GLYNDOR_RELEASE_ED25519_KEY signs happily and publishes a
           # release nothing can verify. Releases are immutable, so that mistake
-          # burns the version. Verify, here and once, what every installer does
-          # on every machine - and what install.sh / install.ps1 do for
-          # SHA256SUMS is only half the story. Every per-asset .sig (per-binary,
-          # per-deb, per-SBOM, per-installer) carries the same trust: a per-
-          # binary substitution is the failure mode SHA256SUMS cannot catch
-          # (the manifest can be re-signed to match the swapped binary), so
-          # iterate every .sig in the workspace and verify it the same way.
-          # A mismatch on any one fails the release instead of shipping it.
+          # burns the version. Every asset is verified, each with its own .sig, because a
+          # per-binary substitution is the failure SHA256SUMS cannot catch (the manifest can
+          # be re-signed to match the swapped binary). The list of what carries a signature is
+          # the one the version gives, so an empty directory of signatures cannot pass: a
+          # missing signature and an extra one are both a difference from the exact set.
+          here="$GITHUB_WORKSPACE/.github/scripts/release"
+          bash "$here/check-artifact-dir.sh" . exact "$VERSION" published
           venv_py="$RUNNER_TEMP/signvenv/bin/python"
-          [ -x "$venv_py" ] || venv_py="$RUNNER_TEMP/signvenv/Scripts/python.exe"
-          "$venv_py" "$GITHUB_WORKSPACE/.github/scripts/release/verify-signing-key.py" SHA256SUMS
-          shopt -s nullglob
-          for sig in *.sig; do
-            base="${sig%.sig}"
-            "$venv_py" "$GITHUB_WORKSPACE/.github/scripts/release/verify-signing-key.py" "$base" "$sig"
-          done
+          if [ "$REHEARSAL" = true ]; then
+            PODUP_VERIFY_ONLY_KEY_B64="$(REHEARSAL_SEED_B64="$REHEARSAL_SEED_B64" "$venv_py" -I "$here/public-key-of.py")"
+            export PODUP_VERIFY_ONLY_KEY_B64
+          fi
+          count=0
+          want=$(( $(python3 -I "$here/expected-assets.py" "$VERSION" checksummed | wc -l) + 1 ))
+          while IFS= read -r file; do
+            "$venv_py" -I "$here/verify-signing-key.py" "$file" "$file.sig"
+            count=$((count + 1))
+          done < <({ python3 -I "$here/expected-assets.py" "$VERSION" checksummed; echo SHA256SUMS; })
+          [ "$count" -eq "$want" ] || { echo "::error::$count signatures were verified, $want were expected"; exit 1; }
 
       - name: Verify every file the installers fetch is staged
         working-directory: ${{ runner.temp }}/artifacts
@@ -712,44 +508,155 @@ jobs:
           # from install.sh's own ${BASE_URL} fetches, so it covers
           # SHA256SUMS.sig too: install.sh aborts without it, and nothing
           # upstream of here ever checked it was produced.
-          python3 "$GITHUB_WORKSPACE/.github/scripts/release/verify-release-assets.py" \
+          python3 -I "$GITHUB_WORKSPACE/.github/scripts/release/verify-release-assets.py" \
             --workdir . \
             --install-script install.sh \
             --install-ps1 install.ps1
 
-      - name: Create GitHub Release
+      - name: Name the digest of the checksums that were signed
+        id: sums
         working-directory: ${{ runner.temp }}/artifacts
+        run: echo "sha256=$(sha256sum SHA256SUMS | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
+
+      - name: Upload the sealed set
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-set
+          path: ${{ runner.temp }}/artifacts/*
+          retention-days: 1
+          if-no-files-found: error
+
+
+  # The release is published here, by a job that holds the right to write one and never the key.
+  # What it publishes is the set the sealing job made, checked again against the exact list of
+  # names, every signature checked again against the public keys, and the tag looked up one more
+  # time: it has to still be the commit that was verified. In a rehearsal it stops there.
+  release:
+    name: Publish release
+    needs: [verify, seal]
+    runs-on: ubuntu-latest
+    # Bound: worst of the last three successful runs on 2026-09-02 was 33s. Ten times that, rounded up, never under ten
+    # minutes; the six-hour default is what a hang would otherwise cost.
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      attestations: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+      - name: The checkout is the commit that was verified
+        env:
+          COMMIT: ${{ needs.verify.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$COMMIT"
+
+      - name: The tag still points at the commit that was verified
+        env:
+          TAG: ${{ needs.verify.outputs.tag }}
+          COMMIT: ${{ needs.verify.outputs.commit }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/tags/${TAG}:refs/tags/${TAG}"
+          now="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+          [ "$now" = "$COMMIT" ] || { echo "::error::the tag $TAG points at $now now, and the release was verified at $COMMIT"; exit 1; }
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-set
+          path: ${{ runner.temp }}/release
+
+      - name: The files are exactly the set the version is made of
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: bash .github/scripts/release/check-artifact-dir.sh "$RUNNER_TEMP/release" exact "$VERSION" published
+
+      - name: The set is the one the sealing job made
+        working-directory: ${{ runner.temp }}/release
+        env:
+          SEALED: ${{ needs.seal.outputs.sums }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The digest of the checksums is what the sealing job reported when it signed them. A set that
+          # is another one, with signatures of its own, is refused before anything of it is used.
+          [[ "$SEALED" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::the sealing job reported no digest"; exit 1; }
+          [ "$(sha256sum SHA256SUMS | cut -d' ' -f1)" = "$SEALED" ] || { echo "::error::SHA256SUMS is not the one the sealing job signed"; exit 1; }
+          sha256sum --strict -c SHA256SUMS
+          want="$(python3 -I "$GITHUB_WORKSPACE/.github/scripts/release/expected-assets.py" "$VERSION" checksummed)"
+          got="$(awk '{ print $2 }' SHA256SUMS | LC_ALL=C sort)"
+          [ "$got" = "$want" ] || { echo "::error::SHA256SUMS does not list exactly the set of the version"; exit 1; }
+
+      - name: Verify the provenance of the binaries and packages
+        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          SOURCE_REF: refs/tags/${{ needs.verify.outputs.tag }}
+          SOURCE_COMMIT: ${{ needs.verify.outputs.commit }}
+        run: bash .github/scripts/release/verify-provenance.sh "$RUNNER_TEMP/release" "$GH_REPO" "$VERSION"
+
+      - name: Verify every signature against the keys consumers embed
+        working-directory: ${{ runner.temp }}/release
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          REHEARSAL: ${{ inputs.dry_run }}
         run: |
+          set -euo pipefail
+          here="$GITHUB_WORKSPACE/.github/scripts/release"
+          python3 -I -m venv "$RUNNER_TEMP/verifyvenv"
+          venv_py="$RUNNER_TEMP/verifyvenv/bin/python"
+          "$venv_py" -I -m pip install --quiet --require-hashes --only-binary=:all: -r "$here/sign-requirements.txt"
+          if [ "$REHEARSAL" = true ]; then
+            PODUP_VERIFY_ONLY_KEY_B64="$(REHEARSAL_SEED_B64="$REHEARSAL_SEED_B64" "$venv_py" -I "$here/public-key-of.py")"
+            export PODUP_VERIFY_ONLY_KEY_B64
+          fi
+          count=0
+          want=$(( $(python3 -I "$here/expected-assets.py" "$VERSION" checksummed | wc -l) + 1 ))
+          while IFS= read -r file; do
+            "$venv_py" -I "$here/verify-signing-key.py" "$file" "$file.sig"
+            count=$((count + 1))
+          done < <({ python3 -I "$here/expected-assets.py" "$VERSION" checksummed; echo SHA256SUMS; })
+          [ "$count" -eq "$want" ] || { echo "::error::$count signatures were verified, $want were expected"; exit 1; }
+
+      - name: The tag still points at the commit that was built
+        env:
+          TAG: ${{ needs.verify.outputs.tag }}
+          COMMIT: ${{ needs.verify.outputs.commit }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/tags/${TAG}:refs/tags/${TAG}"
+          now="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+          [ "$now" = "$COMMIT" ] || { echo "::error::the tag $TAG points at $now now, and the release was built from $COMMIT"; exit 1; }
+
+      - name: Create GitHub Release
+        if: ${{ !inputs.dry_run }}
+        working-directory: ${{ runner.temp }}/release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.verify.outputs.tag }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The files are named one by one from the list the version gives, never by a glob.
+          mapfile -t files < <(python3 -I "$GITHUB_WORKSPACE/.github/scripts/release/expected-assets.py" "$VERSION" published)
           gh release create "$TAG" \
             --generate-notes \
             --verify-tag \
-            podup-linux-x86_64 \
-            podup-linux-x86_64.sig \
-            podup-linux-arm64 \
-            podup-linux-arm64.sig \
-            podup-darwin-arm64 \
-            podup-darwin-arm64.sig \
-            podup-darwin-x86_64 \
-            podup-darwin-x86_64.sig \
-            podup-windows-x86_64.exe \
-            podup-windows-x86_64.exe.sig \
-            podup-windows-arm64.exe \
-            podup-windows-arm64.exe.sig \
-            podup_*_amd64.deb \
-            podup_*_amd64.deb.sig \
-            podup_*_arm64.deb \
-            podup_*_arm64.deb.sig \
-            SHA256SUMS \
-            SHA256SUMS.sig \
-            podup*.cdx.json \
-            podup*.cdx.json.sig \
-            NOTICES.html \
-            NOTICES.html.sig \
-            install.sh \
-            install.sh.sig \
-            install.ps1 \
-            install.ps1.sig
+            "${files[@]}"
+
+      - name: Say what a rehearsal would have published
+        if: ${{ inputs.dry_run }}
+        working-directory: ${{ runner.temp }}/release
+        run: |
+          {
+            echo "### Rehearsal: nothing was published"
+            echo
+            echo "Signed with the throwaway key and verified against it. The set is:"
+            echo
+            printf -- '- %s\n' *
+          } >>"$GITHUB_STEP_SUMMARY"

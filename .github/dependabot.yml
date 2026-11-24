@@ -16,7 +16,7 @@ version: 2
 # and the title) with the same labels as everything else in its entry. Base
 # images named inside workflow files (`container:`, `image:`) are outside every
 # ecosystem it offers; `pin-watch.yml` compares the `debian:trixie` digest
-# pinned in `release.yml` and in `reusable-rust-debian.yml`.
+# pinned in `reusable-release-build.yml` and in `reusable-rust-debian.yml`.
 
 updates:
   - package-ecosystem: "github-actions"

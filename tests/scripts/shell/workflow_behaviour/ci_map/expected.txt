@@ -67,6 +67,8 @@
 .github/workflows/reusable-line-limit.yml	C N N R N
 .github/workflows/reusable-main-guard.yml	C N N R N
 .github/workflows/reusable-powershell-ci.yml	C B N R N
+.github/workflows/reusable-release-build.yml	C B B R N
+.github/workflows/reusable-release-verify.yml	C B N R N
 .github/workflows/reusable-rust-audit.yml	C N N R N
 .github/workflows/reusable-rust-ci.yml	R B N R N
 .github/workflows/reusable-rust-debian.yml	C N B R N
@@ -134,9 +136,14 @@ tests/scripts/shell/workflow_behaviour/write-token-jobs.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/check-pins.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/lint-shell-covers-the-contract.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/no-deprecation-notices.test.sh	N N N R N
+tests/scripts/shell/workflow_lint/pin-watch-digests.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/push-triggers.test.sh	N N N R N
+tests/scripts/shell/workflow_lint/release-expected-assets.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-gate.test.sh	N N N R N
+tests/scripts/shell/workflow_lint/release-key-slots.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-least-privilege.test.sh	N N N R N
+tests/scripts/shell/workflow_lint/release-path-filters.test.sh	N N N R N
+tests/scripts/shell/workflow_lint/release-python-isolation.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release-wiring.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/release_wiring/*	R N B R N
 tests/scripts/shell/workflow_lint/reusable-workflow-lint-caller-if.test.sh	N N N R N

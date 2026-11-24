@@ -17,6 +17,8 @@ on:
       - "Cargo.lock"
       - "build.rs"
       - ".github/workflows/release.yml"
+      - ".github/workflows/reusable-release-build.yml"
+      - ".github/workflows/reusable-release-verify.yml"
       - ".github/workflows/windows-arm64.yml"
   pull_request:
     branches:
@@ -28,6 +30,8 @@ on:
       - "Cargo.lock"
       - "build.rs"
       - ".github/workflows/release.yml"
+      - ".github/workflows/reusable-release-build.yml"
+      - ".github/workflows/reusable-release-verify.yml"
       - ".github/workflows/windows-arm64.yml"
   workflow_dispatch:
 
@@ -63,7 +67,7 @@ jobs:
 
       - name: Install the pinned toolchain and the aarch64-pc-windows-msvc target
         env:
-          # Keep in step with release.yml's build job and its `toolchain`
+          # Keep in step with the build job of reusable-release-build.yml and its `toolchain`
           # default. pin-watch.yml reads the nine sites that write this number
           # and reports them disagreeing.
           RUST_TOOLCHAIN: "1.100"

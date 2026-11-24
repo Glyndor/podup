@@ -72,12 +72,13 @@ SUFFIX = ("github.event_name == 'pull_request' && github.base_ref == 'main' && '
 # Every expression a job name may contain. Anything else is refused: a name this
 # does not know how to resolve is a name it cannot hold to the list. The matrix and
 # input values are listed because no required name has one.
-ALLOWED = {SUFFIX, "matrix.target", "matrix.asset", "matrix.arch", "matrix.os", "inputs.msrv"}
+ALLOWED = {SUFFIX, "matrix.target", "matrix.asset", "matrix.arch", "matrix.os", "matrix.rpm_arch", "matrix.artifact", "inputs.msrv"}
 # The jobs whose names keep a matrix or input value after rendering. None is required;
 # a job that is not listed and keeps an expression is refused, so a required name cannot
 # hide in one.
-UNRESOLVED = {("linux-hardening.yml", "hardened"), ("release.yml", "build"), ("release.yml", "sign"),
-              ("release.yml", "build-deb"), ("reusable-rust-ci.yml", "test-extra"), ("reusable-rust-ci.yml", "msrv")}
+UNRESOLVED = {("linux-hardening.yml", "hardened"), ("release.yml", "sign"), ("release.yml", "sign-packages"),
+              ("release.yml", "builds"), ("reusable-release-build.yml", "build"), ("reusable-release-build.yml", "build-deb"),
+              ("reusable-release-build.yml", "build-rpm"), ("reusable-rust-ci.yml", "test-extra"), ("reusable-rust-ci.yml", "msrv")}
 # The workflows whose pull_request trigger may list `edited` and `reopened`, with why: they judge the base
 # of the pull request, and an edit can change it. A required check that is one job and is never skipped.
 EDIT_EXCEPTIONS = {
