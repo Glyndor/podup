@@ -40,7 +40,7 @@ pub(crate) fn write_quadlet(
 	no_warn: bool,
 ) -> podup::Result<()> {
 	// Reject configs the running commands would reject, before emitting anything.
-	podup::quadlet::validate_for_quadlet(file)?;
+	podup::quadlet::validate_for_quadlet_in(file, project, base_dir)?;
 
 	// The Quadlet path's host-binding / privilege-escalation warnings are
 	// gated on `--no-warn` (issue #1358). The flag lives on a thread-local

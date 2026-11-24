@@ -25,6 +25,7 @@ mod publishing;
 pub(crate) use publishing::write_autostart_units;
 pub use publishing::write_units;
 mod render;
+mod secrets_unit;
 mod unit;
 mod unit_file;
 mod warnings;
@@ -184,6 +185,29 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 		// broken `Pull=` line: same root cause, same fix.
 	}
 	Ok(())
+}
+
+/// [`validate_for_quadlet`] for the command that writes the units: it also checks
+/// the configs and secrets the secrets unit creates, and refuses, before anything
+/// is written, a `file:` secret or config that `up` would refuse and that the unit
+/// could not create (a link, a directory, a pipe, a mode with an execute bit, a
+/// name Podman cannot carry, two sources). It reads the files, so it needs the
+/// project and the directory that relative paths are resolved against.
+pub fn validate_for_quadlet_in(
+	file: &ComposeFile,
+	project: &str,
+	base_dir: &std::path::Path,
+) -> Result<()> {
+	validate_for_quadlet(file)?;
+	let with_jobs;
+	let checked = if file.jobs.is_empty() {
+		file
+	} else {
+		with_jobs = crate::compose::jobs::with_jobs_as_services(file);
+		&with_jobs
+	};
+	secrets_unit::validate(checked)?;
+	secrets_unit::refusals(file, project, base_dir)
 }
 
 thread_local! {
@@ -419,6 +443,8 @@ fn generate_with_mode(
 		external_networks: &external_networks,
 		external_volumes: &external_volumes,
 		secrets: &file.secrets,
+		configs: &file.configs,
+		secrets_unit: mode == ContainerUnitMode::Standard,
 		base_dir,
 		services: &file.services,
 		// `x-podman-pod: true` opts each container into the project pod,
@@ -467,6 +493,27 @@ fn generate_with_mode(
 		}
 		ContainerUnitMode::Prebuilt => {
 			out.warnings.extend(warnings::jobs_not_exported(&file.jobs));
+		}
+	}
+
+	// The secrets and configs the containers mount, created before they start.
+	let (secrets_unit, secret_warnings) =
+		secrets_unit::build(file, project, base_dir, mode == ContainerUnitMode::Standard);
+	out.warnings.extend(secret_warnings);
+	if let Some(unit) = secrets_unit {
+		let taken = out
+			.units
+			.iter()
+			.filter_map(|u| u.filename.strip_suffix(".container"))
+			.any(|stem| format!("{stem}.service") == unit.filename);
+		if taken {
+			out.warnings.push(format!(
+				"the secrets unit {} was not written: a service of that name has the same unit; \
+				 rename the service",
+				unit.filename
+			));
+		} else {
+			out.units.push(unit);
 		}
 	}
 

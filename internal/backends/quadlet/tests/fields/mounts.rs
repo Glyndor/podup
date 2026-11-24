@@ -23,10 +23,25 @@ secrets:
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	// `up` creates a `file:` secret as `{project}_secret_{name}`, so the unit
-	// names that one and the operator is told to provision it.
-	assert!(c.contains("Secret=p_secret_tok\n"), "in:\n{c}");
+	// names that one, and the project's secrets unit creates it from the file.
+	assert!(c.contains("Secret=p_secret_tok,mode=400\n"), "in:\n{c}");
 	assert!(c.contains("Secret=p_secret_cred,target=/run/cred,uid=100"));
-	assert!(out.warnings.iter().any(|w| w.contains("\"p_secret_tok\"")));
+	assert!(c.contains("Requires=p-podup-secrets.service\n"), "in:\n{c}");
+	let secrets = &unit_named(&out, "p-podup-secrets.service").contents;
+	assert!(
+		secrets.contains("\"p_secret_tok\" \"p\" \"/srv/app/tok\""),
+		"in:\n{secrets}"
+	);
+	// The file is not there when the test generates, so the only thing said about
+	// it is that its mode could not be read.
+	assert!(
+		out.warnings
+			.iter()
+			.filter(|w| w.contains("p_secret_tok"))
+			.all(|w| w.contains("could not be read")),
+		"{:?}",
+		out.warnings
+	);
 }
 
 #[test]

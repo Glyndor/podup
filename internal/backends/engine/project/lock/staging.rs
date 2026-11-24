@@ -98,10 +98,7 @@ pub(super) fn staging_base() -> Result<PathBuf> {
 /// This does **not** reject group/world-read bits: a Podman-native secret is
 /// materialised inside the container's own mount namespace and `0o444` is the
 /// Podman/compose default, so a readable mode is legitimate for that path.
-pub(in crate::backends::engine) fn reject_dangerous_secret_mode(
-	mode: u32,
-	ctx: &str,
-) -> Result<()> {
+pub(crate) fn reject_dangerous_secret_mode(mode: u32, ctx: &str) -> Result<()> {
 	if mode & !0o7777 != 0 {
 		return Err(ComposeError::Unsupported(format!(
 			"mode {mode:#o} for {ctx} has bits above the permission bits; \
