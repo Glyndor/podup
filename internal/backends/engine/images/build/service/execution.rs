@@ -160,7 +160,8 @@ impl Engine {
 			match result {
 				Ok(output) => {
 					if !output.stream.is_empty() {
-						let trimmed = output.stream.trim_end().to_string();
+						let trimmed =
+							crate::errors::redact::redact_urls_in_text(output.stream.trim_end());
 						if !opts.quiet && !trimmed.is_empty() {
 							// `STEP n/m:` lines advance the row verb. Every
 							// other line is a tail note, painted dimmed under

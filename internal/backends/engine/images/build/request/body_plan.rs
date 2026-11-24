@@ -69,6 +69,7 @@ pub(in crate::backends::engine) fn plan_build(
 ) -> Result<BuildPlan> {
 	let additional = local_additional_contexts(engine, contexts)?;
 	if is_remote_context(context_str) {
+		crate::errors::redact::remember_url(context_str);
 		tracing::info!(
 			"building from remote context {}",
 			crate::errors::redact::redact_url(context_str)
