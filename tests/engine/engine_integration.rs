@@ -257,6 +257,9 @@ mod cli_run;
 mod cli_service_ops;
 #[path = "engine_integration/cli/inspect/cli_stats.rs"]
 mod cli_stats;
+// Unix only: the container is a `sh` that traps SIGTERM and the bound on the
+// command kills it with a signal.
+#[cfg(unix)]
 #[path = "engine_integration/cli/lifecycle/cli_timeout_unlimited.rs"]
 mod cli_timeout_unlimited;
 #[path = "engine_integration/cli/inspect/cli_top_images.rs"]
