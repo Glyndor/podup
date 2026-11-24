@@ -40,7 +40,8 @@ pub(crate) enum Commands {
 		/// from a `build:` section that set no `image:` tag of their own.
 		#[arg(long, value_enum)]
 		rmi: Option<RmiScope>,
-		/// Seconds to wait for containers to stop before killing them.
+		/// Seconds to wait for containers to stop before killing them; -1 waits
+		/// without limit.
 		#[arg(short = 't', long, allow_hyphen_values = true, value_parser = parse_timeout)]
 		timeout: Option<i32>,
 		/// Stop and remove only these services; networks and volumes stay.
@@ -59,7 +60,8 @@ pub(crate) enum Commands {
 	},
 	/// Stop running containers without removing them.
 	Stop {
-		/// Seconds to wait for containers to stop before killing them.
+		/// Seconds to wait for containers to stop before killing them; -1 waits
+		/// without limit.
 		#[arg(short = 't', long, allow_hyphen_values = true, value_parser = parse_timeout)]
 		timeout: Option<i32>,
 		/// Stop only these services.
@@ -342,7 +344,8 @@ pub(crate) enum Commands {
 	},
 	/// Restart services.
 	Restart {
-		/// Seconds to wait for containers to stop before killing them.
+		/// Seconds to wait for containers to stop before killing them; -1 waits
+		/// without limit.
 		#[arg(short = 't', long, allow_hyphen_values = true, value_parser = parse_timeout)]
 		timeout: Option<i32>,
 		/// Do not restart dependent services (depends_on with a restart condition).

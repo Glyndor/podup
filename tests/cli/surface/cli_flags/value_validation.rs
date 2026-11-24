@@ -32,15 +32,16 @@ fn negative_timeout_is_rejected_consistently() {
 	for args in [
 		&["down", "--timeout=-5"][..],
 		&["down", "-t", "-5"][..],
-		&["stop", "-t", "-1"][..],
+		&["stop", "-t", "-2"][..],
 	] {
 		assert!(
 			is_clap_value_error(&run_offline(args)),
 			"`{args:?}` should be a clear range error"
 		);
 	}
-	// Zero and positive are fine.
+	// Zero, positive and -1 (wait without limit) are fine.
 	assert!(!is_clap_value_error(&run_offline(&["down", "--timeout=0"])));
+	assert!(!is_clap_value_error(&run_offline(&["stop", "-t", "-1"])));
 }
 
 /// `--sig-proxy` must accept docker's bare spelling.
