@@ -42,6 +42,7 @@ jobs:
     uses: ./.github/workflows/reusable-release-verify.yml
     with:
       tag: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
 
   # What is compiled, packed and described is in reusable-release-build.yml, called with the
   # commit and the version that `verify` named. It holds `contents: read` and nothing else.
@@ -55,6 +56,7 @@ jobs:
       commit: ${{ needs.verify.outputs.commit }}
       version: ${{ needs.verify.outputs.version }}
       tag: ${{ needs.verify.outputs.tag }}
+      dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
 
 
   # The binaries are signed here, in a job of their own, and not in the job
@@ -64,7 +66,8 @@ jobs:
   # binary, and runs nothing but Python with hashed requirements, so nothing a
   # build left in a workspace is here for the key to meet. It holds
   # `contents: read` and the key, and no other permission, and it runs in the
-  # environment `release`, which allows only `main` and the `v*` tags.
+  # environment `release`, which allows only `main` and the `v*` tags. A rehearsal keeps it too: it is
+  # started from `main`, after the promotion and before the tag is cut, on the state that will be published.
   sign:
     name: Sign ${{ matrix.asset }}
     needs: [verify, builds, attest]
@@ -87,6 +90,20 @@ jobs:
         with:
           persist-credentials: false
           ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+      - name: Take the release scripts from the commit that started the rehearsal
+        if: ${{ inputs.dry_run }}
+        run: |
+          set -o pipefail
+          # A rehearsal may name a tag older than the scripts of the release and of the packages, so
+          # those come from the commit that launched the run, the one this workflow file is from. Only
+          # those two folders: the rest of the tag, its own tests included, stays as the tag has it.
+          # Nothing signed in a rehearsal is published, and the scripts stay out of what the later
+          # steps read as changed or new.
+          git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
+          git ls-files -z .github/scripts/release .github/scripts/packaging | xargs -0 -r git update-index --skip-worktree
+          rm -rf .github/scripts/release .github/scripts/packaging && git archive FETCH_HEAD .github/scripts/release .github/scripts/packaging | tar -x
+          printf '%s\n' /.github/scripts/release/ /.github/scripts/packaging/ >> .git/info/exclude
 
       - name: The checkout is the commit that was verified
         env:
@@ -200,6 +217,20 @@ jobs:
         with:
           persist-credentials: false
           ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+      - name: Take the release scripts from the commit that started the rehearsal
+        if: ${{ inputs.dry_run }}
+        run: |
+          set -o pipefail
+          # A rehearsal may name a tag older than the scripts of the release and of the packages, so
+          # those come from the commit that launched the run, the one this workflow file is from. Only
+          # those two folders: the rest of the tag, its own tests included, stays as the tag has it.
+          # Nothing signed in a rehearsal is published, and the scripts stay out of what the later
+          # steps read as changed or new.
+          git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
+          git ls-files -z .github/scripts/release .github/scripts/packaging | xargs -0 -r git update-index --skip-worktree
+          rm -rf .github/scripts/release .github/scripts/packaging && git archive FETCH_HEAD .github/scripts/release .github/scripts/packaging | tar -x
+          printf '%s\n' /.github/scripts/release/ /.github/scripts/packaging/ >> .git/info/exclude
 
       - name: The checkout is the commit that was verified
         env:
@@ -353,6 +384,20 @@ jobs:
           persist-credentials: false
           ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
+      - name: Take the release scripts from the commit that started the rehearsal
+        if: ${{ inputs.dry_run }}
+        run: |
+          set -o pipefail
+          # A rehearsal may name a tag older than the scripts of the release and of the packages, so
+          # those come from the commit that launched the run, the one this workflow file is from. Only
+          # those two folders: the rest of the tag, its own tests included, stays as the tag has it.
+          # Nothing signed in a rehearsal is published, and the scripts stay out of what the later
+          # steps read as changed or new.
+          git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
+          git ls-files -z .github/scripts/release .github/scripts/packaging | xargs -0 -r git update-index --skip-worktree
+          rm -rf .github/scripts/release .github/scripts/packaging && git archive FETCH_HEAD .github/scripts/release .github/scripts/packaging | tar -x
+          printf '%s\n' /.github/scripts/release/ /.github/scripts/packaging/ >> .git/info/exclude
+
       - name: The checkout is the commit that was verified
         env:
           COMMIT: ${{ needs.verify.outputs.commit }}
@@ -471,29 +516,10 @@ jobs:
           VERSION: ${{ needs.verify.outputs.version }}
           REHEARSAL: ${{ inputs.dry_run }}
         run: |
-          set -euo pipefail
-          # sign.py only checks the seed is base64 of 32 bytes, so a wrong-but-
-          # well-formed GLYNDOR_RELEASE_ED25519_KEY signs happily and publishes a
-          # release nothing can verify. Releases are immutable, so that mistake
-          # burns the version. Every asset is verified, each with its own .sig, because a
-          # per-binary substitution is the failure SHA256SUMS cannot catch (the manifest can
-          # be re-signed to match the swapped binary). The list of what carries a signature is
-          # the one the version gives, so an empty directory of signatures cannot pass: a
-          # missing signature and an extra one are both a difference from the exact set.
+          # What this checks and why is in verify-signatures.sh.
           here="$GITHUB_WORKSPACE/.github/scripts/release"
           bash "$here/check-artifact-dir.sh" . exact "$VERSION" published
-          venv_py="$RUNNER_TEMP/signvenv/bin/python"
-          if [ "$REHEARSAL" = true ]; then
-            PODUP_VERIFY_ONLY_KEY_B64="$(REHEARSAL_SEED_B64="$REHEARSAL_SEED_B64" "$venv_py" -I "$here/public-key-of.py")"
-            export PODUP_VERIFY_ONLY_KEY_B64
-          fi
-          count=0
-          want=$(( $(python3 -I "$here/expected-assets.py" "$VERSION" checksummed | wc -l) + 1 ))
-          while IFS= read -r file; do
-            "$venv_py" -I "$here/verify-signing-key.py" "$file" "$file.sig"
-            count=$((count + 1))
-          done < <({ python3 -I "$here/expected-assets.py" "$VERSION" checksummed; echo SHA256SUMS; })
-          [ "$count" -eq "$want" ] || { echo "::error::$count signatures were verified, $want were expected"; exit 1; }
+          bash "$here/verify-signatures.sh" "$RUNNER_TEMP/signvenv/bin/python" "$VERSION"
 
       - name: Verify every file the installers fetch is staged
         working-directory: ${{ runner.temp }}/artifacts
@@ -547,6 +573,20 @@ jobs:
         with:
           persist-credentials: false
           ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+      - name: Take the release scripts from the commit that started the rehearsal
+        if: ${{ inputs.dry_run }}
+        run: |
+          set -o pipefail
+          # A rehearsal may name a tag older than the scripts of the release and of the packages, so
+          # those come from the commit that launched the run, the one this workflow file is from. Only
+          # those two folders: the rest of the tag, its own tests included, stays as the tag has it.
+          # Nothing signed in a rehearsal is published, and the scripts stay out of what the later
+          # steps read as changed or new.
+          git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
+          git ls-files -z .github/scripts/release .github/scripts/packaging | xargs -0 -r git update-index --skip-worktree
+          rm -rf .github/scripts/release .github/scripts/packaging && git archive FETCH_HEAD .github/scripts/release .github/scripts/packaging | tar -x
+          printf '%s\n' /.github/scripts/release/ /.github/scripts/packaging/ >> .git/info/exclude
 
       - name: The checkout is the commit that was verified
         env:
@@ -605,22 +645,10 @@ jobs:
           VERSION: ${{ needs.verify.outputs.version }}
           REHEARSAL: ${{ inputs.dry_run }}
         run: |
-          set -euo pipefail
           here="$GITHUB_WORKSPACE/.github/scripts/release"
           python3 -I -m venv "$RUNNER_TEMP/verifyvenv"
-          venv_py="$RUNNER_TEMP/verifyvenv/bin/python"
-          "$venv_py" -I -m pip install --quiet --require-hashes --only-binary=:all: -r "$here/sign-requirements.txt"
-          if [ "$REHEARSAL" = true ]; then
-            PODUP_VERIFY_ONLY_KEY_B64="$(REHEARSAL_SEED_B64="$REHEARSAL_SEED_B64" "$venv_py" -I "$here/public-key-of.py")"
-            export PODUP_VERIFY_ONLY_KEY_B64
-          fi
-          count=0
-          want=$(( $(python3 -I "$here/expected-assets.py" "$VERSION" checksummed | wc -l) + 1 ))
-          while IFS= read -r file; do
-            "$venv_py" -I "$here/verify-signing-key.py" "$file" "$file.sig"
-            count=$((count + 1))
-          done < <({ python3 -I "$here/expected-assets.py" "$VERSION" checksummed; echo SHA256SUMS; })
-          [ "$count" -eq "$want" ] || { echo "::error::$count signatures were verified, $want were expected"; exit 1; }
+          "$RUNNER_TEMP/verifyvenv/bin/python" -I -m pip install --quiet --require-hashes --only-binary=:all: -r "$here/sign-requirements.txt"
+          bash "$here/verify-signatures.sh" "$RUNNER_TEMP/verifyvenv/bin/python" "$VERSION"
 
       - name: The tag still points at the commit that was built
         env:

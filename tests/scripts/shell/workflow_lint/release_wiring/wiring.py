@@ -82,11 +82,15 @@ def attest_condition(job):
     return "${{ !cancelled() && " + ok + " && (needs.attest.result == 'success' || inputs.dry_run && needs.attest.result == 'skipped') }}"
 
 
+OVERLAY = "Take the release scripts from the commit that started the rehearsal"
+
+
 def first_script(steps, skip=None):
-    """The first step that runs a script of the checkout."""
+    """The first step that runs a script of the checkout. The step that puts the scripts of the commit that
+    started a rehearsal in place runs none of the tag's: it only reads them out of git."""
     for i, s in enumerate(steps):
         text = str(s.get("run", ""))
-        if i != skip and (".github/scripts" in text or "bash .github" in text):
+        if i != skip and s.get("name") != OVERLAY and (".github/scripts" in text or "bash .github" in text):
             return i
     return None
 
@@ -170,8 +174,9 @@ def problems(path):
     call = jobs["builds"]
     if call.get("uses") != "./.github/workflows/reusable-release-build.yml":
         bad("`builds` does not call the reusable of the builds")
-    if (call.get("with") or {}) != {"commit": COMMIT, "tag": "${{ needs.verify.outputs.tag }}", "version": "${{ needs.verify.outputs.version }}"}:
-        bad("`builds` is not called with the commit, the tag and the version `verify` named")
+    if (call.get("with") or {}) != {"commit": COMMIT, "tag": "${{ needs.verify.outputs.tag }}", "version": "${{ needs.verify.outputs.version }}",
+                                 "dry_run": "${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}"}:
+        bad("`builds` is not called with the commit, the tag and the version `verify` named, and the dry_run of the run")
 
     # 3. The commit: every checkout after `verify` is the tag of the run, never a bare revision, and every job
     # asserts right after that what it checked out is the commit `verify` named.
@@ -185,7 +190,8 @@ def problems(path):
                     continue
                 if (s.get("with") or {}).get("ref") != want:
                     bad(f"{label}: `{name}` checks out {(s.get('with') or {}).get('ref')!r}, not the tag of the run")
-                follow = str(steps[i + 1].get("run", "")) if i + 1 < len(steps) else ""
+                rest = [x for x in steps[i + 1:] if x.get("name") not in (OVERLAY, "Trust the workspace")]
+                follow = str(rest[0].get("run", "")) if rest else ""
                 if 'git rev-parse HEAD' not in follow:
                     bad(f"{label}: `{name}` does not check that its checkout is the verified commit")
     out_names = set(((verify_spec.get("on", verify_spec.get(True)) or {}).get("workflow_call") or {}).get("outputs") or {})
@@ -204,8 +210,9 @@ def problems(path):
     if pin is None:
         bad("the verify job does not name the commit in a step called pin")
     refuse = next((st for st in vjobs["verify"]["steps"] if "Refuse an already published" in str(st.get("name", ""))), None)
-    if refuse is None or "if" in refuse:
-        bad("a release that is already published is refused in a rehearsal as well")
+    if refuse is None or "if" in refuse or (refuse.get("env") or {}).get("MODE") != "${{ inputs.dry_run && 'rehearsal' || 'release' }}" \
+            or str(refuse.get("run", "")).strip() != 'bash .github/scripts/release/check-unpublished.sh "$TAG" "$MODE"':
+        bad("a published tag stops a real release and not a rehearsal: by the script, with the mode taken from dry_run, and no condition")
     if "refs/tags/${{ inputs.tag }}" != next(st for st in vjobs["verify"]["steps"] if uses(st, "actions/checkout"))["with"]["ref"]:
         bad("the verification does not check out the tag it was given")
 
@@ -295,7 +302,7 @@ def problems(path):
     elif (rel[provenance].get("env") or {}).get("SOURCE_COMMIT") != COMMIT or (rel[provenance].get("env") or {}).get("SOURCE_REF") != "refs/tags/${{ needs.verify.outputs.tag }}":
         bad("release verifies the provenance for something other than the tag and the commit `verify` named")
     exact = at(rel, "exact \"$VERSION\" published")
-    sigs = at(rel, "verify-signing-key.py")
+    sigs = at(rel, "verify-signatures.sh")
     tagged = next((i for i, x in enumerate(rel) if str(x.get("name", "")).startswith("The tag still points at the commit that was built")), None)
     created = next((i for i, s in enumerate(rel) if "gh release create" in str(s.get("run", ""))), None)
     if None in (exact, sigs, tagged, created, sealed, provenance) or not exact < sealed < sigs < tagged < created or not sealed < provenance < created:
@@ -415,6 +422,18 @@ def problems(path):
             key = (s.get("env") or {}).get("GLYNDOR_RELEASE_ED25519_KEY")
             if key is not None and key != "${{ inputs.dry_run && env.REHEARSAL_SEED_B64 || secrets.GLYNDOR_RELEASE_ED25519_KEY }}":
                 bad(f"`{name}`: the key of `{s.get('name')}` is not the secret in a real run and the throwaway key in a rehearsal")
+    # 10b. A job that runs in a container is root in a workspace the runner's user owns: it trusts the workspace
+    # before the first git command, or git stops on "dubious ownership", the check of the checkout included.
+    for label, group in (("the builds", rjobs), ("release.yml", jobs), ("the verification", vjobs)):
+        for name, job in group.items():
+            if "container" not in job:
+                continue
+            steps = job.get("steps") or []
+            trust = next((i for i, st in enumerate(steps) if "safe.directory" in str(st.get("run", ""))), None)
+            first_git = next((i for i, st in enumerate(steps) if re.search(r"(^|[;&|(]|\$\(|xargs [^\n]*)\s*git\s+[a-z]", str(st.get("run", "")), re.M) and i != trust), None)
+            if trust is None or (first_git is not None and first_git < trust):
+                bad(f"{label} `{name}` runs in a container and uses git before it trusts the workspace")
+
     # 11. Nothing a release builds from or into is a cache shared with other runs: no cache action, no
     # setup action asked to cache, no restore keys, in any job of the release or of its reusables.
     for label, group in (("release.yml", jobs), ("the builds", rjobs), ("the verification", vjobs)):

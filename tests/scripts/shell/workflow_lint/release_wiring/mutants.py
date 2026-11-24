@@ -82,7 +82,11 @@ MUTANTS["verification-outputs-lost-the-tag"] = ver(lambda m: m["on" if "on" in m
 MUTANTS["the-audit-has-outputs"] = ver(lambda m: m["jobs"]["audit"].update({"outputs": {"x": "y"}}))
 MUTANTS["verify-installs-a-tool"] = ver(lambda m: m["jobs"]["verify"]["steps"].append({"name": "x", "run": "cargo install cargo-audit"}))
 MUTANTS["verify-has-no-pin-step"] = ver(lambda m: step(m, "verify", "Name the commit").pop("id"))
-MUTANTS["a-published-release-is-allowed-in-a-rehearsal"] = ver(lambda m: step(m, "verify", "Refuse an already published").update({"if": "${{ !inputs.dry_run }}"}))
+MUTANTS["the-published-check-has-a-condition"] = ver(lambda m: step(m, "verify", "Refuse an already published").update({"if": "${{ !inputs.dry_run }}"}))
+MUTANTS["a-published-release-is-refused-in-a-rehearsal"] = ver(lambda m: step(m, "verify", "Refuse an already published")["env"].update({"MODE": "release"}))
+MUTANTS["a-published-release-is-accepted-in-a-release"] = ver(lambda m: step(m, "verify", "Refuse an already published")["env"].update({"MODE": "rehearsal"}))
+MUTANTS["the-published-check-is-inline-again"] = ver(lambda m: step(m, "verify", "Refuse an already published").update({"run": "gh api repos/x/releases"}))
+MUTANTS["builds-without-dry-run"] = rel(lambda m: m["jobs"]["builds"]["with"].pop("dry_run"))
 MUTANTS["verify-checks-out-another-tag"] = ver(lambda m: step(m, "verify", "actions/checkout")["with"].update({"ref": "refs/heads/main"}))
 MUTANTS["the-audit-checks-out-a-revision-an-output-carries"] = ver(lambda m: step(m, "audit", "actions/checkout")["with"].update({"ref": "${{ needs.verify.outputs.commit }}"}))
 MUTANTS["verify-called-with-another-tag"] = rel(lambda m: m["jobs"]["verify"]["with"].update({"tag": "${{ github.ref_name }}"}))
@@ -192,7 +196,6 @@ MUTANTS["sign-python-without-isolation"] = without_isolation("r", "sign", "Sign 
 MUTANTS["sign-packages-python-without-isolation"] = without_isolation("r", "sign-packages", "Sign package")
 MUTANTS["seal-checksums-python-without-isolation"] = without_isolation("r", "seal", "Generate checksums")
 MUTANTS["seal-signing-python-without-isolation"] = without_isolation("r", "seal", "Sign SHA256SUMS")
-MUTANTS["seal-verify-python-without-isolation"] = without_isolation("r", "seal", "Verify every signature")
 MUTANTS["seal-assets-python-without-isolation"] = without_isolation("r", "seal", "Verify every file the installers")
 MUTANTS["release-verify-python-without-isolation"] = without_isolation("r", "release", "Verify every signature")
 MUTANTS["release-create-python-without-isolation"] = without_isolation("r", "release", "Create GitHub Release")
@@ -233,6 +236,11 @@ MUTANTS["release-provenance-for-another-ref"] = rel(lambda m: step(m, "release",
 MUTANTS["release-provenance-after-create"] = rel(lambda m: m["jobs"]["release"]["steps"].append(m["jobs"]["release"]["steps"].pop(
     m["jobs"]["release"]["steps"].index(step(m, "release", "Verify the provenance of the binaries")))))
 MUTANTS["release-cannot-read-attestations"] = rel(lambda m: m["jobs"]["release"]["permissions"].pop("attestations"))
+
+# --- git in the container ---------------------------------------------------------------------------
+MUTANTS["the-container-job-does-not-trust-the-workspace"] = bld(lambda m: m["jobs"]["build-deb"]["steps"].remove(step(m, "build-deb", "Trust the workspace")))
+MUTANTS["the-container-job-trusts-the-workspace-too-late"] = bld(lambda m: m["jobs"]["build-deb"]["steps"].append(
+    m["jobs"]["build-deb"]["steps"].pop(m["jobs"]["build-deb"]["steps"].index(step(m, "build-deb", "Trust the workspace")))))
 
 # --- no shared cache ------------------------------------------------------------------------------
 CACHE = {"name": "cache", "uses": "actions/cache@0000000000000000000000000000000000000000", "with": {"path": "target", "key": "k"}}
