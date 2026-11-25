@@ -63,11 +63,11 @@ jobs:
       # test module counts as covered production code, so moving tests out of the
       # production file changes the denominator. #1696.
       coverage-threshold: 76
-      # This number is inside the check name `rust / MSRV (1.88)`. Bumping it
+      # This number is inside the check name `rust / MSRV (1.91)`. Bumping it
       # emits `rust / MSRV (<new>)`; the ruleset requires `rust / Gate`, whose
       # name does not change, so the pull request carrying the bump is not
       # blocked.
-      msrv: "1.88"
+      msrv: "1.91"
       # `cargo publish --dry-run`, and podup is no longer published (#1606).
       package-check: false
       # A semver promise needs somebody to make it to. There is nobody.
