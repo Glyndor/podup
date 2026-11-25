@@ -47,6 +47,16 @@ mkdir -p "$WORK/bin"
 cat >"$WORK/bin/gh" <<'GH'
 #!/usr/bin/env bash
 echo "$*" >>"$GH_LOG"
+if [ "$1" = api ]; then
+	# `gh api repos/<repo>/tags?per_page=30 --jq .[].name`: the tags of a repository that has no release.
+	repo="${2#repos/}"
+	repo="${repo%%/tags*}"
+	row=$(awk -F'\t' -v r="$repo" '$1 == r' "$UPSTREAM")
+	[ -n "$row" ] || exit 1
+	[ "$(printf '%s' "$row" | cut -f2)" != FAIL ] || exit 1
+	printf '%s' "$row" | cut -f3 | tr ' ' '\n'
+	exit 0
+fi
 [ "$1" = release ] || exit 2
 verb="$2"
 repo=""
@@ -58,6 +68,7 @@ row=$(awk -F'\t' -v r="$repo" '$1 == r' "$UPSTREAM")
 [ -n "$row" ] || exit 1
 latest=$(printf '%s' "$row" | cut -f2)
 [ "$latest" != FAIL ] || exit 1
+[ "$latest" != NORELEASE ] || exit 1
 case "$verb" in
 	view) echo "$latest" ;;
 	list) printf '%s' "$row" | cut -f3 | tr ' ' '\n' ;;
@@ -286,5 +297,18 @@ check "...and every site comes out behind 999.0.0" 17 "$(printf '%s\n' "$OUT" | 
 
 echo
 echo "passed: $pass  failed: $fail"
+# A tool whose repository has tags and no release at all (rust-lang/rustup answers 404 to `gh release view`) is read
+# from its tags. Without that the watch failed on that one pin, and a watch that fails reports no drift for any.
+fresh tags
+sed -i 's|^rust-lang/rustup\t1.29.3\t1.29.3|rust-lang/rustup\tNORELEASE\t1.29.3 1.29.2|' "$WORK/tags.up"
+run "$WORK/tags" "$WORK/tags.up"
+check "a tool with tags and no release is read from its tags: no drift, exit 0" "0 0" "$RC $(printf '%s\n' "$OUT" | grep -c 'rustup')"
+sed -i 's|^rust-lang/rustup\tNORELEASE\t1.29.3 1.29.2|rust-lang/rustup\tNORELEASE\t1.30.0 1.29.3|' "$WORK/tags.up"
+run "$WORK/tags" "$WORK/tags.up"
+check "...and a newer tag is reported as the drift of that pin" 1 "$(printf '%s\n' "$OUT" | grep -c '^rustup (RUSTUP_VERSION).*1.29.3.1.30.0$')"
+sed -i 's|^rust-lang/rustup\tNORELEASE\t1.30.0 1.29.3|rust-lang/rustup\tFAIL\t1.30.0|' "$WORK/tags.up"
+run "$WORK/tags" "$WORK/tags.up"
+check "a tool that answers neither a release nor a tag still fails the run, naming it" "1 1" "$([ "$RC" -ne 0 ] && echo 1 || echo 0) $(printf '%s\n' "$ERR" | grep -c 'could not read the latest release of rust-lang/rustup')"
+
 echo "DONE pin-watch-tools.test.sh $pass $fail"
 [ "$fail" -eq 0 ]

@@ -7,7 +7,10 @@
 # of the workflow has to find exactly one digest in the file it names, the files it names have to exist,
 # and the pair that is compared with the lane has to be the one the release builds with.
 #
-# Requires: python3.
+# The bump path of that digest (.github/scripts/ci/bump-debian-digest.sh) is held here too: it moves both pins
+# together and nothing else, and it refuses what it cannot move safely. Plants break each of those.
+#
+# Requires: python3, git.
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
@@ -64,6 +67,81 @@ fresh; sed -i 's#read_digest .github/workflows/reusable-release-build.yml#read_d
 check "a watcher that still reads release.yml for the digest is found" "nodigest .github/workflows/release.yml" "$(reads "$WORK/t" | grep -v '^ok')"
 fresh; : >"$WORK/t/.github/workflows/pin-watch.yml"
 check "a watcher that reads nothing is found" "nocalls -" "$(reads "$WORK/t")"
+
+# ---- the bump path ---------------------------------------------------------------------------------------
+BUMP="$HERE/.github/scripts/ci/bump-debian-digest.sh"
+NEW=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+tree() {
+	rm -rf "$WORK/b"
+	mkdir -p "$WORK/b/.github"
+	cp -r "$HERE/.github/workflows" "$WORK/b/.github/workflows"
+	(cd "$WORK/b" && git init -q . && git add -A && git -c user.email=t@x -c user.name=t commit -qm base)
+}
+commit() { (cd "$WORK/b" && git add -A && git -c user.email=t@x -c user.name=t commit -qm "$1"); }
+bump() { # <script> [argument]: runs it in $WORK/b; sets rc
+	rc=0
+	(cd "$WORK/b" && bash "$1" "${@:2}" >"$WORK/bump.out" 2>&1) || rc=$?
+}
+digests() { grep -ohE 'debian:trixie@sha256:[a-f0-9]{64}' "$WORK/b/.github/workflows/reusable-release-build.yml" "$WORK/b/.github/workflows/reusable-rust-debian.yml" | sort -u | tr '\n' ' '; }
+changed() { (cd "$WORK/b" && git diff --numstat | awk '{ print $1 "+" $2 }' | tr '\n' ' '); }
+nopin() { sed -i 's/debian:trixie@sha256:[a-f0-9]\{64\}/debian:trixie/' "$WORK/b/.github/workflows/reusable-rust-debian.yml"; commit nopin; }
+
+tree
+bump "$BUMP" "$NEW"
+check "the bump exits 0" 0 "$rc"
+check "both pins hold the new digest, and only it" "debian:trixie@$NEW " "$(digests)"
+check "it changed one line in each of the two files and nothing else" "1+1 1+1 " "$(changed)"
+check "pin-watch still reads both" 2 "$(reads "$WORK/b" | grep -c '^ok')"
+commit bumped
+bump "$BUMP" "$NEW"
+check "bumping to the digest already there is a no-op" "0 " "$rc $(changed)"
+tree
+bump "$BUMP" "sha256:abc"
+check "a digest that is not 64 hex is refused" 2 "$rc"
+check "...and nothing is changed" "" "$(changed)"
+tree
+nopin
+bump "$BUMP" "$NEW"
+check "a file that holds no pin is refused" 2 "$rc"
+check "...and the other file is not moved alone" "" "$(changed)"
+mkdir -p "$WORK/empty"
+(cd "$WORK/empty" && bash "$BUMP" "$NEW" >/dev/null 2>&1)
+check "outside a repository it refuses" 2 "$?"
+
+plant() { # <description> <old text, once> <new text>
+	local copy="$WORK/bump-plant.sh" a b c
+	if ! python3 - "$BUMP" "$copy" "$2" "$3" <<'PYEOF'
+import sys
+src, dst, old, new = sys.argv[1:5]
+text = open(src).read()
+if text.count(old) != 1:
+    sys.exit(3)
+open(dst, "w").write(text.replace(old, new))
+PYEOF
+	then
+		check "the plant applies: $1" applied not-applied
+		return
+	fi
+	tree
+	bump "$copy" "$NEW"
+	a="$rc|$(digests)|$(changed)"
+	tree
+	bump "$copy" sha256:abc
+	b="$rc|$(changed)"
+	tree
+	nopin
+	bump "$copy" "$NEW"
+	c="$rc|$(changed)"
+	check "plant: $1" no "$([ "$a|$b|$c" = "0|debian:trixie@$NEW |1+1 1+1 |2||2|" ] && echo yes || echo no)"
+}
+# shellcheck disable=SC2016 # the plants hold literal script text
+{
+	plant "only the release file is moved" 'for f in "$release" "$lane"; do
+	cp' 'for f in "$release"; do
+	cp'
+	plant "a malformed digest is accepted" 'if ! [[ "$new" =~ ^sha256:[a-f0-9]{64}$ ]]; then' 'if false; then'
+	plant "a file with no pin is not refused" 'if [ "$n" -ne 1 ]; then' 'if false; then'
+}
 
 echo
 echo "$pass passed, $fail failed"

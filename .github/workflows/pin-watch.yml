@@ -411,7 +411,7 @@ jobs:
               printf '| %s | `%s` | `%s` | `%s` |\n' "$name" "$path" "$pinned" "$upstream"
             done < "$DRIFTS"
             echo
-            echo "The container digest has no bump path through Dependabot: the \`github-actions\` ecosystem does not update a workflow's \`container:\` image, so it has to be raised by hand."
+            echo "The container digest has no bump path through Dependabot: the \`github-actions\` ecosystem does not update a workflow's \`container:\` image, so it is raised with \`bash .github/scripts/ci/bump-debian-digest.sh\` (it moves the release build and the lane together, and nothing else)."
           } > "$BODY"
           # Label on creation. An unlabelled issue is a process bug, and one filed
           # by a bot is no exception; podman-watch carries the same note because
