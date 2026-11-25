@@ -1,0 +1,32 @@
+# The budget of each machine of the Podman lane that runs on the schedule and on a dispatch, and
+# what it is made of. Nothing here is a guess: a test (tests/scripts/shell/podman_lane/lane-budget.test.sh)
+# holds the matrix of .github/workflows/podman-lane.yml to this file, and holds this file to its own
+# arithmetic:
+#
+#   vm_seconds  = ceil(measured_max_minutes x margin_percent / 100) minutes, in seconds
+#   job_minutes = those minutes + overhead_minutes
+#
+# measured_max_minutes is the longest the VM took, from boot to the end of its work, in the run
+# named below. margin_percent is not below 150. overhead_minutes is what the job spends outside the
+# VM (the checkout, qemu and its tools, the image, the verification): at most 7.7 minutes in 20 runs
+# measured on 2026-11-24, with three times that allowed.
+#
+# A VM cut at vm_seconds says `SLOW RUNNER` and the phase it had reached (verify-vm-log.sh). A cut
+# once is a slow machine and the leg is run again. A cut every night is a measurement that is out of
+# date: measure again (a dispatch of the lane prints the phases of each VM in its summary, one line
+# each, by the VM's own clock), change the number here, and the workflow with it.
+#
+# leg       measured_max_minutes  margin_percent  vm_seconds  job_minutes
+suite       49.4                  150             4500        100
+coverage    68.9                  150             6240        129
+#
+# Where the numbers come from:
+#   suite     the gating suite, the leak scan and the Quadlet generator tests of 301 tests: the phase
+#             `suite-done` at 2960 s after boot, the boot step 49.5 minutes (the suite itself 2751.8 s);
+#             the 15 scheduled runs before it, with 257 tests, took 2405 to 2484 s for the suite and 42.0
+#             to 43.7 minutes to the summary. Run 45506283145 (a dispatch, 2026-11-24).
+#   coverage  the instrumented run and its figure (90.67 %): `setup-done` at 63 s, `coverage-tool-installed`
+#             at 135 s, `coverage-run-done` at 4123 s, the boot step 68.9 minutes. Same run.
+# Before this the two shared one boot of 70 minutes, and the coverage was cut in every scheduled run
+# (the VM lasted exactly 70.0 minutes in 15 of 15) and never produced a figure.
+overhead_minutes 25

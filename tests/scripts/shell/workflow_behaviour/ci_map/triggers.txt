@@ -7,7 +7,10 @@
 .github/actionlint.yaml	-
 .github/dependabot.yml	-
 .github/folder-limit-exceptions.txt	-
-.github/podman_lane/*	-
+.github/podman_lane/baseline	-
+.github/podman_lane/baseline-tests	-
+.github/podman_lane/budget	lint-shell
+.github/podman_lane/known-failures-6	-
 .github/scripts/checks/binary-budget-paths.sh	binary-budget,debian-build,lint-shell
 .github/scripts/checks/check-banned-vocabulary.sh	debian-build,lint-shell
 .github/scripts/checks/check-branch-conclusion.sh	debian-build,lint-shell

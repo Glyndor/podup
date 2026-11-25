@@ -82,7 +82,8 @@ build_repo() {
 	{ echo "on:"; echo "  workflow_call:"; input shellcheck-version v0.11.0 | sed 1d; } >"$w/reusable-shell-ci.yml"
 	{ echo "on:"; echo "  workflow_call:"; input shellcheck-version v0.11.0 | sed 1d; echo "env:"; echo "  ACTIONLINT_VERSION: v1.7.12"; } >"$w/reusable-workflow-lint.yml"
 	{ echo "on:"; echo "  workflow_call:"; input pssa-version 1.25.0 | sed 1d; } >"$w/reusable-powershell-ci.yml"
-	cat >"$w/podman-lane.yml" <<'YML'
+	mkdir -p "$r/.github/scripts/podman_lane"
+	cat >"$r/.github/scripts/podman_lane/user-data.tpl" <<'YML'
 jobs:
   x:
     steps:
@@ -192,14 +193,14 @@ check "...and the site that is behind is reported against the latest" 1 "$(print
 fresh p
 sed -i 's|^taiki-e/cargo-llvm-cov\tv0.8.7|taiki-e/cargo-llvm-cov\tv0.9.1|' "$WORK/p.up"
 run "$WORK/p" "$WORK/p.up"
-check "a coverage install behind the latest is reported on the lane that holds it" 1 "$(printf '%s\n' "$OUT" | grep -c '^cargo-llvm-cov (install).*podman-lane.yml.0.8.7.0.9.1$')"
+check "a coverage install behind the latest is reported on the lane that holds it" 1 "$(printf '%s\n' "$OUT" | grep -c '^cargo-llvm-cov (install).*user-data.tpl.0.8.7.0.9.1$')"
 check "...and so is the one of the nightly lane" 1 "$(printf '%s\n' "$OUT" | grep -c '^cargo-llvm-cov (install).*podman-lane-develop-nightly.yml.0.8.7.0.9.1$')"
 
 fresh q
-sed -i 's| --version "=0.8.7"||' "$WORK/q/.github/workflows/podman-lane.yml"
+sed -i 's| --version "=0.8.7"||' "$WORK/q/.github/scripts/podman_lane/user-data.tpl"
 run "$WORK/q" "$WORK/q.up"
 check "a coverage install that lost its version fails the run" 1 "$RC"
-check "...naming the tool and the file" 1 "$(printf '%s\n' "$ERR" | grep -c 'could not read the cargo-llvm-cov pin (cargo-llvm-cov) from .github/workflows/podman-lane.yml')"
+check "...naming the tool and the file" 1 "$(printf '%s\n' "$ERR" | grep -c 'could not read the cargo-llvm-cov pin (cargo-llvm-cov) from .github/scripts/podman_lane/user-data.tpl')"
 
 # --- a pin that cannot be read ------------------------------------------------
 fresh f
@@ -270,6 +271,7 @@ real="$WORK/real"
 mkdir -p "$real/.github/scripts/checks"
 cp "$HERE/$SCRIPT_REL" "$real/$SCRIPT_REL"
 cp -R "$HERE/.github/workflows" "$real/.github/workflows"
+cp -R "$HERE/.github/scripts/podman_lane" "$real/.github/scripts/podman_lane"
 # Every release answers 999.0.0 in whatever form the tool tags it, so every pin
 # reads as behind and the rows are the pins that were read.
 awk -F'|' '/^[a-zA-Z0-9-]+\|[A-Za-z0-9-]+\/[A-Za-z0-9._-]+\|/ {print}' "$HERE/$SCRIPT_REL" >"$WORK/tools.txt"

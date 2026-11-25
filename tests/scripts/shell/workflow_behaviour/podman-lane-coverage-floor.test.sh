@@ -5,7 +5,9 @@ set -uo pipefail
 export LC_ALL=C
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 script="$HERE/.github/scripts/podman_lane/coverage-floor.sh"
-workflow="$HERE/.github/workflows/podman-lane.yml"
+workflow="$HERE/.github/scripts/podman_lane/verify-vm-log.sh"
+template="$HERE/.github/scripts/podman_lane/user-data.tpl"
+lane="$HERE/.github/workflows/podman-lane.yml"
 pass=0
 fail=0
 check() { # <description> <expected> <actual>
@@ -69,7 +71,7 @@ check "a log with no figure fails the floor on the nightly" 1 "$rc"
 # must not carry its own copy of the old comparison.
 # shellcheck disable=SC2016 # the pattern is literal workflow text
 check "the lane calls the floor script" 1 \
-	"$(grep -cF 'coverage-floor.sh" "$VER" "${{ github.event_name }}" "$COV"' "$workflow")"
+	"$(grep -cF 'coverage-floor.sh" "$VER" "$EVENT" "$COV"' "$workflow")"
 # shellcheck disable=SC2016 # the pattern is literal workflow text
 check "the lane no longer compares the full version with a bare major" 0 \
 	"$(grep -cE '\[ "\$VER" = "[0-9]+" \]' "$workflow")"
@@ -87,10 +89,10 @@ check "the lane calls the floor script even with no figure" 1 \
 # Single Podman major: nothing in the lane selects by it any more.
 # shellcheck disable=SC2016 # the pattern is literal workflow text
 check "the lane does not guard a matrix major against the VM" 0 \
-	"$(grep -cF 'expected Podman ${{ matrix.podman }}' "$workflow")"
-check "the thread cap is not substituted per major" 0 "$(grep -c '__THREADS__' "$workflow")"
+	"$(grep -cF 'expected Podman ${{ matrix.podman }}' "$lane")"
+check "the thread cap is not substituted per major" 0 "$(grep -c '__THREADS__' "$template")"
 check "llvm is installed only for runs that measure coverage" 1 \
-	"$(grep -cF 'dnf install -y podman rust cargo gcc git __LLVM__' "$workflow")"
+	"$(grep -cF 'dnf install -y podman rust cargo gcc git __LLVM__' "$template")"
 
 echo
 echo "passed: $pass  failed: $fail"

@@ -203,7 +203,7 @@ site_count=0
 
 sites_table=$(cat <<'SITES'
 cargo-llvm-cov|.github/workflows/reusable-rust-ci.yml|input|llvm-cov-version
-cargo-llvm-cov|.github/workflows/podman-lane.yml|install|cargo-llvm-cov
+cargo-llvm-cov|.github/scripts/podman_lane/user-data.tpl|install|cargo-llvm-cov
 cargo-llvm-cov|.github/workflows/podman-lane-develop-nightly.yml|install|cargo-llvm-cov
 cargo-semver-checks|.github/workflows/reusable-rust-ci.yml|input|semver-checks-version
 cargo-audit|.github/workflows/reusable-rust-audit.yml|input|cargo-audit-version
