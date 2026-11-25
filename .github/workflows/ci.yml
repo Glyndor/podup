@@ -35,6 +35,16 @@ concurrency:
 # That file carries the schedule, the push fallback and the reasons.
 
 jobs:
+  # Cuts the runs of this commit at the first job that fails, instead of after the slowest one.
+  # It starts with the run, belongs to no `needs` and is not required; the rules are in
+  # reusable-stop-on-failure.yml.
+  stop-on-failure:
+    permissions:
+      contents: read
+      actions: write
+      checks: read
+    uses: ./.github/workflows/reusable-stop-on-failure.yml
+
   rust:
     uses: ./.github/workflows/reusable-rust-ci.yml
     with:

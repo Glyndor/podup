@@ -76,6 +76,7 @@
 .github/workflows/reusable-rust-supply-chain.yml	C N N R N
 .github/workflows/reusable-schedule-freshness.yml	C N N R N
 .github/workflows/reusable-shell-ci.yml	C B N R N
+.github/workflows/reusable-stop-on-failure.yml	C B N R N
 .github/workflows/reusable-workflow-lint.yml	C N N R N
 .github/workflows/supply-chain.yml	C N N R N
 .github/workflows/windows-arm64.yml	C B N R N
@@ -132,6 +133,7 @@ tests/scripts/shell/workflow_behaviour/reusable-schedule-freshness.test.sh	N N N
 tests/scripts/shell/workflow_behaviour/rust-build-inputs.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/rust-ci-inputs.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/rust-gate.test.sh	N N N R N
+tests/scripts/shell/workflow_behaviour/stop-on-failure.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/workflow-lint-inputs.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/write-token-jobs.test.sh	N N N R N
 tests/scripts/shell/workflow_lint/check-pins.test.sh	N N N R N

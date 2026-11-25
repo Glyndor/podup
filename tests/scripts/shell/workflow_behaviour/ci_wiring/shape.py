@@ -54,6 +54,7 @@ FILES = {
     "reusable-line-limit.yml": {},
     "reusable-main-guard.yml": {},
     "reusable-cancel-others.yml": {},
+    "reusable-stop-on-failure.yml": {},
     "reusable-deprecation-notices.yml": {},
     "podman-lane.yml": {"podman-vm": "conditions", "podman-native": "conditions"},
 }
