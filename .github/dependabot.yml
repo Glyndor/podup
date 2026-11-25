@@ -117,6 +117,14 @@ updates:
         versions: [">= 4.6.8"]
       - dependency-name: "clap_derive"
         versions: [">= 4.6.8"]
+    # hyper 1.13.0 is held back for the same budget. The refresh of the lockfile on 2026-11-25 took the
+    # release binary from 9 901 872 bytes to 9 911 984, over the 9.45 MiB budget (9 909 043 bytes), and
+    # holding only hyper at 1.12.0 gives 9 907 592, 4 392 bytes less and the largest share of any crate
+    # (regex-automata and regex-syntax 2 584, rustls-webpki 960, zlib-rs and hashbrown none). Measured with
+    # `cargo build --release --locked --bin podup`. The ignore ends when a hyper release no longer grows
+    # the binary: build with that version in the lock and compare with these sizes.
+      - dependency-name: "hyper"
+        versions: [">= 1.13.0"]
     commit-message:
       prefix: chore
 
@@ -147,6 +155,11 @@ updates:
     groups:
       fuzz-crate:
         patterns: ["*"]
+    # hyper stays at 1.12.0 here as in the root lockfile, so the two resolve the same version; see the
+    # entry for `/` above for the measured reason.
+    ignore:
+      - dependency-name: "hyper"
+        versions: [">= 1.13.0"]
     commit-message:
       prefix: chore
 
