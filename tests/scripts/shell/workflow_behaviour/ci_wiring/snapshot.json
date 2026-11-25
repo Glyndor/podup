@@ -131,7 +131,7 @@
      "doc-warnings": true,
      "extra-clippy-args": "--no-default-features --features watch,completions",
      "extra-test-os": "[\"macos-latest\", \"windows-latest\"]",
-     "msrv": "1.88",
+     "msrv": "1.91",
      "package-check": false,
      "semver-check": false
     }
@@ -1338,7 +1338,7 @@
       "type": "string"
      },
      "msrv": {
-      "default": "1.88",
+      "default": "1.91",
       "description": "Minimum supported Rust version to verify a --locked build against (empty disables the check)",
       "type": "string"
      },

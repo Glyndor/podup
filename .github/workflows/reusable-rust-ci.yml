@@ -62,7 +62,7 @@ on:
         # wants a different MSRV moves this default on the reusable's
         # diff, where the required check name `rust / Gate` stays stable
         # by definition.
-        default: "1.88"
+        default: "1.91"
       package-check:
         description: Run cargo publish --dry-run on PRs to catch packaging breakage before tagging
         type: boolean

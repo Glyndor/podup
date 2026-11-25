@@ -60,7 +60,7 @@ seed() {
 name = "podup"
 version = "$BASE_VER"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.91"
 
 [dependencies]
 serde = { version = "1.0.200", features = ["derive"] }

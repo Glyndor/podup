@@ -71,7 +71,7 @@ PLANTS = [
     # 7. An input that turns a check off, passed to a reusable.
     ("coverage turned off in the caller", "ci.yml", "coverage-threshold: 76", "coverage-threshold: 0"),
     ("doc warnings turned off in the caller", "ci.yml", "doc-warnings: true", "doc-warnings: false"),
-    ("the MSRV check emptied in the caller", "ci.yml", 'msrv: "1.88"', 'msrv: ""'),
+    ("the MSRV check emptied in the caller", "ci.yml", 'msrv: "1.91"', 'msrv: ""'),
     ("an input nobody listed passed to the Rust pipeline", "ci.yml", "      doc-warnings: true", "      doc-warnings: true\n      run-tests: false"),
     ("an input passed to the line limit", "line-limit.yml",
      "    uses: ./.github/workflows/reusable-line-limit.yml\n    with:", "    uses: ./.github/workflows/reusable-line-limit.yml\n    with:\n      hard-limit: 5000"),
