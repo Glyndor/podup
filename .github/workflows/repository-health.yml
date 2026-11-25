@@ -132,11 +132,10 @@ jobs:
   #
   # The `if:` keeps a health caller out of the push run of the branch it
   # watches. On such a push the reusable hands the script the pushed commit,
-  # and the script would then wait for the `ci.yml` run of that commit,
-  # which takes far longer than the eight minutes the poll allows: the
-  # answer would be a false red. The job reads the most recent run of
-  # `ci.yml` on `main` (or `develop`), and that run is itself a push run on
-  # that branch.
+  # whose `ci.yml` run has only just started, so the script would judge the
+  # run before it and call that the answer for the commit: nothing the push
+  # did. The job reads the most recent run of `ci.yml` on `main` (or
+  # `develop`), and that run is itself a push run on that branch.
   #
   # A skipped job is fine here because this check is advisory and is not on
   # the ruleset, so a missing run does not break a pull request.

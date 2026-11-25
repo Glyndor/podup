@@ -115,6 +115,7 @@ tests/scripts/shell/podman_lane/*	N N N R N
 tests/scripts/shell/suite_guards/*	N N N R N
 tests/scripts/shell/workflow_behaviour/binary-budget-paths.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/branch-health-conclusion.test.sh	N N N R N
+tests/scripts/shell/workflow_behaviour/branch-health-design.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/cancel-others.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/ci-map.test.sh	N N N R N
 tests/scripts/shell/workflow_behaviour/ci-wiring.test.sh	N N N R N
