@@ -181,12 +181,20 @@ mixed "changes the crate" tests/scripts/shell/workflow_behaviour/rust-ci-inputs.
 mixed "changes the pipeline of the Rust lanes" docs/assets/demo.sh .github/workflows/ci.yml
 mixed "changes the crate" .github/workflows/lint-shell.yml internal/lib.rs
 mixed "changes the test suite" .github/scripts/checks/folder-limit.sh tests/hostile/input/hostile_compose.rs
+mixed "changes the crate" .github/actionlint.yaml internal/lib.rs
+mixed "changes the dependency graph" .github/folder-limit-exceptions.txt Cargo.lock
+mixed "changes the pipeline of the Rust lanes" .github/podman_lane/budget .github/workflows/reusable-rust-ci.yml
+must_run "is not a known input of the Rust lanes" .github/podman_lane.txt .github/actionlint.yml .github/vocabulary-exceptions.txt.bak
 
 # The CI-only answer: the files of the CI and nothing the crate reads.
 ci_only .github/workflows/lint-shell.yml
 ci_only .github/workflows/podman-lane.yml .github/scripts/checks/folder-limit.sh
 ci_only .github/scripts/release/sign.py .github/scripts/hygiene/check-secrets.sh
 ci_only .github/dependabot.yml
+ci_only .github/actionlint.yaml
+ci_only .github/folder-limit-exceptions.txt .github/vocabulary-exceptions.txt
+ci_only .github/podman_lane/known-failures-6 .github/podman_lane/baseline-tests .github/podman_lane/budget
+ci_only .github/actionlint.yaml .github/workflows/lint-shell.yml docs/commands.md
 ci_only .github/workflows/dco.yml docs/commands.md
 ci_only .github/workflows/audit.yml tests/scripts/shell/workflow_behaviour/rust-ci-inputs.test.sh LICENSE
 

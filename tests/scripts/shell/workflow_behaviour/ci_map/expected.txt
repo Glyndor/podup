@@ -4,10 +4,10 @@
 .github/CODEOWNERS	N N B R N
 .github/ISSUE_TEMPLATE/*	N N B R N
 .github/PULL_REQUEST_TEMPLATE.md	N N B R N
-.github/actionlint.yaml	R B B R V
+.github/actionlint.yaml	C N N R N
 .github/dependabot.yml	C N B R N
-.github/folder-limit-exceptions.txt	R B B R V
-.github/podman_lane/*	R B B R V
+.github/folder-limit-exceptions.txt	C N N R N
+.github/podman_lane/*	C N N R V
 .github/scripts/checks/binary-budget-paths.sh	C N N R N
 .github/scripts/checks/check-banned-vocabulary.sh	C N N R N
 .github/scripts/checks/check-branch-conclusion.sh	C N N R N
@@ -32,11 +32,11 @@
 .github/scripts/fedora_image/*	C B N R V
 .github/scripts/hardening/*	C B N R N
 .github/scripts/hygiene/*	C B N R N
-.github/scripts/lib/*	C B N R V
-.github/scripts/packaging/*	C B N R V
+.github/scripts/lib/*	C B N R N
+.github/scripts/packaging/*	C B N R N
 .github/scripts/podman_lane/*	C B N R V
 .github/scripts/release/*	C B N R N
-.github/vocabulary-exceptions.txt	R B B R V
+.github/vocabulary-exceptions.txt	C N N R N
 .github/workflows/asset-contract.yml	C B N R N
 .github/workflows/audit.yml	C N N R N
 .github/workflows/benchmark.yml	C N N R N
@@ -103,7 +103,7 @@ tests/compose/*	R N B R N
 tests/engine/*	R N B N V
 tests/fixtures/*	R N B R N
 tests/hostile/*	R N B N N
-tests/packaging/*	R N B R V
+tests/packaging/*	R N B R N
 tests/quadlet/*	R N B R N
 tests/repository/*	R N B R N
 tests/scripts/powershell/*	N N N R N

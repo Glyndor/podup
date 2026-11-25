@@ -25,6 +25,10 @@ while IFS= read -r path; do
 		# lint-shell, lint-powershell, release and the hardening and packaging ones).
 		.github/dependabot.yml | .github/CODEOWNERS | .github/ISSUE_TEMPLATE/* | \
 		.github/PULL_REQUEST_TEMPLATE.md) ;;
+		# The configuration and the lists that only a check of the CI reads: actionlint's, the exceptions of
+		# the folder limit and of the banned vocabulary, and the lists of the Podman lane.
+		.github/actionlint.yaml | .github/folder-limit-exceptions.txt | .github/vocabulary-exceptions.txt | \
+		.github/podman_lane/*) ;;
 		.github/scripts/checks/rust-build-inputs.sh) build "$path" ;;
 		.github/scripts/checks/*) ;;
 		.github/workflows/audit.yml | .github/workflows/benchmark.yml | \

@@ -105,6 +105,9 @@ while IFS= read -r path; do
 		# answer: the feature set debian/rules selects does not change what
 		# they read. Nothing else in these directories reaches the package.
 		.github/workflows/* | .github/scripts/*) ;;
+		# The configuration and the lists that only a check of the CI reads (actionlint's, the exceptions of the
+		# folder limit and of the banned vocabulary, the lists of the Podman lane). No Rust test reads them.
+		.github/actionlint.yaml | .github/folder-limit-exceptions.txt | .github/vocabulary-exceptions.txt | .github/podman_lane/*) ;;
 		# The installers. The package build reads neither, but a change to
 		# one is not a script-only test change.
 		install.sh | install.ps1) answer true "$path changes an installer" ;;
