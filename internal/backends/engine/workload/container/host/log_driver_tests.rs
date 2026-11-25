@@ -4,6 +4,7 @@ use std::collections::HashMap;
 fn tagged() -> LogConfig {
 	LogConfig {
 		driver: None,
+		path: None,
 		size: None,
 		options: HashMap::from([("tag".to_string(), "x".to_string())]),
 	}

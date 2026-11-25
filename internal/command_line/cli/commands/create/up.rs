@@ -29,7 +29,8 @@ pub(crate) struct UpArgs {
 	/// Do not start linked services (depends_on) of the named services.
 	#[arg(long)]
 	pub(crate) no_deps: bool,
-	/// Seconds to wait for a container to stop when recreating.
+	/// Seconds to wait for a container to stop when recreating; -1 waits
+	/// without limit.
 	#[arg(short = 't', long, allow_hyphen_values = true, value_parser = parse_timeout)]
 	pub(crate) timeout: Option<i32>,
 	/// Override the replica count for a service: SERVICE=N (repeatable).

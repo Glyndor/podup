@@ -172,13 +172,19 @@ pub(crate) async fn dispatch(
 				)
 				.await?;
 			if wait {
-				// `--wait-timeout` bounds the health wait, like `start --wait`.
-				let fut = engine.wait_services_healthy(&scope, &services);
+				// `--wait-timeout` is the whole budget of the health wait, like
+				// `start --wait`: it extends the per-service budget a short
+				// `interval x retries` would otherwise leave, and it caps the wait.
 				match wait_timeout {
-					Some(secs) => tokio::time::timeout(std::time::Duration::from_secs(secs), fut)
-						.await
-						.map_err(|_| podup::ComposeError::WaitTimeout { secs })??,
-					None => fut.await?,
+					Some(secs) => {
+						let budget = std::time::Duration::from_secs(secs);
+						let fut =
+							engine.wait_services_healthy_within(&scope, &services, Some(budget));
+						tokio::time::timeout(budget, fut)
+							.await
+							.map_err(|_| podup::ComposeError::WaitTimeout { secs })??;
+					}
+					None => engine.wait_services_healthy(&scope, &services).await?,
 				}
 			}
 			// `--wait` implies detach, as it does in docker compose: the flag

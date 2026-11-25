@@ -4,12 +4,10 @@ mod input;
 mod interactive;
 mod output;
 mod piped;
+mod relay;
+mod streamed;
 
 pub(crate) use input::InputSource;
-
-use std::io::Write;
-
-use futures_util::StreamExt;
 
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
@@ -240,14 +238,12 @@ impl Engine {
 		// host-networked container does not appear safer than the same
 		// container's `up`. The container itself was created with these modes,
 		// but `exec` is the operator's chance to notice them, and the command
-		// they are about to run executes inside that container. `--no-warn`
-		// still opts out.
-		if !self.no_warn {
-			for w in
-				crate::backends::engine::workload::container::check_host_mode(service_name, service)
-			{
-				tracing::warn!("{}", w.message);
-			}
+		// they are about to run executes inside that container. They are
+		// security warnings: `--no-warn` does not silence them.
+		for w in
+			crate::backends::engine::workload::container::check_host_mode(service_name, service)
+		{
+			tracing::warn!("{}", w.message);
 		}
 		// Resolve the target replica against the *running* containers (matching
 		// `cp`), so `--index N` and a bare `exec` reach a live replica of a service
@@ -340,7 +336,8 @@ impl Engine {
 		// The interactive path takes over here: it needs the connection kept open
 		// in both directions, which the request/response client cannot give it.
 		if interactive {
-			self.exec_interactive(&exec_id).await?;
+			self.run_session(&exec_id, Box::pin(self.exec_interactive(&exec_id)))
+				.await?;
 			return self.exec_exit_status(&exec_id).await;
 		}
 
@@ -349,38 +346,13 @@ impl Engine {
 		// response client cannot carry that, so this path hijacks the
 		// connection too and demultiplexes the frames itself.
 		if attach_stdin {
-			self.exec_piped(&exec_id).await?;
+			self.run_session(&exec_id, Box::pin(self.exec_piped(&exec_id)))
+				.await?;
 			return self.exec_exit_status(&exec_id).await;
 		}
 
-		let start_cfg = ExecStartConfig {
-			detach: false,
-			tty: false,
-		};
-		let start_path = format!("{API_PREFIX}/exec/{}/start", urlencoded(&exec_id));
-		let start_resp = self
-			.client
-			.post_json_stream_within(&start_path, &start_cfg, Some(EXEC_START_TIMEOUT))
-			.await
-			.map_err(|e| map_exec_start_err(e, &opts))?;
-		let mut stream = crate::libpod::parse_multiplexed(start_resp.into_body());
-
-		// Lock stdout once for the whole stream instead of re-acquiring the lock
-		// (and issuing a syscall) per frame; stdout is ours exclusively on this
-		// path. stderr is locked per frame because the tracing subscriber also
-		// writes there: holding its lock across the await loop would starve
-		// concurrent log emissions. Flush after each frame so exec streams
-		// promptly.
-		{
-			let mut out = std::io::stdout().lock();
-			while let Some(msg) = stream.next().await {
-				let frame = msg.map_err(ComposeError::Podman)?;
-				let mut err = std::io::stderr().lock();
-				let _ = output::write_exec_frame(&mut out, &mut err, frame);
-				let _ = out.flush();
-			}
-		}
-
+		self.run_session(&exec_id, Box::pin(self.exec_streamed(&exec_id, &opts)))
+			.await?;
 		self.exec_exit_status(&exec_id).await
 	}
 

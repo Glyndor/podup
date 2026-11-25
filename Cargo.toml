@@ -1,6 +1,6 @@
 [package]
 name = "podup"
-version = "6.0.0"
+version = "6.1.0"
 edition = "2021"
 rust-version = "1.88"
 # podup is a binary that happens to build a library, not a library that ships a
@@ -77,6 +77,18 @@ required-features = ["test-helpers"]
 [[test]]
 name = "build_contract"
 path = "tests/cli/output/build_contract.rs"
+
+[[test]]
+name = "build_context_credentials"
+path = "tests/cli/build/build_context_credentials.rs"
+
+[[test]]
+name = "additional_context_credentials"
+path = "tests/cli/build/additional_context_credentials.rs"
+
+[[test]]
+name = "image_reference_credentials"
+path = "tests/cli/build/image_reference_credentials.rs"
 
 [[test]]
 name = "closed_pipe"
@@ -423,6 +435,10 @@ name = "up_selection"
 path = "tests/cli/up/up_selection.rs"
 
 [[test]]
+name = "timeout_minus_one"
+path = "tests/cli/lifecycle/timeout_minus_one.rs"
+
+[[test]]
 name = "unknown_service"
 path = "tests/cli/up/unknown_service.rs"
 
@@ -439,20 +455,68 @@ name = "scale_duplicate_pairs"
 path = "tests/cli/up/scale_duplicate_pairs.rs"
 
 [[test]]
+name = "up_watch_output"
+path = "tests/cli/up/up_watch_output.rs"
+
+[[test]]
 name = "up_attach_options"
 path = "tests/cli/up/up_attach_options.rs"
+
+[[test]]
+name = "up_watch"
+path = "tests/cli/up/up_watch.rs"
+
+[[test]]
+name = "up_output_flags"
+path = "tests/cli/up/up_output_flags.rs"
+
+[[test]]
+name = "pull_deps_and_failures"
+path = "tests/cli/up/pull_deps_and_failures.rs"
 
 [[test]]
 name = "create_up_flags"
 path = "tests/cli/create/create_up_flags.rs"
 
 [[test]]
+name = "up_exit_codes"
+path = "tests/cli/up/up_exit_codes.rs"
+
+[[test]]
+name = "stop_timeout"
+path = "tests/cli/lifecycle/stop_timeout.rs"
+
+[[test]]
+name = "exec_options"
+path = "tests/cli/exec/exec_options.rs"
+
+[[test]]
 name = "run_remove_orphans"
 path = "tests/cli/run/run_remove_orphans.rs"
 
 [[test]]
+name = "rm_live_containers"
+path = "tests/cli/rm/rm_live_containers.rs"
+
+[[test]]
 name = "down_services"
 path = "tests/cli/down/down_services.rs"
+
+[[test]]
+name = "rm_stop"
+path = "tests/cli/rm/rm_stop.rs"
+
+[[test]]
+name = "down_volumes"
+path = "tests/cli/down/down_volumes.rs"
+
+[[test]]
+name = "up_remove_orphans"
+path = "tests/cli/up/up_remove_orphans.rs"
+
+[[test]]
+name = "autostart_purge"
+path = "tests/cli/autostart/autostart_purge.rs"
 
 [[test]]
 name = "quadlet_jobs"

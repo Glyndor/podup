@@ -96,7 +96,7 @@ check "the merge-group step was extracted from the workflow" "1" \
 	"$(grep -c check-merge-group-triggers.py "$WORK/merge-group.sh" | awk '{print ($1>0)}')"
 
 check "the merge-group trigger script lives next to the other GitHub scripts" "1" \
-	"$(test -f "$HERE/.github/scripts/checks/check-merge-group-triggers.py" && echo 1 || echo 0)"
+	"$(test -f "$HERE/.github/scripts/checks/triggers/check-merge-group-triggers.py" && echo 1 || echo 0)"
 
 # ---------------------------------------------------------------------------
 # Fixture helpers
@@ -118,8 +118,11 @@ new() {
 		reusable-workflow-lint.yml; do
 		cp "$HERE/.github/workflows/$r" "$WORK/t/.github/workflows/"
 	done
-	cp "$HERE/.github/scripts/checks/check-merge-group-triggers.py" \
-		"$WORK/t/.github/scripts/checks/"
+	mkdir -p "$WORK/t/.github/scripts/lib"
+	cp "$HERE/.github/scripts/lib/ci_yaml.py" "$WORK/t/.github/scripts/lib/"
+	mkdir -p "$WORK/t/.github/scripts/checks/triggers"
+	cp "$HERE/.github/scripts/checks/triggers/check-merge-group-triggers.py" \
+		"$WORK/t/.github/scripts/checks/triggers/"
 	printf '%s' "$WORK/t"
 }
 run_in() { ( cd "$1" && bash "$2" 2>&1 ); }
@@ -348,10 +351,9 @@ check "and the message says no emitting workflow was found" "1" \
 	"$(said "$out" 'no workflow in .github/workflows/ emits a develop-required check')"
 
 # ===========================================================================
-# Edge: an unparseable workflow is warned and skipped, the same way
-# the caller-if and caller-with-defaults steps handle it. The scan
-# still passes if the other workflows are clean, so the fixture
-# includes a properly-triggered emitter alongside the broken file.
+# Edge: a workflow the step cannot parse is a failure, not a skip: what the
+# step cannot read it does not compare, and GitHub reads it all the same.
+# The fixture includes a properly-triggered emitter alongside the broken file.
 # ===========================================================================
 
 d="$(new)"
@@ -366,8 +368,13 @@ jobs:
 '
 printf 'name: [\n' > "$d/.github/workflows/broken.yml"
 out="$(run_in "$d" "$WORK/merge-group.sh")"; rc=$?
-check "an unparseable workflow does not fail the step" "0" "$rc"
-check "but is reported as skipped" "1" "$(said "$out" '::warning')"
+check "an unparseable workflow fails the step" "1" "$rc"
+check "and is reported as an error" "1" "$(said "$out" 'YAML parse error')"
+d="$(new)"
+printf 'on:\n  pull_request:\non:\n  push:\n' > "$d/.github/workflows/dup.yml"
+out="$(run_in "$d" "$WORK/merge-group.sh")"; rc=$?
+check "a duplicate key fails the step" "1" "$rc"
+check "and the message names the key" "1" "$(said "$out" "duplicate key")"
 
 echo
 echo "$pass passed, $fail failed"

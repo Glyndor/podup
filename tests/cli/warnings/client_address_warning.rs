@@ -101,9 +101,10 @@ fn commands_that_do_not_create_containers_stay_quiet() {
 }
 
 #[test]
-fn config_shows_the_warning_even_with_no_warn() {
+fn config_honours_no_warn_like_up() {
+	assert!(podup(ON_BRIDGE, &["config", "-q"]).contains(NEEDLE));
 	let stderr = podup(ON_BRIDGE, &["--no-warn", "config", "-q"]);
-	assert!(stderr.contains(NEEDLE), "{stderr}");
+	assert!(!stderr.contains(NEEDLE), "{stderr}");
 }
 
 #[test]

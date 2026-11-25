@@ -1,0 +1,73 @@
+name: Stop the runs of a commit at its first failure (reusable)
+
+# A job that fails at minute 10 used to leave the rest of its run going for the 40 minutes it still
+# needed, on runners that are scarce, with a queue of jobs waiting behind. This job is there from the
+# start of the run, looks at the check runs of the commit once every 30 seconds, and when one of them
+# has failed it cancels the runs of that commit that have not finished (the expensive workflows on the
+# list of the script, never an analysis of security, a release or another commit) and then its own.
+#
+# It is for a pull request and for the merge queue, where a failure is final for the commit. A schedule
+# and a dispatch are not cut: their legs are independent measurements, and one that failed must not
+# hide what the other would have said. The podman-vm legs are there; so are the runners that are slow,
+# because what is cancelled includes the jobs that have not yet found a runner.
+#
+# What it holds, and nothing more: `actions: write` to cancel, `checks: read` to read the check runs,
+# `contents: read` to take the script. No action of other people's. The script is the copy the BASE
+# commit holds, on a pull request and on the merge queue alike, so a change cannot write the code that
+# cancels with its token. A token that
+# cannot cancel (Dependabot, a fork) is reported and the job succeeds: cancelling changes nothing about
+# the result of what failed.
+#
+# The aggregators of the workflows it cancels keep `if: always()`: a cancelled run still runs them, and
+# they publish red under their own names. A cut never leaves a required check absent, cancelled or green.
+# This job is not in any `needs` and is not required.
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  watch:
+    name: stop at the first failure
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    # Bound: the longest run it watches is the native lane at 60 minutes, after a queue of up to
+    # 30. The script gives up watching at 7000 seconds; this is its ceiling, not its length.
+    timeout-minutes: 125
+    permissions:
+      contents: read
+      actions: write
+      checks: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - name: Watch the check runs of the commit and cut the rest at the first failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BRANCH_REF: ${{ github.event.pull_request.head.ref || github.event.merge_group.head_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          script=.github/scripts/ci/stop-on-failure.sh
+          # The base commit's copy on a pull request and on the merge queue alike: the commit the change lands
+          # on, which has been reviewed, and never a file of the change itself.
+          git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BASE_SHA" 2>/dev/null || true
+          if git show "${BASE_SHA}:${script}" >"$RUNNER_TEMP/stop.sh" 2>/dev/null; then
+            script="$RUNNER_TEMP/stop.sh"
+          else
+            echo "::warning::the base commit has no stop-on-failure script; nothing is watched"
+            exit 0
+          fi
+          # The branch the runs of this pull request or merge group carry: `refs/heads/` is not in it.
+          HEAD_BRANCH="${BRANCH_REF#refs/heads/}"
+          export HEAD_BRANCH
+          bash "$script"

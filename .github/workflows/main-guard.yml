@@ -7,14 +7,17 @@ name: guard
 # check.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     branches: ["main"]
 
 permissions: {}
 
-# Cancels superseded pull_request runs only; see asset-contract.yml.
+# This one judges the base of the pull request, so an edit that changes it has to run it again
+# (`edited`), and it is the only one that lists `edited` and `reopened`: it is one job of a few
+# seconds, so nothing is cancelled and the run that is cancelled never reports a failure.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   develop-only:

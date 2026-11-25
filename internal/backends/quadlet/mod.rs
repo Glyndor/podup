@@ -25,6 +25,7 @@ mod publishing;
 pub(crate) use publishing::write_autostart_units;
 pub use publishing::write_units;
 mod render;
+mod secrets_unit;
 mod unit;
 mod unit_file;
 mod warnings;
@@ -186,12 +187,35 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 	Ok(())
 }
 
+/// [`validate_for_quadlet`] for the command that writes the units: it also checks
+/// the configs and secrets the secrets unit creates, and refuses, before anything
+/// is written, a `file:` secret or config that `up` would refuse and that the unit
+/// could not create (a link, a directory, a pipe, a mode with an execute bit, a
+/// name Podman cannot carry, two sources). It reads the files, so it needs the
+/// project and the directory that relative paths are resolved against.
+pub fn validate_for_quadlet_in(
+	file: &ComposeFile,
+	project: &str,
+	base_dir: &std::path::Path,
+) -> Result<()> {
+	validate_for_quadlet(file)?;
+	let with_jobs;
+	let checked = if file.jobs.is_empty() {
+		file
+	} else {
+		with_jobs = crate::compose::jobs::with_jobs_as_services(file);
+		&with_jobs
+	};
+	secrets_unit::validate(checked)?;
+	secrets_unit::refusals(file, project, base_dir)
+}
+
 thread_local! {
-	/// CLI `--no-warn` flag honoured by the Quadlet path's host-binding /
-	/// privilege-escalation warnings. Set by `write_quadlet` when the CLI
-	/// parsed `--no-warn` and consulted by `container_unit_with_mode` before
-	/// each `tracing::warn!` so the operator can silence the per-generate
-	/// noise the same way they do on `up`/`create`/`run`/`exec`.
+	/// CLI `--no-warn` flag honoured by the Quadlet path's advisory warnings
+	/// (a network alias that is not exported, a network mode a pod ignores).
+	/// Set by `write_quadlet` when the CLI parsed `--no-warn` and consulted
+	/// before each of those `tracing::warn!`. The security warnings (host
+	/// network, `container:` network, privileged) are not gated on it.
 	///
 	/// The live engine path carries the flag on `Engine::no_warn`; the Quadlet
 	/// path goes through a free function and has no such struct, so a
@@ -233,7 +257,7 @@ impl Drop for NoWarnGuard {
 }
 
 /// Whether `--no-warn` is active on the current thread. Read by
-/// `container_unit_with_mode` before each host-binding `tracing::warn!`.
+/// the Quadlet path before each advisory `tracing::warn!`.
 pub(crate) fn is_no_warn_set() -> bool {
 	NO_WARN.with(|c| c.get())
 }
@@ -353,6 +377,16 @@ fn generate_with_mode(
 			continue;
 		}
 		out.units.push(volume_unit(name, project, cfg.as_ref()));
+		// Podman's generator drops a `Driver=image` unit that has no `Image=`,
+		// and the containers that mount the volume then fail to start.
+		if let Some(c) = cfg {
+			if c.driver.as_deref() == Some("image") && !c.driver_opts.contains_key("image") {
+				out.warnings.push(format!(
+					"volume '{name}': driver image needs driver_opts.image; without it Quadlet \
+					 drops the volume unit"
+				));
+			}
+		}
 	}
 
 	let declared_volumes: Vec<&str> = file
@@ -402,6 +436,12 @@ fn generate_with_mode(
 				.then_some((key.as_str(), cfg.name.as_deref().unwrap_or(key.as_str())))
 		})
 		.collect();
+	// The services and jobs whose `links:` give another service a network alias.
+	let linkers: Vec<&crate::compose::types::Service> = file
+		.services
+		.values()
+		.chain(file.jobs.values().map(|job| &job.service))
+		.collect();
 	let ctx = UnitContext {
 		project,
 		declared_volumes: &declared_volumes,
@@ -409,8 +449,11 @@ fn generate_with_mode(
 		external_networks: &external_networks,
 		external_volumes: &external_volumes,
 		secrets: &file.secrets,
+		configs: &file.configs,
+		secrets_unit: mode == ContainerUnitMode::Standard,
 		base_dir,
 		services: &file.services,
+		linkers: &linkers,
 		// `x-podman-pod: true` opts each container into the project pod,
 		// dropping the per-container `PublishPort=` / `Network=` lines that
 		// the pod now owns. A typo in the extension (anything other than a
@@ -457,6 +500,27 @@ fn generate_with_mode(
 		}
 		ContainerUnitMode::Prebuilt => {
 			out.warnings.extend(warnings::jobs_not_exported(&file.jobs));
+		}
+	}
+
+	// The secrets and configs the containers mount, created before they start.
+	let (secrets_unit, secret_warnings) =
+		secrets_unit::build(file, project, base_dir, mode == ContainerUnitMode::Standard);
+	out.warnings.extend(secret_warnings);
+	if let Some(unit) = secrets_unit {
+		let taken = out
+			.units
+			.iter()
+			.filter_map(|u| u.filename.strip_suffix(".container"))
+			.any(|stem| format!("{stem}.service") == unit.filename);
+		if taken {
+			out.warnings.push(format!(
+				"the secrets unit {} was not written: a service of that name has the same unit; \
+				 rename the service",
+				unit.filename
+			));
+		} else {
+			out.units.push(unit);
 		}
 	}
 

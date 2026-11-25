@@ -8,11 +8,20 @@
 # `rust / Extra platforms` and `rust / Coverage`: the format and lint pass,
 # the Linux test suite, the macOS and Windows matrix, and the coverage gate.
 #
-# It answers with two outputs, and the pair is the answer:
+# It answers with three outputs, and the set is the answer:
 #
-#   run=true  docs_only=false   every lane runs
-#   run=true  docs_only=true    only the focused documentation lane runs
-#   run=false docs_only=false   no lane runs
+#   run=true  docs_only=false ci_only=false   every lane runs
+#   run=true  docs_only=true  ci_only=false   only the focused documentation lane runs
+#   run=true  docs_only=false ci_only=true    the Linux suite runs; coverage, the macOS
+#                                             and Windows legs and the Rust lint do not
+#   run=false docs_only=false ci_only=false   no lane runs
+#
+# The fourth is what a pull request that changes only the CI itself gets: the
+# workflows, the scripts they run, their templates and the shell tests of those
+# scripts. The Linux suite still runs, because the Rust tests that read the
+# workflows live in it; coverage measures the crate, the macOS and Windows legs
+# run the crate on other systems, and rustfmt and clippy read Rust sources, and
+# none of those can change when no Rust source, manifest or test did.
 #
 # The third one is what a documentation-only pull request gets. The documents
 # are read by a handful of tests and by nothing else, so running those tests
@@ -21,7 +30,8 @@
 # cannot reach them.
 #
 # Exit 0 means no lane has to run, exit 1 means every lane has to run and
-# exit 2 means the focused documentation lane has to run. The workflow reads
+# exit 2 means the focused documentation lane has to run and exit 3 means only
+# the CI files changed. The workflow reads
 # the OUTPUT rather than the exit code, because a missing output has to mean
 # "run" and never "skip": the classifier is the only thing standing between
 # a broken checkout and a skipped test suite.
@@ -47,7 +57,7 @@
 #   install.sh, install.ps1     read by the release-key test
 #   deny.toml                   read by the supply-chain test
 #   fuzz/, bench/               read by the repository's own tests
-#   .github/dependabot.yml      read by the supply-chain test
+#   .github/dependabot.yml      read by the supply-chain test (and the CI-only answer when alone)
 #
 # The documentation is on the list above, and that is not an oversight:
 # `tests/repository/docs/docs_links.rs` reads every markdown file under
@@ -79,10 +89,14 @@ base="${1:-}"
 head="${2:-}"
 output="${GITHUB_OUTPUT:-}"
 
-answer() { # <true|false> <true|false> <reason>
+answer() { # <true|false> <true|false> <reason> [ci_only]
+	local ci="${4:-false}"
 	if [ -n "$output" ]; then
-		echo "run=$1" >>"$output"
-		echo "docs_only=$2" >>"$output"
+		{
+			echo "run=$1"
+			echo "docs_only=$2"
+			echo "ci_only=$ci"
+		} >>"$output"
 	fi
 	echo "$3"
 	if [ "$1" = false ]; then
@@ -90,6 +104,9 @@ answer() { # <true|false> <true|false> <reason>
 	fi
 	if [ "$2" = true ]; then
 		exit 2
+	fi
+	if [ "$ci" = true ]; then
+		exit 3
 	fi
 	exit 1
 }
@@ -127,6 +144,7 @@ windows_reserved() { # <path>
 # what they skip and the safe reading of a mixed range is the whole thing.
 docs=false
 other=false
+ci=false
 
 while IFS= read -r path; do
 	case "$path" in
@@ -146,9 +164,15 @@ while IFS= read -r path; do
 		tests/scripts/*.sh | tests/scripts/*.ps1) other=true ;;
 		tests/*) answer true false "$path changes the test suite" ;;
 		debian/*) answer true false "$path changes the packaging" ;;
-		# The CI itself.
-		.github/workflows/*) answer true false "$path changes the CI" ;;
-		.github/scripts/*) answer true false "$path changes the checks CI runs" ;;
+		# The pipeline of these very lanes: a change to the workflow that runs
+		# them, to its caller, or to the judge of the build lanes is judged by
+		# every lane it can change.
+		.github/workflows/ci.yml | .github/workflows/reusable-rust-ci.yml | .github/scripts/checks/rust-build-inputs.sh)
+			answer true false "$path changes the pipeline of the Rust lanes"
+			;;
+		# The rest of the CI: a range made of these and of documents and nothing
+		# else is the CI-only lane.
+		.github/workflows/* | .github/scripts/*) ci=true ;;
 		# The documents. They are read by a few tests and by nothing else, so
 		# a range of documents alone is the focused lane.
 		README.md | CONTRIBUTING.md) docs=true ;;
@@ -160,7 +184,12 @@ while IFS= read -r path; do
 		deny.toml) answer true false "$path is read by the supply-chain test" ;;
 		fuzz/*) answer true false "$path is read by the repository tests" ;;
 		bench/*) answer true false "$path is read by the repository tests" ;;
-		.github/dependabot.yml) answer true false "$path is read by the supply-chain test" ;;
+		.github/dependabot.yml) ci=true ;;
+		# The configuration and the lists that only a check of the CI reads: the one of actionlint, the
+		# exceptions of the folder limit and of the banned vocabulary, and the lists of the Podman lane
+		# (the VM boots for those, see podman-lane-paths.sh; no Rust lane reads them). Left to the default
+		# they ran every lane, coverage and the other platforms included, for a line of a list.
+		.github/actionlint.yaml | .github/folder-limit-exceptions.txt | .github/vocabulary-exceptions.txt | .github/podman_lane/*) ci=true ;;
 		# What no Rust lane and no Rust test reads. These may be skipped, and
 		# they are not documents either: a document next to one of them is a
 		# mixed range and runs everything.
@@ -177,6 +206,9 @@ while IFS= read -r path; do
 	esac
 done <<<"$changed"
 
+if [ "$ci" = true ]; then
+	answer true false "only the CI and its documents changed; the Linux suite runs and coverage, the other platforms and the lint do not" true
+fi
 if [ "$docs" = true ]; then
 	if [ "$other" = false ]; then
 		answer true true "only documentation changed; the focused documentation lane runs"

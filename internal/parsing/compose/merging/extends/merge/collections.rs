@@ -297,7 +297,11 @@ where
 						deep(b, o, &mut Vec::new())
 					}
 				})
-				.and_then(serde_json::from_value::<T>);
+				.and_then(|merged| {
+					crate::compose::types::inputs::mode::reading_resolved(|| {
+						serde_json::from_value::<T>(merged)
+					})
+				});
 			Some(merged.unwrap_or(over))
 		}
 	}

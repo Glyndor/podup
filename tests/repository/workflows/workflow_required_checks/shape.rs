@@ -49,8 +49,34 @@ pub const REQUIRED_ON_MAIN: &[&str] = &[
 	"rust / Test",
 	"rust / Coverage",
 	"rust / Doc warnings",
-	"rust / MSRV",
-	"rust / Extra platforms",
+	// The gate that certifies every skip of the Rust pipeline. `develop` requires
+	// it and not the four names above, which `main` keeps requiring until its
+	// ruleset moves to the promotion names. `rust / MSRV` and `rust / Extra
+	// platforms` left this list with the two small gates that emitted them.
+	"rust / Gate",
+	// The security results are required too, and in the queue: the dependency audit and
+	// the two hygiene checks. They are not part of the Rust gate.
+	"audit / cargo audit",
+	"audit / cargo deny",
+	"deprecations / no deprecation notices",
+	"commit identity",
+	"secret scan",
+	"pin values",
+	// What a pull request into `main` is asked for. The same commit has just been
+	// through the merge queue and a push to `develop`, whose runs carry a plan that
+	// looked at a narrower range; the promotion has its own names, produced only by
+	// a pull request whose base is `main`, which runs every suite.
+	"audit / cargo audit (promotion)",
+	"audit / cargo deny (promotion)",
+	"deprecations / no deprecation notices (promotion)",
+	"commit identity (promotion)",
+	"secret scan (promotion)",
+	"pin values (promotion)",
+	"rust / Gate (promotion)",
+	"line-limit / line limit (promotion)",
+	"workflow-lint / workflow-lint (promotion)",
+	"dco / Signed-off-by present on every commit (promotion)",
+	"Supported Podman majors (promotion)",
 	"Supported Podman majors",
 	"line-limit / line limit",
 	"dco / Signed-off-by present on every commit",
@@ -65,7 +91,20 @@ pub const REQUIRED_ON_MAIN: &[&str] = &[
 /// on `develop` would block every merge there with an unanswerable check,
 /// which is what `main-guard.yml`'s own header explains. Flattening the two
 /// lists into one would hide that asymmetry, so they are separate.
-const MAIN_ONLY: &[&str] = &["develop-only / develop-only"];
+const MAIN_ONLY: &[&str] = &[
+	"develop-only / develop-only",
+	"audit / cargo audit (promotion)",
+	"audit / cargo deny (promotion)",
+	"deprecations / no deprecation notices (promotion)",
+	"commit identity (promotion)",
+	"secret scan (promotion)",
+	"pin values (promotion)",
+	"rust / Gate (promotion)",
+	"line-limit / line limit (promotion)",
+	"workflow-lint / workflow-lint (promotion)",
+	"dco / Signed-off-by present on every commit (promotion)",
+	"Supported Podman majors (promotion)",
+];
 
 /// One job, as much of it as the check name depends on.
 pub struct Job {
@@ -75,72 +114,39 @@ pub struct Job {
 
 /// Read the `jobs:` block of a workflow: job id to its `name:` and `uses:`.
 ///
-/// Hand-rolled on indentation, which is the convention the other workflow
-/// tests here already follow (`workflow_debian_image.rs`,
-/// `workflow_audit_strictness.rs`). Three shapes have to be excluded and all
-/// three are in this tree:
-///
-/// - the workflow's own top-level `name:`, at indent 0,
-/// - a step's `- name:`, which is a label inside `steps:` and deeper,
-/// - a comment, because several of these files explain a job name in prose
-///   directly above the line that carries it, and `workflow_audit_strictness`
-///   already went red once for counting exactly that.
-///
-/// So a job id is a key at indent 2 under a top-level `jobs:`, and its `name:`
-/// and `uses:` are keys at indent 4 inside it.
+/// This reads the file with a real YAML parser. The reader that was here walked
+/// the text by indentation and ignored every line it did not recognise, which
+/// is how a job written some other way, or a key written twice, could be seen
+/// one way here and run another way by GitHub. `serde_yaml` refuses a duplicate
+/// key, so a workflow that has one fails here instead of being read as its
+/// last value.
 pub fn jobs_of(workflow: &str) -> BTreeMap<String, Job> {
+	let spec: serde_yaml::Value = serde_yaml::from_str(workflow)
+		.unwrap_or_else(|e| panic!("the workflow does not parse: {e}"));
 	let mut jobs = BTreeMap::new();
-	let mut in_jobs = false;
-	let mut current: Option<String> = None;
-
-	for line in workflow.lines() {
-		let trimmed = line.trim_start();
-		if trimmed.is_empty() || trimmed.starts_with('#') {
-			continue;
-		}
-		let indent = line.len() - trimmed.len();
-
-		if indent == 0 {
-			in_jobs = trimmed == "jobs:";
-			current = None;
-			continue;
-		}
-		if !in_jobs {
-			continue;
-		}
-		if indent == 2 {
-			if let Some(id) = trimmed.strip_suffix(':') {
-				if !id.is_empty() && !id.contains(' ') {
-					jobs.insert(
-						id.to_string(),
-						Job {
-							name: None,
-							uses: None,
-						},
-					);
-					current = Some(id.to_string());
-					continue;
-				}
-			}
-			current = None;
-			continue;
-		}
-		if indent != 4 {
-			continue;
-		}
-		let Some(id) = current.as_deref() else {
-			continue;
+	let Some(map) = spec.get("jobs").and_then(serde_yaml::Value::as_mapping) else {
+		return jobs;
+	};
+	for (id, job) in map {
+		let id = id.as_str().expect("a job id is a string").to_string();
+		let field = |key: &str| {
+			job.get(key)
+				.and_then(serde_yaml::Value::as_str)
+				.map(str::to_string)
 		};
-		let value = |rest: &str| rest.trim().trim_matches('"').trim_matches('\'').to_string();
-		if let Some(rest) = trimmed.strip_prefix("name:") {
-			if let Some(job) = jobs.get_mut(id) {
-				job.name = Some(value(rest));
-			}
-		} else if let Some(rest) = trimmed.strip_prefix("uses:") {
-			if let Some(job) = jobs.get_mut(id) {
-				job.uses = Some(value(rest));
-			}
-		}
+		// A name may end in an expression that says which kind of run produced
+		// it; the name a ruleset requires is what comes before.
+		let name = field("name").map(|n| match n.find("${{") {
+			Some(at) => n[..at].trim_end().to_string(),
+			None => n,
+		});
+		jobs.insert(
+			id,
+			Job {
+				name,
+				uses: field("uses"),
+			},
+		);
 	}
 	jobs
 }
@@ -182,12 +188,14 @@ pub fn unresolved(
 	required: &[&str],
 ) -> Vec<String> {
 	let mut out = Vec::new();
-	for check in required {
+	for named in required {
+		// A promotion name is the job's name plus the suffix its expression adds.
+		let check: &str = named.strip_suffix(" (promotion)").unwrap_or(named);
 		let (job_id, job_name) = match check.split_once(" / ") {
 			Some((id, name)) => (Some(id), name),
 			// No slash: a job defined in the workflow itself, whose check name
 			// is its `name:` alone. `Supported Podman majors` is this shape.
-			None => (None, *check),
+			None => (None, check),
 		};
 		let mut found = false;
 		for (file, jobs) in tree {
@@ -233,9 +241,9 @@ pub fn unresolved(
 		if !found {
 			out.push(match job_id {
 				Some(id) => format!(
-					"{check}: no workflow pairs job id '{id}' with a job named '{job_name}'"
+					"{named}: no workflow pairs job id '{id}' with a job named '{job_name}'"
 				),
-				None => format!("{check}: no workflow has a job named '{job_name}'"),
+				None => format!("{named}: no workflow has a job named '{job_name}'"),
 			});
 		}
 	}

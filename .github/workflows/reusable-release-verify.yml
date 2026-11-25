@@ -1,0 +1,235 @@
+name: Release verification (reusable)
+
+# What the release checks before it builds anything, and the one place the commit, the version and the tag
+# are named: the tag has to be an annotated tag object at the commit this checks out, on `main`, equal to
+# the version of Cargo.toml, debian/changelog and Cargo.lock, and not already published (a rehearsal may name a published tag).
+# Nothing here runs a tool of other people's: the commit is read before the audit installs one, and the audit
+# is a job of its own with no outputs. The jobs of release.yml take `commit`, `version` and `tag` from here
+# and resolve the tag no more.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: The tag the release is cut from, v<major>.<minor>.<patch>
+        required: true
+        type: string
+      dry_run:
+        description: A rehearsal. A tag that is already published is accepted, and an advisory in the audit is reported and does not stop it
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      commit:
+        description: The full commit the tag was verified to point at
+        value: ${{ jobs.verify.outputs.commit }}
+      version:
+        description: The version the tag, Cargo.toml, debian/changelog and Cargo.lock agree on
+        value: ${{ jobs.verify.outputs.version }}
+      tag:
+        description: The tag
+        value: ${{ jobs.verify.outputs.tag }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify tag matches crate version
+    runs-on: ubuntu-latest
+    # Bound: worst of the last three successful runs on 2026-09-02 was 189s. Ten times that, rounded up, never under ten
+    # minutes; the six-hour default is what a hang would otherwise cost.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    # What every later job builds from: the commit this job checked the tag against, and the
+    # version the tag, Cargo.toml, debian/changelog and Cargo.lock agree on. No other job
+    # resolves the tag again, so the tag cannot move between the checks and the build.
+    outputs:
+      commit: ${{ steps.pin.outputs.commit }}
+      version: ${{ steps.pin.outputs.version }}
+      tag: ${{ steps.pin.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        # No credential is left in the checkout, and the fetches this job makes
+        # (the tag, `main`) are of a public repository and need none. It installs
+        # nothing of other people's: the audit is a job of its own.
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: Take the release scripts from the commit that started the rehearsal
+        if: ${{ inputs.dry_run }}
+        run: |
+          set -o pipefail
+          # A rehearsal may name a tag older than the scripts of the release and of the packages, so
+          # those come from the commit that launched the run, the one this workflow file is from. Only
+          # those two folders: the rest of the tag, its own tests included, stays as the tag has it.
+          # Nothing signed in a rehearsal is published, and the scripts stay out of what the later
+          # steps read as changed or new.
+          git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
+          git ls-files -z .github/scripts/release .github/scripts/packaging | xargs -0 -r git update-index --skip-worktree
+          rm -rf .github/scripts/release .github/scripts/packaging && git archive FETCH_HEAD .github/scripts/release .github/scripts/packaging | tar -x
+          printf '%s\n' /.github/scripts/release/ /.github/scripts/packaging/ >> .git/info/exclude
+
+      - name: Validate tag format
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if ! echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Tag '${TAG}' does not match required format v<major>.<minor>.<patch>."
+            exit 1
+          fi
+
+      - name: Tag must be an existing tag object at the checked-out commit
+        # Before anything is built: the ref has to be a tag (not a branch of
+        # the same name), an annotated one like every release tag so far, and it
+        # has to point at the commit this run has checked out.
+        env:
+          TAG: ${{ inputs.tag }}
+        run: bash .github/scripts/release/check-tag.sh "$TAG"
+
+      - name: The key slots are the same in the gate and in every consumer
+        run: python3 -I .github/scripts/release/check-key-slots.py
+
+      - name: Refuse an already published release
+        # Publication follows asset verification. A real release refuses a second publication
+        # here, before anything is built: `gh release create` at the end would refuse it too, but
+        # only after every build. A rehearsal publishes nothing, so a tag that is already
+        # published is the safest one to rehearse on and is accepted.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+          MODE: ${{ inputs.dry_run && 'rehearsal' || 'release' }}
+        run: bash .github/scripts/release/check-unpublished.sh "$TAG" "$MODE"
+
+      - name: Tag must equal Cargo.toml version
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          CRATE_VERSION="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          if [ "$VERSION" != "$CRATE_VERSION" ]; then
+            echo "::error::Tag ${TAG} does not match Cargo.toml version ${CRATE_VERSION}."
+            exit 1
+          fi
+          echo "Releasing version ${VERSION}."
+
+      - name: Debian package version must equal Cargo.toml version
+        # dpkg-buildpackage takes the .deb version from debian/changelog, which
+        # is a separate hand-maintained file. 1.9.0 shipped with the bump applied
+        # to Cargo.toml but not here, so the release carried podup_1.8.0_*.deb:
+        # apt saw the version it already had, reported no upgrade, and Debian
+        # users were stranded, with no self-update either, since podup redirects
+        # a dpkg-owned binary to `apt upgrade`. The tag check above cannot catch
+        # this; only comparing the two versions can.
+        run: |
+          # Read the version off the first line rather than with
+          # dpkg-parsechangelog: that tool lives in dpkg-dev, which this job
+          # never installs, and a gate that only runs at tag time must not
+          # depend on what happens to be on the runner image. The first-line
+          # format is fixed by Debian policy.
+          DEB_VERSION="$(sed -n '1s/^[^(]*(\([^)]*\)).*/\1/p' debian/changelog)"
+          CRATE_VERSION="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          if [ "$DEB_VERSION" != "$CRATE_VERSION" ]; then
+            echo "::error::debian/changelog is at ${DEB_VERSION} but Cargo.toml is at ${CRATE_VERSION}; add a changelog entry so the .deb carries the released version."
+            exit 1
+          fi
+          echo "Debian package version ${DEB_VERSION} matches."
+
+      - name: Cargo.lock must record the released version
+        # Cargo.lock carries podup's own version too, and `cargo build --locked`
+        # in the build jobs would catch a stale one, but only after the matrix
+        # has started, mid-release. Gate it here in verify, before anything is
+        # built, so all three version files (Cargo.toml, debian/changelog,
+        # Cargo.lock) are proven to agree at the same fail-fast point. Match the
+        # version on the line right after the podup package's name entry, not any
+        # dependency that happens to share the number.
+        run: |
+          CRATE_VERSION="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          LOCK_VERSION="$(awk -F'"' '/^name = "podup"$/{getline; if ($0 ~ /^version = /) {print $2; exit}}' Cargo.lock)"
+          if [ "$LOCK_VERSION" != "$CRATE_VERSION" ]; then
+            echo "::error::Cargo.lock records podup ${LOCK_VERSION:-<none>} but Cargo.toml is at ${CRATE_VERSION}; run cargo update -p podup so the lockfile matches."
+            exit 1
+          fi
+          echo "Cargo.lock version ${LOCK_VERSION} matches."
+
+      - name: Tag must be on main
+        # Releases are cut only from `main` (develop → main merge, then tag).
+        # Refuse a tag pushed to any other branch so an unreviewed commit can
+        # never be published.
+        run: |
+          git fetch --unshallow --no-tags origin main 2>/dev/null \
+            || git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::Tagged commit is not reachable from origin/main; releases must be cut from main."
+            exit 1
+          fi
+
+      # Before anything is installed: `cargo install` below runs build scripts of other people's
+      # crates in this workspace, and the commit has to be read before they can touch it.
+      - name: Name the commit and the version every other job builds
+        id: pin
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse HEAD)"
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::HEAD is not a full commit"; exit 1; }
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag '$TAG' is not v<major>.<minor>.<patch>"; exit 1; }
+          {
+            echo "commit=$commit"
+            echo "tag=$TAG"
+            echo "version=${TAG#v}"
+          } >>"$GITHUB_OUTPUT"
+
+  # The audit installs and runs a tool built from other people's crates, so it is a job of its own, with no
+  # outputs: `verify`, which names the commit, the version and the tag everything else builds from, runs
+  # nothing of theirs. What follows waits for this job, so an advisory stops the release before anything is built.
+  audit:
+    name: Audit dependencies
+    needs: verify
+    runs-on: ubuntu-latest
+    # Bound: `cargo install` of one tool and one audit.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: The checkout is the commit that was verified
+        env:
+          COMMIT: ${{ needs.verify.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$COMMIT"
+
+      - name: Audit dependencies for known advisories
+        id: audit
+        # A rehearsal may name a tag that was clean when it was released and has an advisory today:
+        # it reports it below and goes on, so the rest of the chain can still be rehearsed. A real
+        # release stops here.
+        continue-on-error: ${{ inputs.dry_run }}
+        # Gate the release on `cargo audit`: a RUSTSEC advisory in a pinned
+        # dependency must block publishing, not wait for the weekly cron scan.
+        #
+        # `--deny warnings`, matching reusable-rust-audit.yml. Without it this
+        # step was the WEAKER of the two gates: the weekly cron failed on a
+        # warning-level advisory and the release did not, so the check standing
+        # in front of the immutable artifact was the more permissive one. An
+        # unmaintained or yanked crate is a warning, and a release is the one
+        # place a warning cannot be looked at again later.
+        #
+        # The third-party-timing rule that keeps this off ordinary pull requests
+        # does not apply here and the asymmetry is deliberate: a blocked release
+        # is fixed by releasing again, and a published one cannot be fixed at
+        # all.
+        run: |
+          cargo install cargo-audit --version "=0.23.0" --locked
+          cargo audit --deny warnings
+
+      - name: Report an advisory the rehearsal went past
+        if: ${{ inputs.dry_run && steps.audit.outcome == 'failure' }}
+        run: echo "::warning::the audit of this tag reports an advisory; a real release would have stopped here"

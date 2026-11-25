@@ -78,15 +78,19 @@ pub(crate) fn parse_progress(value: &str) -> Result<String, String> {
 	}
 }
 
-/// Parse a `-t/--timeout` shutdown-grace value, rejecting negatives with a clear
-/// range error rather than forwarding `-5` to Podman or letting clap report a
-/// confusing "unexpected argument" for the space form.
+/// Parse a `-t/--timeout` shutdown-grace value. `-1` is the one negative value
+/// Podman and docker give a meaning, waiting for the container without a limit,
+/// and the engine sends it as the largest value libpod takes. Anything below it
+/// gets a clear range error rather than being forwarded to Podman or letting
+/// clap report a confusing "unexpected argument" for the space form.
 pub(crate) fn parse_timeout(value: &str) -> Result<i32, String> {
 	let secs: i32 = value
 		.parse()
 		.map_err(|_| format!("timeout `{value}` must be an integer number of seconds"))?;
-	if secs < 0 {
-		return Err(format!("timeout `{value}` must be zero or greater"));
+	if secs < -1 {
+		return Err(format!(
+			"timeout `{value}` must be -1 (wait without limit) or zero or greater"
+		));
 	}
 	Ok(secs)
 }

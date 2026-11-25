@@ -66,6 +66,12 @@ pub(super) struct Session {
 /// A no-op when progress output is off, so an embedding crate never gets a
 /// board it did not ask for.
 pub fn begin(resources: impl IntoIterator<Item = (Kind, String)>) {
+	// An image reference can carry credentials, and a row is where its name is
+	// written; every entry point cleans the name the same way, so the rows still
+	// find each other by it.
+	let resources = resources
+		.into_iter()
+		.map(|(kind, name)| (kind, crate::errors::redact::redact_label(&name)));
 	// Recorded before the gate, so a test can read which rows a command asked
 	// for without switching the process-wide progress flag on for every other
 	// test in the suite. Compiled out of a release build entirely.
@@ -130,6 +136,9 @@ pub fn start_anchored(
 	anchor_kind: Option<&str>,
 	anchor_name: Option<&str>,
 ) {
+	let name = &crate::errors::redact::redact_label(name);
+	let anchor_name = anchor_name.map(crate::errors::redact::redact_label);
+	let anchor_name = anchor_name.as_deref();
 	let Some(kind) = Kind::from_noun(kind) else {
 		return;
 	};
@@ -185,6 +194,7 @@ pub fn start_anchored(
 /// logic used to live partly here and partly in `ui::progress_line`, and a
 /// `Sink::None` finish call dropped the buffer entry on the floor).
 pub(in crate::ui) fn finish(kind: &str, name: &str, verb: &str) -> bool {
+	let name = &crate::errors::redact::redact_label(name);
 	let Some(kind) = Kind::from_noun(kind) else {
 		return false;
 	};

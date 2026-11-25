@@ -1,40 +1,5 @@
 use crate::compose::types::{ComposeFile, Service};
 
-/// Resolve a service's `links` to concrete container references.
-///
-/// A compose `links:` entry names a sibling service; it is rewritten to that
-/// service's container name with the service name kept as the network alias
-/// (`{container}:{alias}`), so the linked container is reachable by the compose
-/// service name. `external_links` reference containers outside the project and
-/// are passed through verbatim.
-pub(in crate::backends::engine::workload::container) fn resolve_links(
-	service: &Service,
-	file: &ComposeFile,
-	project: &str,
-) -> Vec<String> {
-	let mut links: Vec<String> = service
-		.links
-		.iter()
-		.map(|link| {
-			let (target, alias) = link.split_once(':').unwrap_or((link, link));
-			let container = file
-				.services
-				.get(target)
-				.map(|svc| {
-					svc.container_name
-						.clone()
-						// Auto-generated container names are always index-suffixed;
-						// a link/volumes_from references the first replica.
-						.unwrap_or_else(|| format!("{project}-{target}-1"))
-				})
-				.unwrap_or_else(|| target.to_string());
-			format!("{container}:{alias}")
-		})
-		.collect();
-	links.extend(service.external_links.iter().cloned());
-	links
-}
-
 /// Resolve a service's `volumes_from` entries to concrete container references.
 ///
 /// libpod's `SpecGenerator.volumes_from` expects container names, but compose

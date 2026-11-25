@@ -25,31 +25,50 @@
 #   2. Read repos/${REPO}/actions/workflows/${WORKFLOW}/runs
 #      ?branch=${BRANCH}&event=push&per_page=30 (the API does not
 #      always put the newest run at the head of a filtered page, so the
-#      page is a buffer to sort).
-#   3. Pick the newest run whose head_sha matches AND whose event is
-#      `push`. Sort by created_at then id, so two runs sharing a second
-#      still order by id.
-#   4. If the run is not yet completed, wait 15 seconds and try again,
-#      up to 32 attempts (eight minutes, inside the job's ten-minute
-#      bound). The worst case is the suite's own runtime.
-#   5. Decide on the conclusion. `success` exits 0. `failure` looks at
+#      page is a buffer to sort). On `develop` the runs of the merge
+#      queue for that branch are read too, since the queue ran the
+#      suite on the very commit that landed and a push would repeat it.
+#   3. Pick the run to judge, once, without waiting:
+#        - the newest finished run whose head_sha is the head: that is the
+#          verdict for the head;
+#        - when the head has a run that is still queued or running, the
+#          newest FINISHED run before it that concluded in a pass or a
+#          failure of any kind (`success`, `failure`, `timed_out`,
+#          `startup_failure`), as long as it is no older than
+#          FALLBACK_HOURS (48) and its commit is an ANCESTOR of the head
+#          (the compare API says `ahead` or `identical`): a run for a
+#          commit that is not in the history of the head says nothing about
+#          it. A compare call that FAILS is unknown, and unknown is not
+#          green: the script stops there and exits 1, and does not try an
+#          older run in its place. A run of the head that has been pending for more than
+#          PENDING_HOURS (24) is a suite that is stuck, and that is red;
+#        - when the head has NO run at all, the commit is given GRACE_HOURS
+#          (3) for its suite to be created, counted from when the SERVER
+#          recorded that the head arrived (the activity of the branch), not
+#          from the dates of the commit, which its author writes: younger
+#          than that the answer is a warning and a pass, older is red
+#          ("head without CI"). A time that is missing, unreadable, or in
+#          the future is red too. Without this a bad commit that never ran
+#          anything would inherit the success of the one before it.
+#        - a cancelled or skipped run of another commit says nothing about
+#          the branch and is passed over; one of the head's own is red.
+#      With runners saturated a suite takes longer than any wait this job
+#      could afford, so the job does not wait: it judges what has finished.
+#   4. Decide on the conclusion. `success` exits 0. `failure` looks at
 #      the run's own jobs and exits 0 when every failed job is a
 #      branch-health one; otherwise it exits 1 and names the failing
-#      jobs. `cancelled`, `skipped`, and anything else exit 1 with a
-#      message that names the run.
+#      jobs. `timed_out`, `startup_failure`, `cancelled`, `skipped` and
+#      anything else exit 1 with a message that names the run. Red means
+#      a finished run failed, or a head has no CI at all; never that a
+#      suite is merely still running.
+#
+# Time is read from NOW_EPOCH when set (a test plants it), else from `date`.
 
 set -euo pipefail
 
 workflow=${WORKFLOW:?WORKFLOW env var is required}
 branch=${BRANCH:?BRANCH env var is required}
 repo=${REPO:?REPO env var is required}
-
-# 32 attempts of 15 seconds is eight minutes; the job's ten-minute
-# timeout covers the worst case with two minutes of headroom. Both
-# bounds are tunable through the environment so a test can shrink
-# them, but the production shape is fixed by the channels' check.
-max_attempts=${MAX_ATTEMPTS:-32}
-sleep_seconds=${SLEEP_SECONDS:-15}
 
 # 1. Resolve the head SHA. On push the reusable passes GITHUB_SHA so
 #    this call is skipped; on schedule and pull_request HEAD_SHA is
@@ -68,73 +87,146 @@ fi
 
 short="${head_sha:0:7}"
 
-# 2-3. Pick the newest push run whose head_sha matches the branch
-# head. The URL's `event=push` keeps the page from filling with runs
-# the filter would discard (a `pull_request` run on a PR whose source
-# branch is the watched branch carries the same `head_sha` as the push
-# run on that head); the jq select repeats the filter against the
-# response bytes as defense in depth, so a stubbed API that ignores the
-# query is still asked the same question. The filter sorts by
-# (created_at, id) and takes the first entry, so an older green push
-# run for a different commit is NOT the verdict. A match that is not
-# yet completed returns `null` from jq's @tsv and `run` is empty, which
-# is the signal the loop waits on.
+# 2-3. Read the runs and pick the one to judge. The URL's `event=push` keeps the
+# page from filling with runs the filter would discard (a `pull_request` run on a
+# PR whose source branch is the watched branch carries the same `head_sha` as the
+# push run on that head); the jq select repeats the filter against the response
+# bytes as defense in depth, so a stubbed API that ignores the query is still
+# asked the same question. Sorting by (created_at, id) puts the newest first, so
+# an older green run for a different commit is NOT the verdict for a head that
+# has a finished run of its own.
 url="repos/${repo}/actions/workflows/${workflow}/runs?branch=${branch}&event=push&per_page=30"
-filter='[.workflow_runs[]? | select(.head_sha=="'"$head_sha"'" and .event=="push")]
-	| sort_by(.created_at, .id) | reverse | .[0]
-	| [(.id | tostring), (.status // ""), (.conclusion // ""),
-	   (.run_number | tostring), (.head_sha // ""), (.created_at // ""),
-	   (.html_url // "")]
-	| @tsv'
+runs_filter='[.workflow_runs[]? | select(.event=="push")]'
+queue_url="repos/${repo}/actions/workflows/${workflow}/runs?event=merge_group&per_page=30"
+queue_filter='[.workflow_runs[]? | select(.event=="merge_group" and ((.head_branch // "") | startswith("gh-readonly-queue/'"${branch}"'/")))]'
 
-run=""
-for attempt in $(seq 1 "$max_attempts"); do
-	# A failed `gh api` is treated as "no answer this attempt" and the
-	# loop keeps polling. A rate limit, a 5xx, or any transient API
-	# failure must not abort the script mid-poll: a retry loop that
-	# cannot survive a transient error is a retry loop that runs
-	# exactly once. The `if` consumes the non-zero exit under
-	# `set -euo pipefail`, so the loop's own `set -e` does not abort
-	# here, and the warning makes the failure visible in the job log
-	# so an operator reading the abort (if the polling bound is later
-	# exhausted) can tell why.
-	if run="$(gh api "$url" --jq "$filter")"; then
-		:
+# A failed `gh api` is "no answer": it must not abort the script, and it must not
+# turn into red either, because nothing was learnt about the branch. The warning
+# names it so an operator reading the log can tell why a verdict is missing.
+read_runs() { # <variable> <url> <filter>
+	local out
+	if out="$(gh api "$2" --jq "$3")" && [ -n "$out" ]; then
+		printf -v "$1" '%s' "$out"
 	else
-		gh_rc=$?
-		echo "::warning::gh api call failed on attempt ${attempt} (exit ${gh_rc}); treating as no answer this attempt and polling on."
-		run=""
+		echo "::warning::gh api call failed or answered nothing (${2}); treating it as no runs."
+		printf -v "$1" '[]'
 	fi
-	if [ -n "$run" ]; then
-		IFS=$'\t' read -r id status _ <<<"$run"
-		if [ "$status" = "completed" ]; then
-			break
-		fi
-		run=""
-	fi
-	if [ "$attempt" -lt "$max_attempts" ]; then
-		sleep "$sleep_seconds"
-	fi
-done
-
-# 4. No run for the head finished in time. The polling bounds are
-# tuned to absorb the suite's own runtime on a push, so seeing this
-# means the suite never reached a verdict for the head (still running,
-# was cancelled by hand, or never started). One line, naming the
-# commit so the right run is found rather than the newest of any
-# status.
-if [ -z "$run" ]; then
-	echo "::error::no ${workflow} run for commit ${short} on ${branch} finished within ${max_attempts} attempts (each ${sleep_seconds}s)"
-	echo "  This job polled the API from the instant the suite for ${head_sha}" >&2
-	echo "  could have started and saw no completed verdict for that commit in" >&2
-	echo "  time, so the state of ${branch} for that commit is unknown rather" >&2
-	echo "  than green. Open the workflow run list on ${branch} to see whether" >&2
-	echo "  a run for ${short} is still in flight or never started." >&2
-	exit 1
+}
+pushed='[]'
+queued='[]'
+read_runs pushed "$url" "$runs_filter"
+# `develop` takes no push run of this workflow: the merge queue ran it on the
+# very commit that landed, and a push would repeat that. The runs of the queue
+# for that branch are its history.
+if [ "$branch" = develop ]; then
+	read_runs queued "$queue_url" "$queue_filter"
 fi
 
-IFS=$'\t' read -r id status conclusion number rsha created rurl <<<"$run"
+now="${NOW_EPOCH:-$(date +%s)}"
+grace_hours="${GRACE_HOURS:-3}"
+pending_hours="${PENDING_HOURS:-24}"
+fallback_hours="${FALLBACK_HOURS:-48}"
+all="$(printf '%s\n%s\n' "$pushed" "$queued" | jq -cs 'add | sort_by(.created_at, .id) | reverse' 2>/dev/null)" || all="[]"
+[ -n "$all" ] || all="[]"
+
+# A run as one line: id, status, conclusion, number, head_sha, created_at, url. A tab is white space
+# to `read`, so an empty field would be swallowed and shift the rest: none is empty.
+# shellcheck disable=SC2016 # a jq program, not shell
+fields='[(.id | tostring), (.status // "-"), (.conclusion // "-"), (.run_number | tostring), (.head_sha // "-"), (.created_at // "-"), (.html_url // "-")] | @tsv'
+# shellcheck disable=SC2016 # a jq program, not shell
+mine_done="$(jq -r --arg head "$head_sha" "[.[] | select(.head_sha == \$head and .status == \"completed\")][0] // empty | $fields" <<<"$all")"
+# shellcheck disable=SC2016 # a jq program, not shell
+mine_pending="$(jq -r --arg head "$head_sha" "[.[] | select(.head_sha == \$head and .status != \"completed\")][0] // empty | $fields" <<<"$all")"
+
+epoch_of() { date -d "$1" +%s 2>/dev/null || echo 0; }
+run=""
+origin=""
+if [ -n "$mine_done" ]; then
+	run="$mine_done"
+	origin="head"
+elif [ -n "$mine_pending" ]; then
+	# The head's suite is queued or running: judge the last run that finished before it, but
+	# never let a suite that is stuck go unseen.
+	IFS=$'\t' read -r _ _ _ pnumber _ pcreated purl <<<"$mine_pending"
+	age=$((now - $(epoch_of "$pcreated")))
+	if [ "$age" -gt $((pending_hours * 3600)) ]; then
+		echo "::error::${workflow} on ${branch} for commit ${short}: run #${pnumber} has been queued or running for more than ${pending_hours} hours (started ${pcreated})."
+		echo "  ${purl}" >&2
+		echo "  A suite that long is stuck, and nothing finished can answer for this commit." >&2
+		exit 1
+	fi
+	cutoff=$((now - fallback_hours * 3600))
+	# shellcheck disable=SC2016 # a jq program, not shell
+	candidates="$(jq -r --arg head "$head_sha" --argjson cutoff "$cutoff" "[.[] | select(.head_sha != \$head and .status == \"completed\"
+		and (.conclusion == \"success\" or .conclusion == \"failure\" or .conclusion == \"timed_out\" or .conclusion == \"startup_failure\")
+		and ((.created_at | fromdateiso8601) >= \$cutoff))][:10][] | $fields" <<<"$all")"
+	while IFS= read -r line; do
+		[ -n "$line" ] || continue
+		IFS=$'\t' read -r _ _ _ _ csha _ _ <<<"$line"
+		# A run of a commit that is not in the history of the head says nothing about it.
+		# A call that FAILS is not "not an ancestor": the newest candidate is unknown, and moving on to an
+		# older one could answer green for a commit whose newer run was red. Unknown is not green.
+		if ! rel="$(gh api "repos/${repo}/compare/${csha}...${head_sha}" --jq '.status' 2>/dev/null)" || [ -z "$rel" ]; then
+			echo "::warning::gh api call failed or answered nothing (repos/${repo}/compare/${csha}...${head_sha}); an older run is not tried in its place."
+			echo "::error::${workflow} on ${branch} for commit ${short}: the head's run has not finished, and it could not be told whether the newest finished run (${csha:0:7}) is an ancestor of it, so there is no verdict."
+			echo "  Unknown is not green: the next tick asks again." >&2
+			exit 1
+		fi
+		case "$rel" in
+			ahead | identical)
+				run="$line"
+				origin=earlier
+				break
+				;;
+		esac
+	done <<<"$candidates"
+	if [ -z "$run" ]; then
+		echo "::warning::the ${workflow} run for ${short} on ${branch} has not finished, and no run of an ancestor of it finished in the last ${fallback_hours} hours, so there is no verdict yet"
+		exit 0
+	fi
+else
+	# The head has no run at all. A commit that has just arrived has not had time to start one; one
+	# that arrived more than the grace ago never ran anything, and the success of the commit before
+	# it is not its own. When it arrived is read from what the SERVER recorded (the push, or the
+	# merge that landed it, in the activity of the branch), never from the commit: its dates are
+	# written by whoever made it, and a date in the future or an empty one would stretch the grace
+	# for ever. A time that cannot be read, or that cannot be trusted, is red.
+	no_time() {
+		echo "::error::${workflow} on ${branch} for commit ${short}: it has no run, and when it arrived could not be established ($1)."
+		echo "  Unknown is not green: without a time the grace cannot be counted, and the commit before it does not answer for it." >&2
+		exit 1
+	}
+	if ! activity="$(gh api "repos/${repo}/activity?ref=refs%2Fheads%2F${branch}&per_page=30" 2>/dev/null)" || [ -z "$activity" ]; then
+		echo "::warning::gh api call failed or answered nothing (repos/${repo}/activity?ref=refs/heads/${branch})."
+		no_time "the activity of the branch could not be read"
+	fi
+	arrived="$(jq -r --arg head "$head_sha" '[.[]? | select(.after == $head)][0].timestamp // ""' <<<"$activity" 2>/dev/null)" || arrived=""
+	[ -n "$arrived" ] || no_time "the activity of the branch has no entry for the head, or it has no time"
+	arrived_s="$(date -d "$arrived" +%s 2>/dev/null)" || no_time "the time '${arrived}' is not a date"
+	age=$((now - arrived_s))
+	# The server's clock and this runner's differ by seconds; a head that arrived minutes AHEAD of now
+	# is not a head that has not arrived yet, it is a time that cannot be believed.
+	if [ "$age" -lt -300 ]; then
+		no_time "the time ${arrived} is in the future"
+	fi
+	if [ "$age" -gt $((grace_hours * 3600)) ]; then
+		echo "::error::head without CI: ${workflow} has no run for commit ${short} on ${branch}, and it arrived more than ${grace_hours} hours ago (${arrived})."
+		echo "  Nothing tested this commit, so the runs of the commits before it do not answer for it." >&2
+		echo "  Open the workflow run list on ${branch}: the suite never started, or its run was deleted." >&2
+		exit 1
+	fi
+	echo "::warning::${workflow} has no run for commit ${short} on ${branch} yet (it arrived ${arrived}, inside the ${grace_hours}-hour grace); there is no verdict"
+	exit 0
+fi
+run="${run}"$'\t'"${origin}"
+
+IFS=$'\t' read -r id _ conclusion number rsha created rurl origin <<<"$run"
 rshort="${rsha:0:7}"
+if [ "$origin" = earlier ]; then
+	# The head has no finished run: say what is judged instead, so the log of a
+	# green job does not read as if the head itself had passed.
+	echo "::notice::the ${workflow} run for ${short} on ${branch} has not finished; judging the last one that did: run #${number} for commit ${rshort}."
+fi
 
 # 5. Verdict. The shape of the message matches the case the rest of
 # this organisation already prints: workflow, branch, commit, run
@@ -202,6 +294,14 @@ case "$conclusion" in
 		echo "::error::${workflow} on ${branch} for commit ${rshort}: run #${number} concluded ${conclusion} (started ${created})."
 		echo "  ${rurl}" >&2
 		echo "  Failed jobs: ${failed}" >&2
+		exit 1
+		;;
+	timed_out | startup_failure)
+		# A suite that timed out or never started did not pass. These are failures of the run
+		# as a whole, with no failed job to rule the latch out, so there is nothing to excuse.
+		echo "::error::${workflow} on ${branch} for commit ${rshort}: run #${number} concluded ${conclusion} (started ${created})."
+		echo "  ${rurl}" >&2
+		echo "  A run that ${conclusion//_/ } is a failure: the suite did not reach a pass." >&2
 		exit 1
 		;;
 	cancelled)

@@ -25,12 +25,12 @@ on:
       coverage-threshold:
         description: Minimum line coverage percentage (0 disables the gate)
         type: number
-        # Pinned: a caller that passes 0 drops the coverage gate while
-        # the ruleset still requires `rust / Coverage`. The reusable
-        # carries the configured threshold here so callers can use it
-        # by omission; a PR that wants to lower it must move this
-        # default on the reusable's own diff, where the ruleset's
-        # check name stays stable by definition.
+        # Pinned: a caller that passes 0 drops the coverage gate, and
+        # `rust / Gate` would then certify the suite as switched off. The
+        # reusable carries the configured threshold here so callers can
+        # use it by omission; a PR that wants to lower it must move this
+        # default on the reusable's own diff, where the required check
+        # name stays stable by definition.
         default: 76
       coverage-ignore-regex:
         description: Regex of file paths to exclude from coverage (e.g. code covered only by a separate DB integration job)
@@ -39,14 +39,15 @@ on:
       llvm-cov-version:
         description: Exact version of the tool; bumped by editing this file
         type: string
-        default: "0.9.1"
+        default: "0.9.2"
       extra-test-os:
         description: JSON array of extra runner images to also run tests on (e.g. '["macos-latest"]')
         type: string
-        # Pinned: an empty default disables the Extra platforms gate
-        # while the ruleset still requires it. The configured array
-        # lives here so callers omit `with:`; a PR that wants to
-        # drop platforms moves this default on the reusable's diff.
+        # Pinned: an empty default disables the Extra platforms suite,
+        # which `rust / Gate` would then certify as switched off. The
+        # configured array lives here so callers omit `with:`; a PR that
+        # wants to drop platforms moves this default on the reusable's
+        # diff.
         default: "[\"macos-latest\", \"windows-latest\"]"
       podman:
         description: Start rootless Podman socket before running the coverage job (ubuntu-latest only)
@@ -55,12 +56,12 @@ on:
       msrv:
         description: Minimum supported Rust version to verify a --locked build against (empty disables the check)
         type: string
-        # Pinned: an empty default disables the MSRV job while the
-        # ruleset still requires `rust / MSRV` and the gated name
-        # `rust / MSRV (<version>)`. The configured value lives here
-        # so callers omit `with:`; a PR that wants a different MSRV
-        # moves this default on the reusable's diff, where the gate
-        # name stays stable by definition.
+        # Pinned: an empty default disables the MSRV job, which
+        # `rust / Gate` would then certify as switched off. The
+        # configured value lives here so callers omit `with:`; a PR that
+        # wants a different MSRV moves this default on the reusable's
+        # diff, where the required check name `rust / Gate` stays stable
+        # by definition.
         default: "1.88"
       package-check:
         description: Run cargo publish --dry-run on PRs to catch packaging breakage before tagging
@@ -78,9 +79,9 @@ on:
         description: Build the docs with -D warnings so broken doc links fail the build
         type: boolean
         # Pinned: a caller that passes `false` disables the Doc
-        # warnings gate while the ruleset still requires
-        # `rust / Doc warnings`. The configured value lives here so
-        # callers omit `with:`.
+        # warnings suite, which `rust / Gate` would then certify as
+        # switched off. The configured value lives here so callers
+        # omit `with:`.
         default: true
       # The Debian package is built from a DIFFERENT crate than the one
       # `--all-features` compiles: debian/rules pins
@@ -113,6 +114,7 @@ concurrency:
 # these, so the range is named once instead of in each job.
 env:
   EVENT: ${{ github.event_name }}
+  BASE_REF: ${{ github.event.pull_request.base.ref }}
   BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
   HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
   # Build settings for every job that compiles. Each run starts from a cold or
@@ -139,10 +141,9 @@ jobs:
   # themselves, and `test` reads it to run the focused lane instead of the
   # whole suite.
   #
-  # Skipping a job is only safe where the required name survives it. A job
-  # skipped by its own `if:` reports `skipped`, which a required check accepts,
-  # and the matrix jobs are never required themselves: `Extra platforms` is an
-  # aggregate that always runs and reads the matrix result. `lint` stays whole
+  # A job skipped by its own `if:` reports `skipped`, which a required check
+  # accepts, so none of these is required by name: `rust / Gate` is, and it
+  # reads each result and certifies each skip. `lint` stays whole
   # because it also runs the checks that must see documentation-only changes.
   classify:
     name: Classify the range
@@ -151,6 +152,8 @@ jobs:
     outputs:
       run: ${{ steps.decide.outputs.run }}
       docs_only: ${{ steps.decide.outputs.docs_only }}
+      ci_only: ${{ steps.decide.outputs.ci_only }}
+      build: ${{ steps.build.outputs.build }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -166,10 +169,44 @@ jobs:
       # answer is "run".
       - name: Decide whether the Rust lanes must run
         id: decide
-        run: git show "$BASE_SHA:.github/scripts/checks/rust-ci-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
+        run: |
+          # The plan is trusted for a pull request only when its base is exactly
+          # develop. Into main, which promotes what develop holds, or into anything
+          # else, every lane runs whatever the range says.
+          if [ "$EVENT" = pull_request ] && [ "$BASE_REF" != develop ]; then
+            printf 'run=true\ndocs_only=false\nci_only=false\n' >>"$GITHUB_OUTPUT"
+          else
+            git show "$BASE_SHA:.github/scripts/checks/rust-ci-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
+          fi
+
+      # The second answer, the one `msrv` and `doc` used to work out each for
+      # itself: whether the range reaches anything `cargo build` and
+      # `cargo doc` read. It is asked here, once, so that the gate below can
+      # tell a build skipped because this said `false` from one skipped
+      # because something broke. The judge is read from the reviewed base, and
+      # a missing history, a missing judge or a failing diff all leave `true`.
+      - name: Decide whether the root build inputs changed
+        id: build
+        run: |
+          set -euo pipefail
+          build=true
+          if { [ "$EVENT" != pull_request ] || [ "$BASE_REF" = develop ]; } && [[ "$EVENT" = pull_request || "$EVENT" = push || "$EVENT" = merge_group ]] &&
+             changed=$(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA") &&
+             judge=$(git show "$BASE_SHA:.github/scripts/checks/rust-build-inputs.sh") &&
+             bash -c "$judge" -- "$changed"; then
+            build=false
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          [ "$build" = true ] || echo "Only paths the root build never reads changed; the build is skipped."
 
   lint:
     name: Format & lint
+    # The plan is read, not asked again: `classify` is the only job that judges
+    # the range, and the gate below certifies what it said. `!cancelled()`
+    # starts this job even when the plan failed, because an answer that never
+    # arrived has to run the heavy steps, never skip them.
+    needs: classify
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 49s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
@@ -181,18 +218,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # The classifier reads the judge from the reviewed base commit and
-          # diffs the whole range, so the history has to be here.
-          fetch-depth: 0
-
-      # The judge is read from the base, never from this checkout: a pull
-      # request that edited the classifier must not be judged by its own
-      # edit. A base without the judge leaves the output empty, and an empty
-      # output runs the lanes, because the only safe reading of a missing
-      # answer is "run".
-      - name: Decide whether the Rust lanes must run
-        id: decide
-        run: git show "$BASE_SHA:.github/scripts/checks/rust-ci-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
 
       # The heavy steps of this job are behind two conditions, and both fail
       # open. `run` is false when the range reaches nothing the Rust lanes
@@ -201,7 +226,7 @@ jobs:
       # cannot fail either. The checks below are not behind either condition,
       # because a document is exactly what they read.
       - name: Install toolchain
-        if: steps.decide.outputs.run != 'false' && !(steps.decide.outputs.run == 'true' && steps.decide.outputs.docs_only == 'true')
+        if: needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true'))
         env:
           TOOLCHAIN: ${{ inputs.toolchain }}
         run: |
@@ -209,7 +234,7 @@ jobs:
           rustup default "$TOOLCHAIN"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: steps.decide.outputs.run != 'false' && !(steps.decide.outputs.run == 'true' && steps.decide.outputs.docs_only == 'true')
+        if: needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true'))
         with:
           path: |
             ~/.cargo/registry/index
@@ -220,11 +245,11 @@ jobs:
           restore-keys: rust-lint-${{ runner.os }}-
 
       - name: rustfmt
-        if: steps.decide.outputs.run != 'false' && !(steps.decide.outputs.run == 'true' && steps.decide.outputs.docs_only == 'true')
+        if: needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true'))
         run: cargo fmt --all --check
 
       - name: clippy
-        if: steps.decide.outputs.run != 'false' && !(steps.decide.outputs.run == 'true' && steps.decide.outputs.docs_only == 'true')
+        if: needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true'))
         env:
           EXTRA_CLIPPY_ARGS: ${{ inputs.extra-clippy-args }}
         run: |
@@ -294,8 +319,8 @@ jobs:
     # this job: a job whose `needs` failed is skipped by default, a skipped job
     # reports a pass to a required check, and that would turn a broken checkout
     # into a green suite. A classifier that did not answer runs the job.
-    needs: classify
-    if: ${{ !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}
+    needs: [classify, lint]
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 106s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
@@ -347,18 +372,19 @@ jobs:
 
   test-extra:
     name: Test (${{ matrix.os }})
-    needs: classify
+    needs: [classify, lint, test]
     # The macOS and Windows legs are the expensive ones and they are about the
     # crate: a document cannot fail a test that only runs on Windows. A
-    # documentation-only range skips the matrix, and the aggregate gate below
-    # still reports `rust / Extra platforms`.
-    if: ${{ inputs.extra-test-os != '[]' && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}
+    # documentation-only range skips the matrix, and the gate certifies that.
+    if: ${{ inputs.extra-test-os != '[]' && !cancelled() && (github.event_name != 'pull_request' || (needs.lint.result != 'failure' && needs.test.result != 'failure')) && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}
     runs-on: ${{ matrix.os }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 205s; the slowest leg is windows-latest. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
     timeout-minutes: 35
     strategy:
-      fail-fast: false
+      # One leg red is a red pull request, and the other leg's minutes answer
+      # nothing more. The gate still sees the matrix as failed.
+      fail-fast: true
       matrix:
         os: ${{ fromJSON(inputs.extra-test-os) }}
     defaults:
@@ -395,47 +421,14 @@ jobs:
       - name: Tests
         run: cargo test --locked --all-features --workspace
 
-  extra-platforms-gate:
-    name: Extra platforms
-    # A required status check is matched by name, so a name carrying a value makes
-    # the pull request that changes the value block itself: the job emits a new
-    # name, the ruleset still requires the old one, and nothing emits it. This job
-    # carries a name that cannot move, so a ruleset gates on "the extra-platform
-    # tests passed" without naming which platforms those are. Glyndor/podup#1552.
-    needs: test-extra
-    # A matrix skipped whole by the classifier arrives here as `skipped`, which is
-    # a pass below; this job is the only one of the pair a ruleset names, so it
-    # must keep running whatever the matrix did.
-    # `needs` on its own SKIPS this job when the dependency fails, and a skipped
-    # required check does not block a merge - which is the exact failure this job
-    # exists to prevent. `if: always()` plus an explicit result check is what makes
-    # it a gate rather than a decoration.
-    if: always()
-    runs-on: ubuntu-latest
-    # Bound: worst of the last three successful runs on 2026-09-02 was 4s. Ten times that, rounded up, never under ten
-    # minutes; the six-hour default is what a hang would otherwise cost.
-    timeout-minutes: 10
-    steps:
-      - name: Reflect the extra-platform test result
-        env:
-          RESULT: ${{ needs.test-extra.result }}
-        run: |
-          set -euo pipefail
-          # `skipped` is a pass: test-extra is gated on `extra-test-os != '[]'`, so a
-          # caller that asks for no extra platforms has nothing to fail.
-          case "$RESULT" in
-            success | skipped) echo "extra-platform tests: $RESULT" ;;
-            *) echo "::error::extra-platform tests did not pass (result: $RESULT)"; exit 1 ;;
-          esac
-
   coverage:
     name: Coverage
-    needs: classify
+    needs: [classify, lint, test]
     # The coverage gate measures the crate, and a documentation-only range
     # changes no line of it: the gate would read the same number it read
     # yesterday. The job is skipped, and a job skipped by its own `if:`
-    # reports `skipped`, which the required check `rust / Coverage` accepts.
-    if: ${{ inputs.coverage-threshold > 0 && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}
+    # reports `skipped`, which `rust / Gate` certifies when the plan says so.
+    if: ${{ inputs.coverage-threshold > 0 && !cancelled() && (github.event_name != 'pull_request' || (needs.lint.result != 'failure' && needs.test.result != 'failure')) && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 166s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
@@ -500,7 +493,11 @@ jobs:
 
   msrv:
     name: MSRV (${{ inputs.msrv }})
-    if: inputs.msrv != ''
+    # Skipped whole when the plan says the range reaches nothing `cargo build`
+    # reads. Only an explicit `false` skips it: a plan that failed or answered
+    # nothing builds, and the gate below fails any other skip.
+    needs: [classify, lint]
+    if: ${{ !cancelled() && inputs.msrv != '' && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.build != 'false') }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 62s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
@@ -512,28 +509,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
-
-      - name: Decide whether the root build inputs changed
-        id: inputs
-        run: |
-          set -euo pipefail
-          build=true
-          # The judge is read from the reviewed base, never from the PR's tree,
-          # and a missing history or a missing judge builds. A merge group is
-          # judged on the whole range the queue built, base to head, which holds
-          # every pull request ahead of this one, so it can only build more.
-          if [[ "$EVENT" = pull_request || "$EVENT" = push || "$EVENT" = merge_group ]] &&
-             changed=$(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA") &&
-             judge=$(git show "$BASE_SHA:.github/scripts/checks/rust-build-inputs.sh") &&
-             bash -c "$judge" -- "$changed"; then
-            build=false
-          fi
-          echo "build=$build" >> "$GITHUB_OUTPUT"
-          [ "$build" = true ] || echo "Only paths the root build never reads changed; the build is skipped."
 
       - name: Install MSRV toolchain
-        if: steps.inputs.outputs.build == 'true'
         env:
           MSRV: ${{ inputs.msrv }}
         run: |
@@ -541,7 +518,6 @@ jobs:
           rustup default "$MSRV"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: steps.inputs.outputs.build == 'true'
         with:
           path: |
             ~/.cargo/registry/index
@@ -552,32 +528,7 @@ jobs:
           restore-keys: rust-msrv-${{ inputs.msrv }}-
 
       - name: Build on the declared MSRV
-        if: steps.inputs.outputs.build == 'true'
         run: cargo build --locked --all-features
-
-  msrv-gate:
-    name: MSRV
-    # Same reason as extra-platforms-gate: `MSRV (1.88)` moves the day the MSRV
-    # moves, and takes the gate with it. MSRV is the worse of the two because it is
-    # not a matrix - a single job interpolating an input into its own name. The
-    # number stays visible in the job log and in the `MSRV (x.y)` job itself.
-    needs: msrv
-    if: always()
-    runs-on: ubuntu-latest
-    # Bound: worst of the last three successful runs on 2026-09-02 was 4s. Ten times that, rounded up, never under ten
-    # minutes; the six-hour default is what a hang would otherwise cost.
-    timeout-minutes: 10
-    steps:
-      - name: Reflect the MSRV result
-        env:
-          RESULT: ${{ needs.msrv.result }}
-        run: |
-          set -euo pipefail
-          # `skipped` is a pass: msrv is gated on `inputs.msrv != ''`.
-          case "$RESULT" in
-            success | skipped) echo "MSRV: $RESULT" ;;
-            *) echo "::error::MSRV job did not pass (result: $RESULT)"; exit 1 ;;
-          esac
 
   package:
     name: Package check
@@ -636,7 +587,10 @@ jobs:
 
   doc:
     name: Doc warnings
-    if: inputs.doc-warnings
+    # Same plan and the same rule as `msrv`: skipped whole on an explicit
+    # `false` and run on anything else.
+    needs: [classify, lint]
+    if: ${{ !cancelled() && inputs.doc-warnings && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.build != 'false') }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 56s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
@@ -648,28 +602,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
-
-      - name: Decide whether the root build inputs changed
-        id: inputs
-        run: |
-          set -euo pipefail
-          build=true
-          # The judge is read from the reviewed base, never from the PR's tree,
-          # and a missing history or a missing judge builds. A merge group is
-          # judged on the whole range the queue built, base to head, which holds
-          # every pull request ahead of this one, so it can only build more.
-          if [[ "$EVENT" = pull_request || "$EVENT" = push || "$EVENT" = merge_group ]] &&
-             changed=$(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA") &&
-             judge=$(git show "$BASE_SHA:.github/scripts/checks/rust-build-inputs.sh") &&
-             bash -c "$judge" -- "$changed"; then
-            build=false
-          fi
-          echo "build=$build" >> "$GITHUB_OUTPUT"
-          [ "$build" = true ] || echo "Only paths the root build never reads changed; the build is skipped."
 
       - name: Install toolchain
-        if: steps.inputs.outputs.build == 'true'
         env:
           TOOLCHAIN: ${{ inputs.toolchain }}
         run: |
@@ -677,7 +611,6 @@ jobs:
           rustup default "$TOOLCHAIN"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: steps.inputs.outputs.build == 'true'
         with:
           path: |
             ~/.cargo/registry/index
@@ -688,7 +621,94 @@ jobs:
           restore-keys: rust-doc-${{ runner.os }}-${{ inputs.toolchain }}-
 
       - name: Build docs with warnings denied
-        if: steps.inputs.outputs.build == 'true'
         env:
           RUSTDOCFLAGS: "-D warnings"
         run: cargo doc --no-deps --all-features
+
+  # The only job that certifies the pipeline. GitHub counts a skipped required
+  # check as passed, so a suite skipped by a plan that failed, or skipped
+  # because something before it broke, would otherwise leave the pull request
+  # green with nothing run. This job runs on every outcome (`always()`), and it
+  # fails unless the plan succeeded and each suite either succeeded or was
+  # skipped for a reason the plan gave out loud (an explicit `false`) or the
+  # caller's own inputs gave (a suite the caller switched off). A `needs` that
+  # was cancelled, failed or skipped for any other reason is red.
+  #
+  # The plan is checked on its own line and does not sit in a
+  # `contains(needs.*.result, 'failure')` that orders the layers: a failed plan
+  # must turn this job red, not leave it skipped.
+  #
+  # The ruleset requires this job and the checks that are never skipped. The
+  # name does not carry a value, so no change of toolchain, MSRV or platforms
+  # can move it.
+  gate:
+    # The name says which kind of run produced it: nothing for a pull request into
+    # `develop` and for the merge queue, `(promotion)` for a pull request into `main`,
+    # and the event in brackets for everything else (a push, a schedule, a pull request
+    # on any other base). `==` in an expression ignores case, so the trigger limits the
+    # bases with `branches`, which does not, and the gate checks the base in shell. A required
+    # check is matched by name on a commit, so the push that lands on `develop` and
+    # the pull request that promotes the same commit into `main` must not be able to
+    # answer for each other: they get different names and the ruleset of each branch
+    # requires its own.
+    name: Gate${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}
+    needs: [classify, lint, test, test-extra, coverage, msrv, doc, package, semver]
+    if: always()
+    runs-on: ubuntu-latest
+    # Bound: the sibling gates measured 4s on 2026-09-02. Ten times that, rounded up, never under ten
+    # minutes; the six-hour default is what a hang would otherwise cost.
+    timeout-minutes: 10
+    steps:
+      - name: Certify the plan and every skip
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          BASE: ${{ github.event_name == 'pull_request' && github.base_ref || 'none' }}
+          EXTRA_ON: ${{ inputs.extra-test-os != '[]' }}
+          COVERAGE_ON: ${{ inputs.coverage-threshold > 0 }}
+          MSRV_ON: ${{ inputs.msrv != '' }}
+          DOC_ON: ${{ inputs.doc-warnings }}
+          PACKAGE_ON: ${{ inputs.package-check }}
+          SEMVER_ON: ${{ inputs.semver-check }}
+        run: |
+          set -uo pipefail
+          bad=0 table=""
+          fail() { echo "::error::$1"; bad=1; }
+          res() { jq -r --arg j "$1" '.[$j].result // "missing"' <<<"$NEEDS"; }
+          out() { jq -r --arg j "$1" --arg k "$2" '.[$j].outputs[$k] // ""' <<<"$NEEDS"; }
+          PLAN=$(res classify) RUN=$(out classify run) DOCS=$(out classify docs_only)
+          CI_ONLY=$(out classify ci_only) BUILD=$(out classify build)
+          # An explicit "no" from a plan that succeeded is the only reason to skip;
+          # a plan that did not succeed, or an output that is empty, never is.
+          plan_says() { [ "$PLAN" = success ] && [ "$1" = false ]; }
+          narrowed() { [ "$PLAN" = success ] && [ "$RUN" = true ] && { [ "$DOCS" = true ] || [ "$CI_ONLY" = true ]; }; }
+          # judge <job> <switched-on> <skip-is-certified>: the result is read from the job itself.
+          judge() {
+            local r v
+            r=$(res "$1")
+            case "$r" in
+              success) v=ran ;;
+              skipped)
+                if [ "$2" = false ]; then v="skipped, switched off"
+                elif [ "$3" = yes ]; then v="skipped, the plan said so"
+                else v="SKIPPED WITHOUT A REASON"; fail "$1 was skipped and nothing certifies the skip"; fi ;;
+              *) v="RED"; fail "$1: $r" ;;
+            esac
+            table+=$(printf '%-12s %-10s %s' "$1" "$r" "$v")$'\n'
+          }
+          # `==` in the name expression ignores case; the base is checked here, exactly.
+          case "$BASE" in develop | main | none) ;; *) fail "the base '$BASE' is not develop or main" ;; esac
+          [ "$PLAN" = success ] || fail "the plan did not succeed ($PLAN)"
+          table+="plan: $PLAN, run='$RUN', docs_only='$DOCS', ci_only='$CI_ONLY', build='$BUILD'"$'\n'
+          judge lint true no
+          cert=no; plan_says "$RUN" && cert=yes
+          judge test true "$cert"
+          cert=no; { plan_says "$RUN" || narrowed; } && cert=yes
+          judge coverage "$COVERAGE_ON" "$cert"
+          judge test-extra "$EXTRA_ON" "$cert"
+          cert=no; plan_says "$BUILD" && cert=yes
+          judge msrv "$MSRV_ON" "$cert"
+          judge doc "$DOC_ON" "$cert"
+          judge package "$PACKAGE_ON" no
+          judge semver "$SEMVER_ON" no
+          printf '%s' "$table" | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          exit "$bad"

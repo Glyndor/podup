@@ -3,6 +3,14 @@
 /// Percent-encode a string for use as a single URL path/query segment, encoding
 /// everything outside the RFC 3986 unreserved set so container names, project
 /// names, and tags can contain arbitrary bytes without breaking the request.
+/// [`urlencoded`] for the name of an image. The credentials it may hold are
+/// remembered first, so that no message about the engine refusing it can repeat
+/// them, whatever the log level. Only the places an image enters call this.
+pub(crate) fn image_urlencoded(reference: &str) -> String {
+	crate::errors::redact::remember_reference(reference);
+	urlencoded(reference)
+}
+
 pub(crate) fn urlencoded(s: &str) -> String {
 	let mut out = String::with_capacity(s.len());
 	for b in s.bytes() {

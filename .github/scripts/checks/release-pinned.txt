@@ -2,8 +2,13 @@
 # (job + workflow env/defaults/permissions). Regenerate in the same pull request
 # as any change to them: python3 .github/scripts/checks/signing-key-isolation.py --print-hashes
 # sign: signs each binary with the key, one job per asset
-sign 9d282a1f6ba19a5a6d0fded38406d4d2886f2e8c1b88693bd24497d6a193437c
+sign ca72de5042d7d706da91cb5d303e20daba88f3d7bf4170a7021c3139d9d491fb
+# sign-packages: signs each package (.deb, .rpm, pacman) with the key, one job per package
+sign-packages c5a1328263652dfceb8de1c6f311ac1477007abf93be1f6eda6616d7c4d3b901
+# seal: gathers the whole set, checks it against the exact list of names, makes the checksums and
+# signs the checksums, the SBOMs, the notices and the installers; holds the key, writes no release
+seal ca0bd0a41a1b070d9b6760e23ff838d9cec91b88cffe78d51de35b8d25f24e3a
 # attest: the only job that mints a token; attests build provenance
-attest 93aa322a2c7094341babd1bcc040d9fb7e064859a0476f154badb7a159981768
-# release: signs the checksums with the key and publishes
-release b12b4567e11edb5c3888cc3064bd1794b1d7e1f30f71538d0126828e55c89a19
+attest a670e2422daee06962f7b27525d996172acc7b6887c55fb1f9dc16cf19ded777
+# release: publishes the sealed set after checking it again; has the right to write a release and no key
+release aa95c9c9f83c7e063d75c678b104041fc34c524df68146a162d39f1a113a79d7

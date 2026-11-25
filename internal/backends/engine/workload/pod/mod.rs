@@ -7,6 +7,7 @@
 
 mod ensure;
 mod hash;
+mod network_options;
 mod validate;
 
 #[cfg(test)]
@@ -23,6 +24,7 @@ mod engine_more_tests;
 mod engine_tests;
 
 pub(crate) use hash::pod_config_hash;
+pub(crate) use network_options::{pod_network_options, PodNetworkOptions};
 pub(crate) use validate::validate_pod_or_refuse;
 
 // `Engine::ensure_pod` lives on the impl in `ensure.rs`; the free
@@ -165,6 +167,24 @@ pub(crate) fn pod_network_mode(file: &crate::compose::types::ComposeFile) -> Opt
 	(agreed && no_networks && crate::quadlet::is_rootless_user_mode(mode)).then_some(mode)
 }
 
+/// What the services ask of the pod's networks, by the names the pod attaches
+/// them under.
+pub(crate) fn pod_network_options_of(
+	file: &crate::compose::types::ComposeFile,
+	project: &str,
+) -> PodNetworkOptions {
+	pod_network_options(file, &|key| {
+		let config = file.networks.get(key).and_then(|c| c.as_ref());
+		if config.and_then(|c| c.external).unwrap_or(false) {
+			config
+				.and_then(|c| c.name.clone())
+				.unwrap_or_else(|| key.to_string())
+		} else {
+			crate::engine::network::resolve_network_name(key, file, project)
+		}
+	})
+}
+
 pub(in crate::backends::engine) fn pod_networks(
 	file: &crate::compose::types::ComposeFile,
 	project: &str,
@@ -205,7 +225,9 @@ pub(in crate::backends::engine) fn build_pod_spec_with_hash(
 	let networks = if pod_network_mode(file).is_some() {
 		std::collections::HashMap::new()
 	} else {
-		pod_networks(file, project)
+		let mut networks = pod_networks(file, project);
+		network_options::apply(&mut networks, &pod_network_options_of(file, project));
+		networks
 	};
 	// When every service agreed on a pasta/slirp4netns mode, the pod
 	// runs on that mode and its members join. The bare mode and the

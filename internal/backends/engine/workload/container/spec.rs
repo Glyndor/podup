@@ -75,8 +75,6 @@ pub(crate) struct SpecInputs {
 	/// Environment as a `HashMap<key, value>` (already filtered for bare
 	/// `KEY` passthrough semantics).
 	pub env: HashMap<String, String>,
-	/// Service-level links resolved to `container:alias` strings.
-	pub links: Vec<String>,
 	/// Image OS / arch hint, derived from the service's `platform:`.
 	pub image_platform: (Option<String>, Option<String>),
 	/// Storage driver options (`storage_opt:`).
@@ -144,7 +142,6 @@ pub(crate) fn build_spec_generator(
 		command,
 		entrypoint,
 		env,
-		links,
 		image_platform: (image_os, image_arch),
 		storage_opts,
 	} = inputs;
@@ -176,6 +173,7 @@ pub(crate) fn build_spec_generator(
 		},
 		command,
 		entrypoint,
+		unsetenv: super::resolve::unresolved_env_keys(service, &env),
 		env,
 		terminal: service.tty,
 		stdin: service.stdin_open,
@@ -188,7 +186,6 @@ pub(crate) fn build_spec_generator(
 		stop_signal,
 		stop_timeout,
 		hostname: service.hostname.clone(),
-		domainname: service.domainname.clone(),
 		labels,
 		annotations,
 		cap_add: service.cap_add.clone(),
@@ -204,6 +201,7 @@ pub(crate) fn build_spec_generator(
 		sysctl,
 		expose,
 		portmappings,
+		network_order: crate::engine::network::network_order(&networks),
 		networks,
 		netns,
 		// The in-pod path carries no netns of its own, so no mode options either.
@@ -244,9 +242,15 @@ pub(crate) fn build_spec_generator(
 		groups: service.group_add.clone(),
 		oom_score_adj: service.oom_score_adj,
 		runtime: service.runtime.clone(),
-		links,
 		image_os,
 		image_arch,
+		// The variant (`v7` of `linux/arm/v7`) is read from the service's own
+		// `platform:` rather than carried in `image_platform`: it is the third
+		// part of the string whose first two are above.
+		image_variant: service
+			.platform
+			.as_deref()
+			.and_then(|p| crate::backends::engine::images::platform::Platform::parse(p).variant),
 		storage_opts,
 		..Default::default()
 	})

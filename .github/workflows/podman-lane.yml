@@ -1,15 +1,12 @@
 name: podman-lane
-# Running `actionlint` on this file without arguments does not return: it hands
-# the ~250-line cloud-init `user-data` heredoc below to shellcheck, which does
-# not finish. Use `actionlint -shellcheck= -pyflakes= .github/workflows/podman-lane.yml`
-# when checking this workflow by hand. Measured 2026-08-24; the repository's own
-# workflow-lint job is unaffected because it runs actionlint with its own flags.
 # Live-Podman integration for podup.
 # Support policy: podup requires Podman 6.2.0 or newer and sets no upper bound, so
-# the lane runs the newest Podman there is. Every engine PR runs the integration
-# suite on it, inside a Fedora qemu VM booted in the runner (nested-virt: the
-# ubuntu-24.04 runner exposes /dev/kvm) with full systemd, as a rootless user.
-# Podman 6 = Fedora rawhide.
+# the lane runs the Podman users install and the newest one there is. A pull
+# request and the merge queue run the engine suite on the runner, against the
+# Podman 6.2.0 of apt.glyndor.net (`podman-native`). The schedule and a dispatch
+# run it inside a Fedora qemu VM booted in the runner (nested-virt: the
+# ubuntu-24.04 runner exposes /dev/kvm) with full systemd, as a rootless user,
+# which carries the newest Podman there is (Podman 6 = Fedora rawhide).
 
 # Three triggers, three questions:
 # workflow_dispatch: starts the lane on demand.
@@ -28,6 +25,8 @@ on:
   # gates the merge. The internal suite distinguishes nested-virt flakes from real
   # failures and retries a transient once.
   pull_request:
+    types: [opened, synchronize]
+    branches: [main, develop]
   # Required check on develop (ruleset 17287557): `Supported Podman majors`
   # is matched by name, and the queue fires `merge_group` on a temporary
   # branch. The job must run there too or the queue never merges. `paths:`
@@ -99,6 +98,7 @@ jobs:
           # GitHub built for this group (the range that will land on
           # develop). Other events (schedule, workflow_dispatch) leave both
           # empty, which the engine=true short-circuit below handles.
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
@@ -111,6 +111,12 @@ jobs:
               exit 0
               ;;
           esac
+          # The plan is trusted for a pull request only when its base is exactly develop.
+          if [ "$EVENT" = pull_request ] && [ "$BASE_REF" != develop ]; then
+            echo "engine=true" >> "$GITHUB_OUTPUT"
+            echo "a pull request that is not into develop: the VM always boots"
+            exit 0
+          fi
           # Fail closed: a diff that cannot be read boots the VM.
           if ! changed="$(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA")"; then
             echo "engine=true" >> "$GITHUB_OUTPUT"
@@ -149,21 +155,30 @@ jobs:
             echo "nothing in this range can reach the VM; the legs below run and boot nothing"
           fi
 
+  # The VM, on the schedule and on a dispatch only: it is the lane that follows the
+  # newest Podman there is (Fedora rawhide) with full systemd and SELinux, which a
+  # pull request does not need to repeat on every push.
   podman-vm:
+    # `podman-vm (6)` for the gating suite and `podman-vm (6, coverage)` for the measurement.
+    name: podman-vm (${{ matrix.podman }}${{ matrix.mode == 'coverage' && ', coverage' || '' }})
     needs: decide
+    # Starts even when `decide` failed. Its steps run on anything but an explicit
+    # `false`, so a plan that never answered boots the VM instead of leaving
+    # this job skipped, which is the one skip `Supported Podman majors` would
+    # have to tell from a decision.
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
     runs-on: ubuntu-24.04
-    # Raised for the one-thread experiment: serialising the suite costs wall
-    # clock, and a run that dies on the timeout answers nothing (#1039).
-    #
-    # Raised again for the coverage path. Capping the coverage run to the same
-    # thread count as the gating run (#1338) means the Podman 6 leg now runs two
-    # serialised suites, and it came in at 66m27s of the 75 on run 30879785232,
-    # 89% of the budget. That is not a failure yet, which is the only useful
-    # moment to change it: a slower runner or a heavier rawhide image tips it
-    # over, and the run that dies tells you nothing about the coverage it was
-    # measuring. Costs nothing on the pull-request path, where coverage is off
-    # and the leg finishes in about half this.
-    timeout-minutes: 95
+    # Two machines, two budgets. The gating suite (the leak scan and the Quadlet generator
+    # tests with it) and the instrumented run that measures the coverage used to share one boot
+    # and one budget of 70 minutes. The suite alone takes 41 minutes on this runner (15
+    # scheduled runs, 2405 to 2484 s), and the coverage pass that followed it needs as much
+    # again, so it never finished, and nothing noticed until the floor of the coverage began to
+    # apply (v6.0.0) and the nightly went red for a figure that cannot be had in that time.
+    # Each leg now has the budget its measurement gives it, with a margin, in
+    # .github/podman_lane/budget, and a test holds this matrix to that file. A VM cut at its
+    # budget says so (SLOW RUNNER) and names the phase it had reached. The two legs run side by
+    # side, so the nightly takes as long as the longer of them and not the sum.
+    timeout-minutes: ${{ matrix.job_minutes }}
     strategy:
       fail-fast: false
       matrix:
@@ -172,15 +187,23 @@ jobs:
         # old one, so the PR carrying the edit would block itself. The stable
         # gate a ruleset should require is `Supported Podman majors`. See #1552.
         podman: ["6"]
+        mode: [suite, coverage]
+        include:
+          - mode: suite
+            vm_seconds: 4500
+            job_minutes: 100
+          - mode: coverage
+            vm_seconds: 6240
+            job_minutes: 129
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Nothing to boot
-        if: needs.decide.outputs.engine != 'true'
+        if: needs.decide.outputs.engine == 'false'
         run: echo "this pull request changes nothing the VM can observe (see the decide job); reporting success without booting"
       - name: Install qemu + cloud tools
-        if: needs.decide.outputs.engine == 'true'
+        if: needs.decide.outputs.engine != 'false'
         timeout-minutes: 18
         run: |
           # apt has hung for the whole 95 min job budget on a saturated runner, and the
@@ -221,7 +244,7 @@ jobs:
           done
           exit 1
       - name: Fetch Fedora cloud image (Podman 6 = rawhide)
-        if: needs.decide.outputs.engine == 'true'
+        if: needs.decide.outputs.engine != 'false'
         run: |
           # The script lives in .github/scripts/fedora_image/ so it ships with the repo;
           # its logic lives in the script (#1978, after dl.fedoraproject.org
@@ -245,470 +268,245 @@ jobs:
           # one they got (#1222).
           echo "VM_IMAGE=$img" >> "$GITHUB_ENV"
           qemu-img resize "$RUNNER_TEMP/vm.qcow2" 40G
-      - name: Build cloud-init seed (script-file for clean RC)
-        if: needs.decide.outputs.engine == 'true'
+      - name: Build cloud-init seed
+        if: needs.decide.outputs.engine != 'false'
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/podman_lane/build-seed.sh" "${{ matrix.mode }}" "$RUNNER_TEMP/seed"
+      - name: Copy the judge out of the workspace
+        if: needs.decide.outputs.engine != 'false'
         run: |
-          cat > "$RUNNER_TEMP/user-data" <<'EOF'
-          #cloud-config
-          growpart: {mode: auto, devices: ['/']}
-          resize_rootfs: true
-          users:
-            - name: tester
-              sudo: 'ALL=(ALL) NOPASSWD:ALL'
-              shell: /bin/bash
-          write_files:
-            # Podman's default log driver on Fedora is journald, and in this image
-            # every logs request comes back `500 ... unable to open a handle to the
-            # library`, because its go-systemd binding cannot open the journal. Installing
-            # systemd-devel does not help (measured: the package installs and the
-            # error persists), so rather than keep guessing at the dlopen, use the
-            # file-based driver, which has no library to open.
-            #
-            # This is not cosmetic. With logs unavailable the suite's five logs
-            # tests passed without fetching a byte: `logs` swallowed the 500 and
-            # returned success, so their `unwrap()` succeeded on nothing.
-            #
-            # The events backend reads the same journal through the same binding,
-            # and was left on journald: `niche::engine_events_stream_connects`
-            # failed with `Api { status: 500, message: "unable to open a handle
-            # to the library" }`, the logs error word for word. `events_logger =
-            # "file"` takes the journal out of that path too. Not measured again
-            # on 6.2: the lane cannot show it
-            # without a run that drops the line.
-            - path: /etc/containers/containers.conf
-              content: |
-                [containers]
-                log_driver = "k8s-file"
-                [engine]
-                events_logger = "file"
-            - path: /usr/local/bin/run-suite.sh
-              permissions: '0755'
-              content: |
-                #!/bin/bash
-                export XDG_RUNTIME_DIR=/run/user/$(id -u)
-                systemctl --user start podman.socket
-                export PODMAN_SOCKET=$XDG_RUNTIME_DIR/podman/podman.sock
-                # In here Podman is guaranteed, so a test that cannot reach it
-                # must fail rather than skip: a skipped test reports `ok`, and a
-                # VM whose socket never came up would otherwise look like a
-                # flawless 155-pass run and clear the floor comfortably.
-                export PODUP_REQUIRE_PODMAN=1
-                # Same for the Quadlet generator that ships with this Podman: the
-                # tests that run it skip on a runner whose Podman is older than the
-                # floor (the ubuntu-latest 4.9 does not read the keys the exporter
-                # writes), and here a skip would report `ok` for a round-trip that
-                # never ran. With this set, a missing or older generator fails them.
-                export PODUP_REQUIRE_QUADLET_GENERATOR=1
-                cd "$HOME/podup" || exit 90
-                # Coverage runs on the scheduled and manual paths only, never on a
-                # pull request. The number is worth having where the integration
-                # tests can actually run (#1326: the CI coverage job sees 79% because
-                # every integration test skips itself without Podman, while the full
-                # suite covers 91.5%), but instrumenting doubles nothing here for
-                # free: it is a second full build inside the VM. Gating on it is
-                # deliberately NOT done yet: a threshold set from a number never
-                # observed in this environment is how a phantom check gets born.
-                COVERAGE=__COVERAGE__
-                # Capture the FULL output: the per-failure detail (where the flake
-                # marker lives) precedes the summary, so a `tail` on the console
-                # would truncate it and hide why a test failed.
-                # Retry once on a nested-virt transient (a dropped connection). A real
-                # failure reproduces on the second run, so this stabilises the lane for
-                # required-check gating without masking genuine bugs.
-                #
-                # WHAT COUNTS AS A DROP, defined once, used by both the retry above and
-                # the FLAKY counter below, because the two drifting apart is how this
-                # went wrong (#1104). The list used to hold only the head-level shapes,
-                # and a dropped BODY is none of them: measured against a socket that
-                # severs a chunked body on purpose, hyper reports a Body error wrapping
-                # io UnexpectedEof, worded "unexpected EOF during chunk size line" when
-                # the cut lands between chunks and IncompleteBody when it lands
-                # mid-payload, with the Display form "error reading a body from
-                # connection". None matched, so a drop mid-body was neither retried nor
-                # counted; it just reddened the leg, which is exactly what happened to
-                # fifteen streaming tests when a mid-stream error was made fatal.
-                #
-                # EXPERIMENT (#1039): the suite and the coverage run both use one
-                # test thread.
-                #
-                # Every hypothesis for Podman 6's failing tail has been falsified in
-                # turn: journald, SELinux, and a boot race on systemd-resolved, the
-                # last one killed by its own instrumentation. What survives is the
-                # shape of the error: the path that is missing is the mount
-                # DESTINATION inside Podman's rootless-netns tree, not a host file,
-                # which reads as the shared netns being torn down under a concurrent
-                # container creation. One thread is the cheapest way to test that: if
-                # the signature disappears, concurrency is the lever; if it survives,
-                # this hypothesis dies too and the search moves elsewhere.
-                #
-                # `--test-threads` caps how many streaming tests hit the libpod
-                # socket at once.
-                #
-                # This used to say the drops were specific to the nested-virt
-                # (VM-in-runner) transport, and that a single-level VM "never
-                # drops a byte". **That is measured false** (2026-08-03, #1322):
-                # on a plain KVM guest the same suite fails 17 of 27 at eight
-                # test threads and 3 at one, a clean dose-response curve in
-                # thread count, reproducible across repetitions. Nesting makes
-                # it worse; it does not cause it. (Measured on Podman 6.0.2;
-                # not measured again on 6.2.)
-                #
-                # What holds is the lever: fewer concurrent streams means less
-                # peak pressure,
-                # which is the lever to shrink Podman 6's variable flaky tail toward
-                # a small, stable set that an identity list can gate (#1039). Kept at
-                # 2 rather than 1 so the suite still fits the VM's time budget.
-                DROPPED='IncompleteMessage|connection closed before message completed|channel closed|Connection reset|error reading a body from connection|unexpected EOF during chunk size line|IncompleteBody|body-unexpected-eof'
-                for attempt in 1 2; do
-                  RUST_LOG=podup=warn cargo test --features test-helpers --test engine_integration -- --test-threads=1 > /tmp/cargo.log 2>&1
-                  RC=$?
-                  [ "$RC" -eq 0 ] && break
-                  grep -qE "$DROPPED" /tmp/cargo.log || break
-                  echo "=== nested-virt transient on attempt $attempt; retrying suite ==="
-                done
-                # Leak scan, run in a separate cargo process after engine_integration
-                # has exited. A second `cargo test --test` invocation cannot overlap
-                # the first, so the scanner genuinely runs after the suite. A red
-                # suite still scans: chaining with && would skip the scan exactly
-                # when we most want to see what was left on the host.
-                #
-                # The PID comes from target/podup-leak-scan-pid, which
-                # engine_integration writes on the first call to proj(). When
-                # the suite retries, the file holds the last attempt's PID, so
-                # only the last attempt is scanned.
-                #
-                # A missing file is reported as `rc=nopid`, not scanned as
-                # nothing: the scan test exits 0 when it is given no PID, and a
-                # suite that died before writing the file would otherwise pass
-                # this gate having scanned nothing at all.
-                #
-                # Same `--features` as the suite above, so cargo reuses the
-                # build instead of recompiling the crate inside the VM.
-                if [ -s target/podup-leak-scan-pid ]; then
-                  PODUP_LEAK_SCAN_PID="$(cat target/podup-leak-scan-pid)" RUST_LOG=podup=warn \
-                    cargo test --features test-helpers --test integration_leak_scan > /tmp/leak-scan.log 2>&1
-                  SCAN_RC=$?
-                  if [ "$SCAN_RC" -ne 0 ]; then
-                    echo "=== leak scan failures ==="
-                    tail -60 /tmp/leak-scan.log
-                    sed -n '/^failures:$/,/^test result:/p' /tmp/leak-scan.log | head -120
-                  fi
-                else
-                  SCAN_RC=nopid
-                fi
-                echo "PODUP_LEAK_SCAN_BEGIN rc=$SCAN_RC PODUP_LEAK_SCAN_END"
-                # The tests that run the real Quadlet generator, which no other leg
-                # can run: the library's `quadlet::` tests and the hostile binary that
-                # round-trips bind, command and env_file values. Both build with the
-                # same `--features` as above so cargo reuses the dependencies. Their
-                # result is its own marker: the summary above counts the engine suite.
-                GEN_RC=0
-                cargo test --features test-helpers --lib quadlet:: > /tmp/quadlet-generator.log 2>&1 || GEN_RC=$?
-                cargo test --features test-helpers --test hostile_quadlet_units >> /tmp/quadlet-generator.log 2>&1 || GEN_RC=$?
-                if [ "$GEN_RC" -ne 0 ]; then
-                  echo "=== quadlet generator test failures ==="
-                  tail -60 /tmp/quadlet-generator.log
-                fi
-                echo "PODUP_QUADLET_GENERATOR_BEGIN rc=$GEN_RC PODUP_QUADLET_GENERATOR_END"
-                tail -60 /tmp/cargo.log
-                echo "=== failures section (full) ==="
-                sed -n '/^failures:$/,/^test result:/p' /tmp/cargo.log | head -120
-                # Machine-readable summary computed from the FULL log, using the same
-                # drop signatures as the retry above; everything else counts as a real
-                # failure.
-                PASS=$(grep -oE 'test result: .* [0-9]+ passed' /tmp/cargo.log | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' | tail -1)
-                FAIL=$(grep -oE '[0-9]+ failed' /tmp/cargo.log | grep -oE '[0-9]+' | tail -1)
-                FLAKY=$(grep -cE "$DROPPED" /tmp/cargo.log)
-                echo "PODUP_TESTS_RC_BEGIN rc=$RC PODUP_TESTS_RC_END"
-                echo "PODUP_SUMMARY_BEGIN pass=${PASS:-0} fail=${FAIL:-0} flaky=${FLAKY:-0} PODUP_SUMMARY_END"
-                # Coverage, measured where the integration tests can actually run.
-                # Reported, never gated; see the note where COVERAGE is set. A
-                # failure here must not redden the leg: this is an observation, and
-                # the suite's own result above is what gates.
-                if [ "$COVERAGE" = "1" ]; then
-                  # Nothing here redirects to /dev/console. This script runs as
-                  # `tester`, which may not open that device, and a denied
-                  # redirection aborts the command it was attached to and is
-                  # reported as that command's own failure. The first run said
-                  # `install-failed` for exactly that reason: cargo never ran.
-                  # stdout and stderr already point at the console, inherited
-                  # from the root caller that launched this script.
-                  # cargo-llvm-cov looks for the `llvm-tools-preview` rustup
-                  # component, and there is no rustup here: Rust comes from dnf.
-                  # It accepts the two tools directly instead, and Fedora's `llvm`
-                  # package (already installed above) carries both. Taking them
-                  # from the distribution is also what keeps the versions in step:
-                  # rustc and llvm are built for the same Fedora release, so the
-                  # profile format matches, which a separately-pinned LLVM would
-                  # not guarantee.
-                  #
-                  # Exactly ONE PODUP_COVERAGE line is emitted on every path. Two
-                  # would be worse than none: whoever greps the log gets an answer
-                  # either way and no reason to suspect there was another.
-                  export LLVM_COV=/usr/bin/llvm-cov
-                  export LLVM_PROFDATA=/usr/bin/llvm-profdata
-                  # Print both versions unconditionally. A profile-format mismatch
-                  # is the next thing likely to go wrong here, and it is only
-                  # diagnosable against the pair of numbers that produced it.
-                  echo "llvm tools: $("$LLVM_COV" --version 2>&1 | grep -i version | head -1)"
-                  echo "rustc llvm: $(rustc --version --verbose | grep -i '^LLVM')"
-                  if [ ! -x "$LLVM_COV" ] || [ ! -x "$LLVM_PROFDATA" ]; then
-                    # Say so here rather than letting cargo-llvm-cov fail with its
-                    # own wording several minutes and one full build later.
-                    echo "PODUP_COVERAGE=llvm-tools-missing"
-                  elif cargo install cargo-llvm-cov --locked --version "=0.9.1"; then
-                    # Same thread cap as the gating run above. cargo-llvm-cov
-                    # drives its own `cargo test` and does NOT inherit it, which
-                    # is measurable rather than theoretical: on the Podman 6 leg
-                    # the gating run took 1743s and passed 178/178, and the
-                    # coverage run of the same code in the same boot took 441s,
-                    # four times faster because it was parallel, and failed 5
-                    # with hyper IncompleteMessage. Uncapped, this step measures
-                    # a different suite than the one that gates.
-                    cargo llvm-cov --all-features --summary-only \
-                      -- --test-threads=1 >/tmp/cov.log 2>&1
-                    PCT=$(awk '$1=="TOTAL" { for (i=1;i<=NF;i++) if ($i ~ /%$/) { print $i; exit } }' /tmp/cov.log)
-                    if [ -n "$PCT" ]; then
-                      echo "PODUP_COVERAGE=$PCT"
-                    else
-                      # Ran, produced nothing parseable. Print what it actually
-                      # said: a second 15-minute boot is an expensive way to
-                      # find out, and each distinct marker below names one
-                      # cause instead of collapsing every failure into one word.
-                      echo "PODUP_COVERAGE=no-total-line"
-                      tail -30 /tmp/cov.log
-                    fi
-                  else
-                    echo "PODUP_COVERAGE=install-failed"
-                  fi
-                fi
-                # Emit the IDENTITIES of the failing tests, not just the count.
-                # The floor gate can only tighten to a per-test known-flaky
-                # allowlist once the flaky set is small and stable (#1039), and
-                # building that allowlist starts with observing which tests
-                # actually fail across nested-virt runs, which the count alone
-                # cannot tell you. cargo prints a final `failures:` block of bare
-                # test names (the earlier block carries `---- name stdout ----`
-                # detail lines, which the 4-space-exact match skips); no failures
-                # yields an empty list, not an error.
-                FAILED_TESTS=$(sed -n '/^failures:$/,/^test result:/p' /tmp/cargo.log | grep -oE '^    [A-Za-z0-9_:]+$' | tr -d ' ' | paste -sd, -)
-                echo "PODUP_FAILED_TESTS_BEGIN tests=${FAILED_TESTS} PODUP_FAILED_TESTS_END"
-          runcmd:
-            - bash -c 'F=$(findmnt -no FSTYPE /); case $F in btrfs) btrfs filesystem resize max / ;; xfs) xfs_growfs / ;; ext4) resize2fs $(findmnt -no SOURCE /) ;; esac >/dev/console 2>&1; echo "DISK_BEGIN value=$(df -h / | tail -1) DISK_END" >/dev/console'
-            - bash -c 'dnf install -y podman rust cargo gcc git __LLVM__ >/dev/console 2>&1'
-            # Prove the driver took, so a silently-ignored config cannot put the
-            # logs tests back to passing without reading anything.
-            - bash -c 'echo "LOGDRIVER_BEGIN value=$(podman info --format {{.Host.LogDriver}} 2>/dev/null) LOGDRIVER_END" >/dev/console'
-            - bash -c 'echo "PODMAN_BEGIN version=$(podman --version)  RUST=$(rustc --version) PODMAN_END" >/dev/console'
-            - bash -c 'echo "tester:100000:65536" >/etc/subuid; echo "tester:100000:65536" >/etc/subgid'
-            - bash -c 'loginctl enable-linger tester; sleep 6'
-            - bash -c 'mkdir -p /mnt/repo && mount -t 9p -o trans=virtio,version=9p2000.L repo /mnt/repo && cp -a /mnt/repo /home/tester/podup && chown -R tester:tester /home/tester/podup'
-            - bash -c 'sudo -iu tester /usr/local/bin/run-suite.sh >/dev/console 2>&1'
-            - bash -c 'echo PROBE_DONE >/dev/console; sleep 2; poweroff'
-          EOF
-          # Coverage on the scheduled and manual paths only. A pull request must
-          # not pay for a second instrumented build, and must not be able to fail
-          # for a reason that has nothing to do with its own change.
-          COVERAGE=0
-          case "${{ github.event_name }}" in schedule|workflow_dispatch) COVERAGE=1 ;; esac
-          echo "coverage pass for Podman ${{ matrix.podman }}: $COVERAGE"
-          sed -i "s/__COVERAGE__/$COVERAGE/" "$RUNNER_TEMP/user-data"
-          # llvm carries the coverage tools and nothing else uses it, so only the
-          # runs that measure coverage install it.
-          LLVM=""
-          [ "$COVERAGE" = "1" ] && LLVM="llvm"
-          sed -i "s/__LLVM__/$LLVM/" "$RUNNER_TEMP/user-data"
-          cloud-localds "$RUNNER_TEMP/seed.iso" "$RUNNER_TEMP/user-data"
+          # The VM sees the workspace, and the verification runs on the runner after it: a guest that
+          # could write the script that judges it could declare itself green. The VM gets the workspace
+          # read-only (readonly=on here, `ro` in its fstab), and what judges it is a copy made before it
+          # boots, outside the workspace, that nothing the VM does can reach.
+          judge="$RUNNER_TEMP/judge"
+          mkdir -p "$judge/.github/scripts"
+          cp -R .github/scripts/podman_lane "$judge/.github/scripts/podman_lane"
+          cp -R .github/podman_lane "$judge/.github/podman_lane"
       - name: Boot VM (9p = repo only) + capture
-        if: needs.decide.outputs.engine == 'true'
+        if: needs.decide.outputs.engine != 'false'
+        env:
+          VM_SECONDS: ${{ matrix.vm_seconds }}
         run: |
-          # Raised with the job timeout for the one-thread experiment (#1039): qemu
-          # has its own cap, and leaving it at 45m would kill the VM before the job
-          # noticed, turning a slow run into an inconclusive one.
-          sudo timeout 4200 qemu-system-x86_64 -enable-kvm -cpu host -m 6144 -smp 4 \
+          # qemu has its own cap, the budget of the leg, and leaving it above the job's would
+          # turn a slow run into one the job kills without a word. Its exit status is kept: 124
+          # is `timeout` cutting it, which the verification says as a slow runner.
+          set +e
+          sudo timeout "$VM_SECONDS" qemu-system-x86_64 -enable-kvm -cpu host -m 6144 -smp 4 \
             -drive file="$RUNNER_TEMP/vm.qcow2",if=virtio,format=qcow2 \
-            -drive file="$RUNNER_TEMP/seed.iso",if=virtio,format=raw \
+            -drive file="$RUNNER_TEMP/seed/seed.iso",if=virtio,format=raw \
             -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
-            -virtfs local,path=${{ github.workspace }},mount_tag=repo,security_model=none,id=repo \
-            -display none -serial stdio 2>&1 | tee "$RUNNER_TEMP/vm.log" || true
-      - name: Verify podup core suite passed on the target Podman
-        if: needs.decide.outputs.engine == 'true'
+            -virtfs local,path=${{ github.workspace }},mount_tag=repo,security_model=none,id=repo,readonly=on \
+            -display none -serial stdio 2>&1 | tee "$RUNNER_TEMP/vm.log"
+          echo "QEMU_RC=${PIPESTATUS[0]}" >> "$GITHUB_ENV"
+          exit 0
+      - name: Verify the VM
+        if: needs.decide.outputs.engine != 'false'
+        env:
+          MODE: ${{ matrix.mode }}
+          EVENT: ${{ github.event_name }}
+          VM_SECONDS: ${{ matrix.vm_seconds }}
         run: |
-          L="$RUNNER_TEMP/vm.log"
-          echo "=== key lines ==="; grep -E 'DISK_BEGIN|PODMAN_BEGIN|test result:|PODUP_TESTS_RC_BEGIN|No space' "$L" | tail -10 || true
-          grep -q 'No space left' "$L" && { echo "::error::VM disk full; run invalid"; exit 1; }
-          VER=$(perl -0777 -ne 'while (/PODMAN_BEGIN\s+version=podman version ([0-9.]+)(?s:(?:(?!PODMAN_BEGIN).)*?)PODMAN_END/g) { print "$1\n" }' "$L" | tail -1)
-          [ -n "$VER" ] || { echo "::error::Podman not detected in VM"; exit 1; }
-          # The VM must be able to serve logs. Gate on that, not on which driver
-          # provides it: where journald cannot open its library every logs request
-          # 500s, and a specific driver would be required for the wrong reason.
-          #
-          # This is not cosmetic. With logs unavailable, the five tests that only
-          # `unwrap()` the result passed without fetching a byte, because `logs`
-          # swallowed the 500 and returned success. Green-and-meaningless is worse
-          # than red, so the signature is a hard failure.
-          echo "log driver: $(perl -0777 -ne 'while (/LOGDRIVER_BEGIN\s+value=([a-z0-9-]+)(?s:(?:(?!LOGDRIVER_BEGIN).)*?)LOGDRIVER_END/g) { print "$1\n" }' "$L" | tail -1)"
-          if grep -q 'unable to open a handle to the library' "$L"; then
-            echo "::error::the VM could not serve logs (journald cannot open its library); the logs tests would pass without reading anything"
-            exit 1
+          # The copy made before the VM booted, not the workspace the VM could write: its paths are
+          # the ones the script reads (the floor of the coverage, the known failures, the baseline).
+          judge="$RUNNER_TEMP/judge"
+          GITHUB_WORKSPACE="$judge" bash "$judge/.github/scripts/podman_lane/verify-vm-log.sh" "$MODE"
+
+  # The same engine suite as `podman-vm`, run directly on the runner against the
+  # Podman 6.2 that the Glyndor apt repository serves for Ubuntu 24.04, instead of
+  # inside a Fedora rawhide VM (a ~500 MB image, dnf, a build inside the VM and a
+  # one-thread suite). It is NOT part of `Supported Podman majors` and nothing
+  # requires it: the first runs say how long it takes and whether it is stable,
+  # and a failure here is red on purpose (no continue-on-error), to be read.
+  #
+  # What it does not replace: rawhide validates the newest Podman before any
+  # distribution packages it; this job validates the Podman podup tells people to
+  # install. Same path filter as the VM: the `decide` job says whether the change
+  # can reach the engine.
+  # The lane of a pull request and of the merge queue: the engine suite on the runner,
+  # against the Podman 6.2.0 that apt.glyndor.net serves, which is the one a Debian or
+  # Ubuntu user installs. It reads the repository and writes nothing: `contents: read`
+  # and no secret, while it builds and runs the code of the change.
+  podman-native:
+    needs: decide
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.decide.outputs.engine != 'false' }}
+    runs-on: ubuntu-24.04
+    # Install a few minutes, build ~10, suite one thread (the VM's one-thread
+    # suite is the long pole); 60 leaves room for a first run and stays far below
+    # the six-hour default a hang would cost.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      # Fingerprint of the Glyndor archive key, published in the apt repository's
+      # README and not on apt.glyndor.net itself: a tampered archive cannot vouch
+      # for its own key. A rotation lists both until the old key is retired.
+      GLYNDOR_APT_FPR: 9ADF04EA8C3139CDB67303CFA6705C2EA153F3D6
+      PODMAN_FLOOR: 6.2.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Podman from the Glyndor apt repository
+        id: install
+        # Three tries of at most seven minutes each, and the waits between them.
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          start=$SECONDS
+          PHASES="$RUNNER_TEMP/phases.txt"
+          echo "PHASES=$PHASES" >> "$GITHUB_ENV"
+          dl() { # <max-filesize> <url> <output>
+            curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 10 \
+              --max-time 120 --retry 3 --retry-delay 5 --max-filesize "$1" -o "$3" "$2"
+          }
+          work="$RUNNER_TEMP/glyndor-keyring"
+          mkdir -p "$work"
+          dl 8388608 https://apt.glyndor.net/glyndor-archive-keyring.deb "$work/keyring.deb"
+          dl 65536 https://apt.glyndor.net/glyndor-archive-keyring.deb.asc "$work/keyring.deb.asc"
+          # Nothing from the package runs: its files are unpacked into a scratch
+          # directory (refusing a package that declares more than 8 MiB), the key
+          # inside is compared with the pinned fingerprint, and the detached
+          # signature over the whole package is checked with that key. Only then
+          # is the key copied into place; the repository file is written here, so
+          # whatever the package ships as sources is never used.
+          dpkg-deb --fsys-tarfile "$work/keyring.deb" | tar -t -v --numeric-owner |
+            awk '$3 !~ /^[0-9]+$/ { bad = 1 } { total += $3 } END { exit (bad || total > 8 * 1024 * 1024) }'
+          dpkg-deb -x "$work/keyring.deb" "$work/extracted"
+          key="$work/extracted/usr/share/keyrings/glyndor.gpg"
+          if [ ! -f "$key" ] || [ -L "$key" ]; then
+            echo "::error::the keyring package has no regular glyndor.gpg"; exit 1
           fi
-          # Guard the VM: it must run a Podman at or above the floor podup requires
-          # (6.2.0), whatever rawhide ships today.
-          if [ "$(printf '%s\n6.2.0\n' "$VER" | LC_ALL=C sort -V | head -1)" != "6.2.0" ]; then
-            echo "::error::the VM has Podman $VER, below the 6.2.0 floor podup requires"; exit 1
-          fi
-          # Read the machine-readable summary the VM computed from the FULL cargo
-          # log (the console here is tail-truncated, so don't recount from it).
-          SUM=$(perl -0777 -ne 'while (/PODUP_SUMMARY_BEGIN\s+pass=(\d+)(?s:(?:(?!PODUP_SUMMARY_BEGIN).)*?)fail=(\d+)(?s:(?:(?!PODUP_SUMMARY_BEGIN).)*?)flaky=(\d+)\s+PODUP_SUMMARY_END/g) { print "PODUP_SUMMARY pass=$1 fail=$2 flaky=$3\n" }' "$L" | tail -1)
-          [ -n "$SUM" ] || { echo "::error::no PODUP_SUMMARY from VM on Podman $VER; the suite did not report"; exit 1; }
-          # Coverage, when this run asked for it. Reported into the job summary.
-          # Gated on the scheduled path only, on Podman 6. The CI coverage job
-          # without Podman sees 79% because every integration test skips itself;
-          # the lane's full suite sees ~91.5%. A 88% floor is below the observed
-          # value with room for natural drift and above the level where a real
-          # regression would hide (#1326). PR runs do not produce a coverage
-          # number, so the gate is skipped there. The judgement lives in
-          # .github/scripts/podman_lane/coverage-floor.sh, with behaviour
-          # tests: it takes the full version (`6.2.0`) and compares its major.
-          COV=$(grep -oE 'PODUP_COVERAGE=[^ ]+' "$L" | tail -1 | cut -d= -f2)
-          if [ -n "$COV" ]; then
-            echo "coverage on Podman $VER (full suite, integration tests included): $COV"
-            echo "- **Podman $VER coverage:** $COV" >> "$GITHUB_STEP_SUMMARY"
-          fi
-          # Called with an empty figure too: on the scheduled run a missing
-          # measurement (the VM timing out during the coverage pass) fails the
-          # floor instead of skipping it.
-          bash "$GITHUB_WORKSPACE/.github/scripts/podman_lane/coverage-floor.sh" "$VER" "${{ github.event_name }}" "$COV" || exit 1
-          PASS=$(echo "$SUM" | grep -oE 'pass=[0-9]+' | cut -d= -f2)
-          FAIL=$(echo "$SUM" | grep -oE 'fail=[0-9]+' | cut -d= -f2)
-          FLAKY=$(echo "$SUM" | grep -oE 'flaky=[0-9]+' | cut -d= -f2)
-          PASS=${PASS:-0}; FAIL=${FAIL:-0}; FLAKY=${FLAKY:-0}
-          echo "Podman $VER: $PASS passed, $FAIL failed ($FLAKY look like connection-drop flakes)"
-          echo "Podman $VER ran on image: ${VM_IMAGE:-unknown}"
-          # The run page, not just the log: whoever reads a red lane needs the
-          # environment next to the counts, and the rawhide leg's environment
-          # changes under it (#1222).
+          fprs="$(gpg --show-keys --with-colons "$key" | awk -F: '/^pub:/{want=1;next} /^fpr:/{if(want){print $10;want=0}}')"
+          [ -n "$fprs" ] || { echo "::error::the keyring carries no key"; exit 1; }
+          for f in $fprs; do
+            [ "$f" = "$GLYNDOR_APT_FPR" ] || { echo "::error::the keyring carries a key that is not the pinned one ($f)"; exit 1; }
+          done
+          GNUPGHOME="$(mktemp -d)" gpg --no-default-keyring --keyring "$key" \
+            --verify "$work/keyring.deb.asc" "$work/keyring.deb"
+          sudo install -D -m 0644 "$key" /etc/apt/keyrings/glyndor.gpg
+          printf 'Types: deb\nURIs: https://apt.glyndor.net\nSuites: stable\nComponents: main\nSigned-By: /etc/apt/keyrings/glyndor.gpg\n' |
+            sudo tee /etc/apt/sources.list.d/glyndor.sources >/dev/null
+          # The script tries the install up to three times, reads Glyndor's
+          # source list only, and fails the step when the packages cannot be had.
+          bash .github/scripts/podman_lane/install-podman.sh
+          echo "install=$((SECONDS - start))" >> "$PHASES"
+      - name: Install the Rust toolchain
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup default 1.100.0
+      - name: Build the engine test binaries
+        run: |
+          start=$SECONDS
+          cargo test --locked --features test-helpers --test engine_integration --test integration_leak_scan --no-run
+          echo "build=$((SECONDS - start))" >> "$PHASES"
+      - name: Start the user Podman socket
+        run: |
+          set -euo pipefail
+          # pasta and netavark work under the runtime directory logind creates
+          # for the user (/run/user/<uid>) and nowhere else: pasta's AppArmor
+          # profile refuses a network namespace under any other path. Lingering
+          # makes logind create that directory and start the user manager for
+          # an account that never logged in.
+          uid=$(id -u)
+          sudo loginctl enable-linger "$(id -un)"
+          for _ in $(seq 1 30); do
+            [ -S "/run/user/$uid/bus" ] && break
+            sleep 1
+          done
+          [ -S "/run/user/$uid/bus" ] || { echo "::error::logind did not start a user manager for uid $uid"; exit 1; }
+          export XDG_RUNTIME_DIR="/run/user/$uid"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          mkdir -p "$XDG_RUNTIME_DIR/podman"
+          # Started directly and with no idle timeout: the socket-activated
+          # unit stops after five idle seconds, in the middle of a suite.
+          nohup podman system service --time=0 "unix://$XDG_RUNTIME_DIR/podman/podman.sock" >"$RUNNER_TEMP/podman-service.log" 2>&1 &
+          for _ in $(seq 1 30); do
+            [ -S "$XDG_RUNTIME_DIR/podman/podman.sock" ] && break
+            sleep 1
+          done
+          [ -S "$XDG_RUNTIME_DIR/podman/podman.sock" ] || { echo "::error::the Podman socket did not appear"; cat "$RUNNER_TEMP/podman-service.log"; exit 1; }
           {
-            echo "### Podman $VER: $PASS passed, $FAIL failed, $FLAKY drop-like"
+            echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
+            echo "PODMAN_SOCKET=$XDG_RUNTIME_DIR/podman/podman.sock"
+            echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"
+          } >> "$GITHUB_ENV"
+          podman info --format '{{.Host.Security.Rootless}} {{.Version.Version}}'
+      - name: Run the engine suite and the leak scan
+        env:
+          PODUP_REQUIRE_PODMAN: "1"
+          RUST_LOG: podup=warn
+        run: |
+          start=$SECONDS
+          rc=0
+          cargo test --locked --features test-helpers --test engine_integration || rc=$?
+          scan=0
+          if [ -s target/podup-leak-scan-pid ]; then
+            PODUP_LEAK_SCAN_PID="$(cat target/podup-leak-scan-pid)" \
+              cargo test --locked --features test-helpers --test integration_leak_scan || scan=$?
+          else
+            echo "::error::engine_integration never wrote target/podup-leak-scan-pid; the leak scan had nothing to look for"
+            scan=1
+          fi
+          echo "tests=$((SECONDS - start))" >> "$PHASES"
+          [ "$rc" -eq 0 ] && [ "$scan" -eq 0 ]
+      - name: Run the Quadlet tests against the generator of this Podman
+        # They skip where the generator is older than the minimum, which is
+        # every stock runner; here its absence is a failure. They run after a
+        # failed suite so both results show, but never after a failed install:
+        # without Podman 6.2 they could only fail for a reason that hides the
+        # real one.
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        env:
+          PODUP_REQUIRE_QUADLET_GENERATOR: "1"
+        run: |
+          start=$SECONDS
+          rc=0
+          cargo test --locked --features test-helpers --lib quadlet:: || rc=$?
+          cargo test --locked --features test-helpers --test hostile_quadlet_units || rc=$?
+          echo "quadlet=$((SECONDS - start))" >> "$PHASES"
+          [ "$rc" -eq 0 ]
+      - name: Show what AppArmor refused
+        # A stop that fails with `kill network process: permission denied` is a
+        # confined pasta refusing a signal, and only the kernel log says which
+        # profile and which rule.
+        if: always()
+        run: |
+          if pasta_bin=$(command -v pasta); then
+            echo "$pasta_bin"
+            dpkg -S "$pasta_bin" || true
+          fi
+          find /etc/apparmor.d -maxdepth 1 \( -name '*pasta*' -o -name '*passt*' -o -name '*podman*' \) -print
+          sudo aa-status 2>/dev/null | grep -E 'pasta|passt|podman' || true
+          sudo dmesg | grep 'apparmor="DENIED"' | sed -E 's/^\[[^]]*\] //; s/pid=[0-9]+ //; s/audit\([^)]*\): //' | sort | uniq -c | sort -rn | head -20 || true
+      - name: Report the phases
+        if: always()
+        run: |
+          {
+            echo "### Podman native lane"
             echo ""
-            echo "image: \`${VM_IMAGE:-unknown}\`"
+            if [ -f "$PHASES" ]; then
+              sed -E 's/^([a-z]+)=([0-9]+)$/- \1: \2 s/; s/^podman=(.*)$/- podman: \1/' "$PHASES"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
-          # Strip CR: the VM talks to us over `-serial stdio`, so every line of
-          # this log arrives CRLF-terminated. The counts survive because they are
-          # extracted with numeric patterns, but the identity list keeps the CR on
-          # its final element, which then matches nothing in the classified list
-          # and reports the last failing test as an unexpected regression. That is
-          # exactly how this gate false-reddened on its first run.
-          FAILED_TESTS=$(perl -0777 -ne 'while (/PODUP_FAILED_TESTS_BEGIN\s+tests=((?:(?!PODUP_FAILED_TESTS_BEGIN).)*?)\s+PODUP_FAILED_TESTS_END/sg) { print "$1\n" }' "$L" | tail -1 | tr -d '\r' || true)
-          if [ -n "$FAILED_TESTS" ]; then
-            echo "Failing tests on Podman $VER: $FAILED_TESTS"
-          fi
-          # Identity gate, against the classified list of the major the VM booted.
-          # A count cannot tell a regression from noise: the #1072 regression
-          # broke one test and left the pass count at 144, far above the floor,
-          # so nothing went red and it shipped. WHICH tests fail does tell you.
-          # The major comes from the Podman the VM actually booted, so the day
-          # rawhide moves to Podman 7 this step asks for a known-failures-7 file
-          # instead of passing without a gate.
-          major="${VER%%.*}"
-          known="$GITHUB_WORKSPACE/.github/podman_lane/known-failures-$major"
-          if [ ! -f "$known" ]; then
-            echo "::error::the VM booted Podman $VER and there is no .github/podman_lane/known-failures-$major to gate it against; add one (an empty list is fine) once a run proves the failing set"
-            exit 1
-          fi
-          # `comm` compares bytes while `sort` orders by locale, so pin both to
-          # C. Defensive rather than observed: the first-run false red was the
-          # CR above, not collation, but the two must agree or comm reports
-          # present entries as missing.
-          LC_ALL=C
-          export LC_ALL
-          grep -vE '^[[:space:]]*(#|$)' "$known" | tr -d '[:blank:]' | sort -u > "$RUNNER_TEMP/known.txt"
-          printf '%s' "$FAILED_TESTS" | tr ',' '\n' | sed '/^$/d' | sort -u > "$RUNNER_TEMP/failed.txt"
-          unexpected="$(comm -23 "$RUNNER_TEMP/failed.txt" "$RUNNER_TEMP/known.txt")"
-          if [ -n "$unexpected" ]; then
-            echo "::error::Podman $VER: these failing tests are not in $(basename "$known"): a test that used to pass is failing, which is a regression, not nested-virt noise:"
-            echo "$unexpected" | awk '{print "  " $0}'
-            echo "Environment: Podman $VER on ${VM_IMAGE:-an unrecorded image}. Before concluding, check whether the run you are comparing against booted the same one; the rawhide leg usually does not (#1222)."
-            echo "If a run proves the failure is environmental, add it to that file with the evidence; do not add it to make this red go away."
-            exit 1
-          fi
-          stale="$(comm -13 "$RUNNER_TEMP/failed.txt" "$RUNNER_TEMP/known.txt")"
-          if [ -n "$stale" ]; then
-            echo "::notice::Podman $VER: listed as environmentally-broken but passing in this run; drop them from $(basename "$known") once that holds:"
-            echo "$stale" | awk '{print "  " $0}'
-          fi
-          echo "Podman $VER: every failure is on the classified list ($(wc -l < "$RUNNER_TEMP/known.txt") entries)."
-          # Gate: the core must pass the baseline in .github/podman_lane/baseline-tests.
-          # A real regression breaks previously-passing tests and knocks PASS
-          # below the floor; the baseline is versioned so it is bumped
-          # deliberately as the suite grows rather than sitting as a magic number
-          # here.
-          #
-          # 2026-07-27: raised 115 -> 165 against a suite that now runs 172 on both
-          # legs. At 115 the floor had 57 tests of slack, so a suite that executed
-          # two thirds of itself and reported them all green would have passed the
-          # only check that can see a half-executed run. 165 keeps a small margin
-          # for the identity gate's own territory (a handful of classified
-          # failures must not redden the floor too) without leaving room for a
-          # third of the suite to vanish unnoticed.
-          #
-          # The floor is a second, cruder signal: it catches "fewer tests ran"
-          # (a suite that half-executed reports few failures and few passes),
-          # which the identity gate above cannot see.
-          #
-          # Why the failure COUNT is still only a warning: it never separated a
-          # regression from noise: a count of failures that match a
-          # connection-drop signature would redden runs whose failures carry no
-          # such signature (an earlier leg failed the same ~10 streaming/attach/
-          # run tests every run with none). The identity gate replaces it.
-          #
-          # Podman 6 went without a list because its failing set carried a
-          # variable tail that observation would have turned into false reds,
-          # and the floor it gated on instead reported the leg green through 31
-          # failures (141 passed, floor 115). That tail was one cause:
-          # serialising the leg removed it, and its list is now empty, so any
-          # failure there is a regression. See the file's own header for the
-          # evidence and for how thin it is.
-          BASELINE="$(cat "$GITHUB_WORKSPACE/.github/podman_lane/baseline-tests")"
-          [ "$PASS" -ge "$BASELINE" ] || { echo "::error::core suite degraded on Podman $VER ($PASS passed, baseline >= $BASELINE): a real regression, or fewer tests ran"; exit 1; }
-          # Leak scan, run by the VM in a separate cargo process after
-          # engine_integration exited. The marker is the only signal that the
-          # scan actually ran; a missing marker means the script never reached
-          # the scan invocation, which is a gate failure on its own (cf. the
-          # PODUP_SUMMARY check above).
-          SCAN_RC=$(perl -0777 -ne 'while (/PODUP_LEAK_SCAN_BEGIN\s+rc=(\w+)\s+PODUP_LEAK_SCAN_END/g) { print "$1\n" }' "$L" | tail -1)
-          [ -n "$SCAN_RC" ] || { echo "::error::no PODUP_LEAK_SCAN marker from VM on Podman $VER; the leak scan did not report"; exit 1; }
-          if [ "$SCAN_RC" = "nopid" ]; then
-            echo "::error::Podman $VER: engine_integration never wrote target/podup-leak-scan-pid, so the leak scan had no run to look for and scanned nothing"
-            exit 1
-          fi
-          if [ "$SCAN_RC" != "0" ]; then
-            echo "::error::Podman $VER: the leak scan reported rc=$SCAN_RC; resources carrying the per-run prefix remain on the host. See the leak-scan log section in the run page."
-            exit 1
-          fi
-          # The Quadlet generator tests ran in the VM after the leak scan, with
-          # PODUP_REQUIRE_QUADLET_GENERATOR=1, so a generator that was missing or
-          # older than the floor is a failure here, not a skip.
-          GEN_RC=$(perl -0777 -ne 'while (/PODUP_QUADLET_GENERATOR_BEGIN\s+rc=(\w+)\s+PODUP_QUADLET_GENERATOR_END/g) { print "$1\n" }' "$L" | tail -1)
-          [ -n "$GEN_RC" ] || { echo "::error::no PODUP_QUADLET_GENERATOR marker from VM on Podman $VER; the Quadlet generator tests did not report"; exit 1; }
-          if [ "$GEN_RC" != "0" ]; then
-            echo "::error::Podman $VER: the Quadlet generator tests reported rc=$GEN_RC. See the quadlet generator section in the run page."
-            exit 1
-          fi
-          if [ "$FAIL" -gt "$FLAKY" ]; then
-            echo "::warning::Podman $VER: $FAIL failures, $FLAKY match a connection-drop signature; the rest are the known nested-virt-unstable subset (see the failures section). Not gated until that flakiness is reduced."
-          fi
-          echo "GREEN: podup core PASSED on Podman $VER ($PASS tests >= baseline $BASELINE; $FAIL in the nested-virt-noisy subset)."
 
   podman-majors:
-    name: Supported Podman majors
+    # The name says which kind of run produced it: nothing for a pull request into
+    # `develop` and for the merge queue, `(promotion)` for a pull request into `main`,
+    # and the event in brackets for everything else (a push, a schedule, a pull request
+    # on any other base). `==` in an expression ignores case, so the trigger limits the
+    # bases with `branches`, which does not, and the gate checks the base in shell. A required
+    # check is matched by name on a commit, so the push that lands on `develop` and
+    # the pull request that promotes the same commit into `main` must not be able to
+    # answer for each other: they get different names and the ruleset of each branch
+    # requires its own.
+    name: Supported Podman majors${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}
     # A required status check is matched by name, and `podman-vm (6)` carries the
     # matrix value. The lane follows the newest Podman: when Podman 7 ships, `["6"]`
     # becomes `["7"]`, and on that pull request the name `podman-vm (6)` stops being
     # emitted while a ruleset could still require it, so the pull request that carries
     # the change would block itself. This name does not move, and it keeps its
     # wording from when the lane ran two majors. See #1552.
-    needs: podman-vm
+    needs: [decide, podman-vm, podman-native]
     # `needs` on its own SKIPS this job when the matrix fails, and a skipped required
     # check does not block a merge, the exact failure this job exists to prevent.
     if: always()
@@ -719,13 +517,41 @@ jobs:
     steps:
       - name: Reflect the matrix result
         env:
-          RESULT: ${{ needs.podman-vm.result }}
+          PLAN: ${{ needs.decide.result }}
+          ENGINE: ${{ needs.decide.outputs.engine }}
+          VM: ${{ needs.podman-vm.result }}
+          NATIVE: ${{ needs.podman-native.result }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          # Unlike the gates in the shared rust-ci reusable, `skipped` is NOT a pass
-          # here: podman-vm carries no `if:` and runs on every pull request, so a
-          # skipped matrix means something went wrong rather than a caller opting out.
-          case "$RESULT" in
-            success) echo "the Podman lane passed" ;;
-            *) echo "::error::the Podman matrix did not pass (result: $RESULT)"; exit 1 ;;
+          fail() { echo "::error::$1"; exit 1; }
+          [ "$PLAN" = success ] || fail "the plan did not succeed (result: $PLAN)"
+          echo "plan: engine='$ENGINE', event $EVENT; native: $NATIVE, vm: $VM"
+          # A pull request and the merge queue use the native lane and never the VM; the
+          # schedule and a dispatch use the VM and never the native lane. The lane that
+          # is not theirs is skipped, and only the plan's explicit `false` excuses the
+          # one that is.
+          case "$EVENT" in
+            pull_request | merge_group)
+              [ "$VM" = skipped ] || fail "the VM ran for a $EVENT (result: $VM)"
+              case "$NATIVE" in
+                success) ;;
+                skipped) [ "$ENGINE" = false ] || fail "the native lane was skipped and the plan did not say so" ;;
+                *) fail "the native lane did not pass (result: $NATIVE)" ;;
+              esac ;;
+            *)
+              [ "$NATIVE" = skipped ] || fail "the native lane ran for a $EVENT (result: $NATIVE)"
+              [ "$VM" = success ] || fail "the VM did not pass (result: $VM)" ;;
           esac
+          echo "the Podman lane passed"
+
+  # When this workflow fails on a pull request, the other runs of the same commit
+  # stop: they would spend runners on a commit that is already red. The job and
+  # the rules it follows are in reusable-cancel-others.yml.
+  cancel-others:
+    needs: podman-majors
+    if: ${{ failure() && github.event_name == 'pull_request' }}
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/reusable-cancel-others.yml

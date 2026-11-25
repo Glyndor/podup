@@ -1,5 +1,5 @@
 use crate::error::{ComposeError, Result};
-use crate::libpod::{urlencoded, API_PREFIX};
+use crate::libpod::{image_urlencoded, API_PREFIX};
 
 use crate::engine::Engine;
 
@@ -10,7 +10,7 @@ impl Engine {
 	/// and by the `up` image-prefetch stage to skip a redundant pull request
 	/// for an image a `missing`-policy service already has cached.
 	pub(in crate::backends::engine) async fn image_present(&self, image: &str) -> bool {
-		let path = format!("{API_PREFIX}/images/{}/json", urlencoded(image));
+		let path = format!("{API_PREFIX}/images/{}/json", image_urlencoded(image));
 		self.client
 			.get_json::<crate::libpod::types::image::ImageInspect>(&path)
 			.await
@@ -31,7 +31,7 @@ impl Engine {
 		&self,
 		image: &str,
 	) -> Result<Option<String>> {
-		let path = format!("{API_PREFIX}/images/{}/json", urlencoded(image));
+		let path = format!("{API_PREFIX}/images/{}/json", image_urlencoded(image));
 		match self
 			.client
 			.get_json::<crate::libpod::types::image::ImageInspect>(&path)

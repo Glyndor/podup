@@ -20,6 +20,7 @@ The binary is `target/release/podup`. The default build enables watch, completio
 
 - Branch from `develop` and target `develop`; `main` accepts the release PR from `develop`.
 - Squash into `develop`; use a Conventional Commit PR title.
+- Editing the title or the body of a pull request does not run the CI again, and neither does reopening it: a second set of runs of the same commit would cancel the first and leave a red check under the required names. Changing the base needs a push. `develop` is reached only through the merge queue, which runs everything again on the result that lands, so a base that changed after the checks ran is judged there. Only `guard`, which judges the base itself, runs again on an edit.
 
 Mention the issue in the PR and mark its status done. It closes when the release PR merges into `main`.
 
@@ -58,7 +59,7 @@ CI is split by responsibility rather than gathered in one file:
 
 | file | what fails there |
 |---|---|
-| `ci.yml` | the rustfmt / clippy / test / coverage / MSRV gates |
+| `ci.yml` | one required check, `rust / Gate`, which reads the result of every rustfmt / clippy / test / coverage / MSRV / doc suite and certifies each skip; the suites report their own checks but do not block on their own |
 | `repository-health.yml` | the advisory audits about the repository rather than about a change: the freshness of the scheduled workflows, the health of `main` and `develop`, and whether Dependabot has spoken recently. They run on protected-branch pushes, on a daily schedule and on demand, and never on a pull request |
 | `lint-shell.yml` | shellcheck and the shell test suite |
 | `lint-powershell.yml` | PSScriptAnalyzer on `install.ps1` |
@@ -69,7 +70,7 @@ CI is split by responsibility rather than gathered in one file:
 | `podman-lane-develop-nightly.yml` | the coverage lane against Podman 6, fired nightly from `develop` |
 | `dco.yml`, `line-limit.yml`, `workflow-lint.yml` | one rule each |
 | `main-guard.yml` | `develop-only`: only the release pull request can target `main` |
-| `release.yml` | the release checks, signed binaries, GitHub Release |
+| `release.yml` | the release checks, signed binaries and packages, GitHub Release; run by hand with `dry_run` it signs with a throwaway key, makes no attestation and publishes nothing (a tag already published is refused) |
 
 Package and semver checks are disabled in `ci.yml`. Reusable workflows are local files under `.github/workflows/`.
 

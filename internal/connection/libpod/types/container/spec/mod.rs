@@ -41,6 +41,12 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "HashMap::is_empty", default)]
 	pub env: HashMap<String, String>,
 
+	/// Names of image (or `containers.conf`) variables to remove before
+	/// `env` is applied, which is how a compose variable left unresolved
+	/// takes an image's value of the same name away.
+	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	pub unsetenv: Vec<String>,
+
 	/// Allocate a pseudo-TTY for the container.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub terminal: Option<bool>,
@@ -74,10 +80,6 @@ pub struct SpecGenerator {
 	/// Container hostname.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub hostname: Option<String>,
-
-	/// Container NIS domain name.
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub domainname: Option<String>,
 
 	// Labels and annotations
 	/// Container labels.
@@ -150,6 +152,11 @@ pub struct SpecGenerator {
 	/// Networks to connect to; key = network name, value = per-connection options.
 	#[serde(skip_serializing_if = "HashMap::is_empty", default)]
 	pub networks: HashMap<String, PerNetworkOptions>,
+
+	/// The order the networks are connected in, which fixes their interface
+	/// names (the first is `eth0`). Names exactly the keys of `networks`.
+	#[serde(rename = "networkOrder", skip_serializing_if = "Option::is_none")]
+	pub network_order: Option<Vec<String>>,
 
 	/// Network namespace mode.
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -313,10 +320,6 @@ pub struct SpecGenerator {
 	#[serde(rename = "oci_runtime", skip_serializing_if = "Option::is_none")]
 	pub runtime: Option<String>,
 
-	/// Legacy container links (deprecated in rootless, accepted but may be ignored).
-	#[serde(skip_serializing_if = "Vec::is_empty", default)]
-	pub links: Vec<String>,
-
 	// Platform selection
 	/// Target image CPU architecture (e.g. `"amd64"`, `"arm64"`).
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -325,6 +328,13 @@ pub struct SpecGenerator {
 	/// Target image OS (e.g. `"linux"`).
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub image_os: Option<String>,
+
+	/// Target image variant (e.g. `"v7"`). Podman picks the instance of a
+	/// manifest list by OS, architecture and variant together; without it a
+	/// list with several variants of one architecture yields the instance that
+	/// suits the host, not the one the file names.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub image_variant: Option<String>,
 
 	// Volume image handling
 	/// How image-defined `VOLUME`s are handled (e.g. `"anonymous"`, `"tmpfs"`,

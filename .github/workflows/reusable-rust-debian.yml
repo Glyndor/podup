@@ -23,7 +23,7 @@ on:
         # build environment; bump this default when a newer trixie snapshot is
         # needed.
         #
-        # release.yml pins a digest of its own for the same suite, because a
+        # reusable-release-build.yml pins a digest of its own for the same suite, because a
         # `container:` needs a literal and cannot read this default. The two
         # must be the same value: this one is what every pull request builds
         # the .deb in, that one is what the published .deb is built in, and a

@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+#
+# The wiring of the pipelines that decide what runs and what is certified is
+# held in its exact form, not by the presence of its parts.
+#
+# ci_wiring/shape.py compares every job of the listed workflows with a snapshot:
+# the set of jobs is closed, and each job's `needs`, `if`, `with` and steps are
+# the ones recorded. Each case below plants one way to loosen the pipeline and
+# expects the comparison to go red. The real tree is expected to match.
+#
+# The cases are the ways to loosen the pipeline, one by one:
+#   - the `run:` (or the `if`) of two suites crossed;
+#   - a suite handed a fixed `false`;
+#   - the plan variables of two suites crossed in the gate;
+#   - the gate reading the result of another job for a suite;
+#   - the plan script read from the checkout instead of the base commit;
+#   - an input that turns a check off passed to a reusable;
+#   - a job added, which no list exempts by name;
+#   - a structure or hygiene step put behind the plan.
+#
+# Requires: python3 with PyYAML.
+set -u
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+shape="$HERE/tests/scripts/shell/workflow_behaviour/ci_wiring/shape.py"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+pass=0
+fail=0
+check() { # <description> <expected> <actual>
+	if [ "$2" = "$3" ]; then
+		echo "ok    $1"
+		pass=$((pass + 1))
+	else
+		echo "FAIL  $1"
+		echo "        expected: $2"
+		echo "        actual:   $3"
+		fail=$((fail + 1))
+	fi
+}
+
+fresh() {
+	rm -rf "$WORK/tree"
+	mkdir -p "$WORK/tree/.github"
+	cp -r "$HERE/.github/workflows" "$WORK/tree/.github/workflows"
+}
+verdict() { WIRING_ROOT="$WORK/tree" python3 "$shape" --check >"$WORK/out.log" 2>&1; echo $?; }
+mentions() { grep -c -- "$1" "$WORK/out.log"; }
+edit() { # <file> <python expression over s>
+	python3 - "$WORK/tree/.github/workflows/$1" "$2" <<'PY'
+import sys
+path, expr = sys.argv[1], sys.argv[2]
+s = open(path).read()
+t = eval(expr)
+assert t != s, "the plant changed nothing"
+open(path, "w").write(t)
+PY
+}
+# sabotage <description> <file> <python expression>: the comparison must go red.
+sabotage() {
+	fresh
+	edit "$2" "$3"
+	check "$1" 1 "$(verdict)"
+}
+
+check "the real tree matches the snapshot" 0 "$(python3 "$shape" --check >/dev/null 2>&1; echo $?)"
+fresh
+check "a copy of the tree matches the snapshot" 0 "$(verdict)"
+
+sabotages="$HERE/tests/scripts/shell/workflow_behaviour/ci_wiring/sabotage.py"
+count="$(python3 "$sabotages" --count)"
+check "the list of sabotages is not empty" yes "$([ "$count" -ge 30 ] && echo yes || echo no)"
+i=0
+while [ "$i" -lt "$count" ]; do
+	fresh
+	python3 "$sabotages" "$i" "$WORK/tree" || check "sabotage $i finds its text" planted "not found"
+	check "caught: $(python3 "$sabotages" --describe "$i")" 1 "$(verdict)"
+	i=$((i + 1))
+done
+R=reusable-rust-ci.yml
+
+# The required names: one workflow, and only the runs that should produce them.
+names="$HERE/tests/scripts/shell/workflow_behaviour/ci_wiring/required_names.py"
+names_verdict() { WIRING_ROOT="$WORK/tree" python3 "$names" >"$WORK/out.log" 2>&1; echo $?; }
+fresh
+check "no required name comes from more than one workflow or kind of run" 0 "$(names_verdict)"
+i=0
+count="$(python3 "$sabotages" names --count)"
+while [ "$i" -lt "$count" ]; do
+	fresh
+	python3 "$sabotages" names "$i" "$WORK/tree" || check "name plant $i finds its text" planted "not found"
+	check "caught: $(python3 "$sabotages" names --describe "$i")" 1 "$(names_verdict)"
+	i=$((i + 1))
+done
+
+# The pins an automatic update moves are not part of the contract; everything else about
+# an action reference is. A Dependabot pull request moves the commit an action is pinned
+# to and its version comment and nothing else, and it cannot run this test's --update: so
+# those cases must pass, and a different action, no pin, a tag, a branch or a hash that is
+# not a full commit must still fail.
+i=0
+count="$(python3 "$sabotages" pins --count)"
+while [ "$i" -lt "$count" ]; do
+	fresh
+	python3 "$sabotages" pins "$i" "$WORK/tree" || check "pin case $i finds its text" planted "not found"
+	want=1
+	[ "$(python3 "$sabotages" pins --passes "$i")" = yes ] && want=0
+	check "$([ "$want" = 0 ] && echo 'moves the pin and passes' || echo 'is refused'): $(python3 "$sabotages" pins --describe "$i")" "$want" "$(verdict)"
+	i=$((i + 1))
+done
+# An image digest is a pin of the same kind; the container and services of a job are held.
+check "a new image digest does not change a job's shape" same "$(python3 - "$HERE/.github/scripts/lib" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import ci_yaml
+a = {"container": {"image": "debian:trixie@sha256:" + "1" * 64}, "steps": [{"uses": "docker://alpine@sha256:" + "2" * 64}]}
+b = {"container": {"image": "debian:trixie@sha256:" + "3" * 64}, "steps": [{"uses": "docker://alpine@sha256:" + "4" * 64}]}
+print("same" if ci_yaml.normalize_pins(a) == ci_yaml.normalize_pins(b) else "different")
+PY
+)"
+check "an image with its digest removed is a different shape" different "$(python3 - "$HERE/.github/scripts/lib" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import ci_yaml
+a = {"container": {"image": "debian:trixie@sha256:" + "1" * 64}}
+b = {"container": {"image": "debian:trixie"}}
+print("same" if ci_yaml.normalize_pins(a) == ci_yaml.normalize_pins(b) else "different")
+PY
+)"
+check "an image that changes name is a different shape" different "$(python3 - "$HERE/.github/scripts/lib" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import ci_yaml
+a = {"container": {"image": "debian:trixie@sha256:" + "1" * 64}}
+b = {"container": {"image": "ubuntu:24.04@sha256:" + "1" * 64}}
+print("same" if ci_yaml.normalize_pins(a) == ci_yaml.normalize_pins(b) else "different")
+PY
+)"
+
+# A tool pinned by version and sha256 in an input default is edited by hand (pin-watch only
+# files an issue; Dependabot does not read it), so its update path is the one the failure
+# names: review the diff and run --update in the same pull request.
+fresh
+edit reusable-rust-audit.yml 's.replace("0.23.0", "0.99.0").replace("4f01c74ed84b2dffd0b1d37012a62cdf2a92c96e25bdf8eec7fcc0d4d3eb7811", "'"$(printf 'e%.0s' $(seq 64))"'")'
+check "a tool bumped by hand, version and sum, goes red until the snapshot is regenerated" 1 "$(verdict)"
+check "the failure names the command that regenerates it" 1 "$(mentions -- '--update')"
+WIRING_ROOT="$WORK/tree" WIRING_SNAPSHOT="$WORK/snapshot.json" python3 "$shape" --update >/dev/null 2>&1
+check "regenerated in the same change, it passes" 0 "$(WIRING_ROOT="$WORK/tree" WIRING_SNAPSHOT="$WORK/snapshot.json" python3 "$shape" --check >/dev/null 2>&1; echo $?)"
+
+# The messages say where.
+fresh
+j=0
+while [ "$(python3 "$sabotages" --describe "$j")" != "coverage turned off in the caller" ]; do j=$((j + 1)); done
+python3 "$sabotages" "$j" "$WORK/tree"
+verdict >/dev/null
+check "the message names the input that changed" 1 "$(mentions 'coverage-threshold')"
+
+# A step condition on the four structure and hygiene steps of lint is absent in the real tree.
+check "no structure or hygiene step of lint has a condition" 0 "$(python3 - "$HERE/.github/workflows/$R" <<'PY'
+import sys
+import yaml
+
+spec = yaml.safe_load(open(sys.argv[1]))
+names = ("no planning-note references", "no vetoed vocabulary", "no private document references", "folders hold at most twenty files")
+bad = [s["name"] for s in spec["jobs"]["lint"]["steps"] if s.get("name") in names and "if" in s]
+missing = [n for n in names if n not in [s.get("name") for s in spec["jobs"]["lint"]["steps"]]]
+print(len(bad) + len(missing))
+PY
+)"
+
+echo
+echo "passed: $pass  failed: $fail"
+printf 'DONE %s %d %d\n' "${BASH_SOURCE[0]##*/}" "$pass" "$fail"
+[ "$fail" -eq 0 ]

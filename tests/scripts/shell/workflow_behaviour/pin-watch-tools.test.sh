@@ -47,6 +47,16 @@ mkdir -p "$WORK/bin"
 cat >"$WORK/bin/gh" <<'GH'
 #!/usr/bin/env bash
 echo "$*" >>"$GH_LOG"
+if [ "$1" = api ]; then
+	# `gh api repos/<repo>/tags?per_page=30 --jq .[].name`: the tags of a repository that has no release.
+	repo="${2#repos/}"
+	repo="${repo%%/tags*}"
+	row=$(awk -F'\t' -v r="$repo" '$1 == r' "$UPSTREAM")
+	[ -n "$row" ] || exit 1
+	[ "$(printf '%s' "$row" | cut -f2)" != FAIL ] || exit 1
+	printf '%s' "$row" | cut -f3 | tr ' ' '\n'
+	exit 0
+fi
 [ "$1" = release ] || exit 2
 verb="$2"
 repo=""
@@ -58,6 +68,7 @@ row=$(awk -F'\t' -v r="$repo" '$1 == r' "$UPSTREAM")
 [ -n "$row" ] || exit 1
 latest=$(printf '%s' "$row" | cut -f2)
 [ "$latest" != FAIL ] || exit 1
+[ "$latest" != NORELEASE ] || exit 1
 case "$verb" in
 	view) echo "$latest" ;;
 	list) printf '%s' "$row" | cut -f3 | tr ' ' '\n' ;;
@@ -82,7 +93,8 @@ build_repo() {
 	{ echo "on:"; echo "  workflow_call:"; input shellcheck-version v0.11.0 | sed 1d; } >"$w/reusable-shell-ci.yml"
 	{ echo "on:"; echo "  workflow_call:"; input shellcheck-version v0.11.0 | sed 1d; echo "env:"; echo "  ACTIONLINT_VERSION: v1.7.12"; } >"$w/reusable-workflow-lint.yml"
 	{ echo "on:"; echo "  workflow_call:"; input pssa-version 1.25.0 | sed 1d; } >"$w/reusable-powershell-ci.yml"
-	cat >"$w/podman-lane.yml" <<'YML'
+	mkdir -p "$r/.github/scripts/podman_lane"
+	cat >"$r/.github/scripts/podman_lane/user-data.tpl" <<'YML'
 jobs:
   x:
     steps:
@@ -100,12 +112,20 @@ jobs:
       - run: |
           RUST_LOG=podup=warn cargo install cargo-llvm-cov --locked --version "=0.8.7" >/tmp/log 2>&1
 YML
-	cat >"$w/release.yml" <<'YML'
+	cat >"$w/reusable-release-verify.yml" <<'YML'
 jobs:
   x:
     steps:
       - run: |
           cargo install cargo-audit --version "=0.22.2" --locked
+YML
+	cat >"$w/reusable-release-build.yml" <<'YML'
+jobs:
+  x:
+    env:
+      RUSTUP_VERSION: "1.29.3"
+    steps:
+      - run: |
           cargo install --locked cargo-cyclonedx --version "=0.5.9"
           cargo install --locked --features cli cargo-about --version "=0.9.2"
 YML
@@ -123,7 +143,8 @@ write_upstream() {
 		EmbarkStudios/cargo-about 0.9.2 "0.9.2" \
 		koalaman/shellcheck v0.11.0 "v0.11.0" \
 		rhysd/actionlint v1.7.12 "v1.7.12" \
-		PowerShell/PSScriptAnalyzer 1.25.0 "1.25.0" >"$1"
+		PowerShell/PSScriptAnalyzer 1.25.0 "1.25.0" \
+		rust-lang/rustup 1.29.3 "1.29.3" >"$1"
 }
 
 # Run the fixture's script. Sets RC, OUT (stdout) and ERR (stderr).
@@ -147,7 +168,7 @@ fresh a
 run "$WORK/a" "$WORK/a.up"
 check "pins equal to the latest releases: success" 0 "$RC"
 check "...and no row on stdout" "" "$OUT"
-check "...reporting the size of what it watched" 1 "$(grep -c 'watched 10 tools over 16 pin sites' "$WORK/err")"
+check "...reporting the size of what it watched" 1 "$(grep -c 'watched 11 tools over 17 pin sites' "$WORK/err")"
 check "...through gh release view and list only, never the API" 0 "$(grep -vcE '^release (view|list) ' "$WORK/gh.log")"
 
 # --- drift, with and without a prefix on the tag ----------------------------
@@ -173,7 +194,7 @@ check "a pin that holds the tag with its v is told the newer tag with its v (bot
 
 # --- sites of one tool that disagree ----------------------------------------
 fresh e
-sed -i 's|=0.9.2|=0.9.0|' "$WORK/e/.github/workflows/release.yml"
+sed -i 's|=0.9.2|=0.9.0|' "$WORK/e/.github/workflows/reusable-release-build.yml"
 run "$WORK/e" "$WORK/e.up"
 check "two sites of one tool with different versions are reported as a disagreement" 1 "$(printf '%s\n' "$OUT" | grep -c 'cargo-about (2 sites disagree)')"
 check "...and the site that is behind is reported against the latest" 1 "$(printf '%s\n' "$OUT" | grep -c 'cargo-about (install).*0.9.0.0.9.2$')"
@@ -183,14 +204,14 @@ check "...and the site that is behind is reported against the latest" 1 "$(print
 fresh p
 sed -i 's|^taiki-e/cargo-llvm-cov\tv0.8.7|taiki-e/cargo-llvm-cov\tv0.9.1|' "$WORK/p.up"
 run "$WORK/p" "$WORK/p.up"
-check "a coverage install behind the latest is reported on the lane that holds it" 1 "$(printf '%s\n' "$OUT" | grep -c '^cargo-llvm-cov (install).*podman-lane.yml.0.8.7.0.9.1$')"
+check "a coverage install behind the latest is reported on the lane that holds it" 1 "$(printf '%s\n' "$OUT" | grep -c '^cargo-llvm-cov (install).*user-data.tpl.0.8.7.0.9.1$')"
 check "...and so is the one of the nightly lane" 1 "$(printf '%s\n' "$OUT" | grep -c '^cargo-llvm-cov (install).*podman-lane-develop-nightly.yml.0.8.7.0.9.1$')"
 
 fresh q
-sed -i 's| --version "=0.8.7"||' "$WORK/q/.github/workflows/podman-lane.yml"
+sed -i 's| --version "=0.8.7"||' "$WORK/q/.github/scripts/podman_lane/user-data.tpl"
 run "$WORK/q" "$WORK/q.up"
 check "a coverage install that lost its version fails the run" 1 "$RC"
-check "...naming the tool and the file" 1 "$(printf '%s\n' "$ERR" | grep -c 'could not read the cargo-llvm-cov pin (cargo-llvm-cov) from .github/workflows/podman-lane.yml')"
+check "...naming the tool and the file" 1 "$(printf '%s\n' "$ERR" | grep -c 'could not read the cargo-llvm-cov pin (cargo-llvm-cov) from .github/scripts/podman_lane/user-data.tpl')"
 
 # --- a pin that cannot be read ------------------------------------------------
 fresh f
@@ -202,7 +223,7 @@ check "...and prints no table" "" "$OUT"
 
 fresh g
 # shellcheck disable=SC2016
-sed -i 's|--version "=0.9.2"|--version "$ABOUT"|' "$WORK/g/.github/workflows/release.yml"
+sed -i 's|--version "=0.9.2"|--version "$ABOUT"|' "$WORK/g/.github/workflows/reusable-release-build.yml"
 run "$WORK/g" "$WORK/g.up"
 check "an install line whose version is not a literal fails the run" 1 "$RC"
 
@@ -233,14 +254,14 @@ check "a new *-version input that no site reads fails the run" 1 "$RC"
 check "...naming the file and the key" 1 "$(printf '%s\n' "$ERR" | grep -c 'reusable-new.yml has the pin new-tool-version')"
 
 fresh l
-echo '          cargo install brand-new-tool --version "=1.0.0" --locked' >>"$WORK/l/.github/workflows/release.yml"
+echo '          cargo install brand-new-tool --version "=1.0.0" --locked' >>"$WORK/l/.github/workflows/reusable-release-verify.yml"
 run "$WORK/l" "$WORK/l.up"
 check "a cargo install at an exact version of a tool no table names fails the run" 1 "$RC"
 
 fresh m
 # shellcheck disable=SC2016
-echo '          cargo install cargo-deny --locked --version "$VERSION"' >>"$WORK/m/.github/workflows/release.yml"
-echo "  OTHER_TOOL: 1" >>"$WORK/m/.github/workflows/release.yml"
+echo '          cargo install cargo-deny --locked --version "$VERSION"' >>"$WORK/m/.github/workflows/reusable-release-verify.yml"
+echo "  OTHER_TOOL: 1" >>"$WORK/m/.github/workflows/reusable-release-verify.yml"
 run "$WORK/m" "$WORK/m.up"
 check "an install whose version is a variable, and unrelated keys, are not mistaken for pins" 0 "$RC"
 
@@ -261,6 +282,7 @@ real="$WORK/real"
 mkdir -p "$real/.github/scripts/checks"
 cp "$HERE/$SCRIPT_REL" "$real/$SCRIPT_REL"
 cp -R "$HERE/.github/workflows" "$real/.github/workflows"
+cp -R "$HERE/.github/scripts/podman_lane" "$real/.github/scripts/podman_lane"
 # Every release answers 999.0.0 in whatever form the tool tags it, so every pin
 # reads as behind and the rows are the pins that were read.
 awk -F'|' '/^[a-zA-Z0-9-]+\|[A-Za-z0-9-]+\/[A-Za-z0-9._-]+\|/ {print}' "$HERE/$SCRIPT_REL" >"$WORK/tools.txt"
@@ -270,10 +292,23 @@ while IFS="|" read -r _ repo prefix; do
 done <"$WORK/tools.txt"
 run "$real" "$WORK/real.up"
 check "the shipped tables read every pin of the real workflows" 0 "$RC"
-check "...all 16 sites, none skipped" 1 "$(grep -c 'watched 10 tools over 16 pin sites' "$WORK/err")"
-check "...and every site comes out behind 999.0.0" 16 "$(printf '%s\n' "$OUT" | grep -c '999.0.0$')"
+check "...all 17 sites, none skipped" 1 "$(grep -c 'watched 11 tools over 17 pin sites' "$WORK/err")"
+check "...and every site comes out behind 999.0.0" 17 "$(printf '%s\n' "$OUT" | grep -c '999.0.0$')"
 
 echo
 echo "passed: $pass  failed: $fail"
+# A tool whose repository has tags and no release at all (rust-lang/rustup answers 404 to `gh release view`) is read
+# from its tags. Without that the watch failed on that one pin, and a watch that fails reports no drift for any.
+fresh tags
+sed -i 's|^rust-lang/rustup\t1.29.3\t1.29.3|rust-lang/rustup\tNORELEASE\t1.29.3 1.29.2|' "$WORK/tags.up"
+run "$WORK/tags" "$WORK/tags.up"
+check "a tool with tags and no release is read from its tags: no drift, exit 0" "0 0" "$RC $(printf '%s\n' "$OUT" | grep -c 'rustup')"
+sed -i 's|^rust-lang/rustup\tNORELEASE\t1.29.3 1.29.2|rust-lang/rustup\tNORELEASE\t1.30.0 1.29.3|' "$WORK/tags.up"
+run "$WORK/tags" "$WORK/tags.up"
+check "...and a newer tag is reported as the drift of that pin" 1 "$(printf '%s\n' "$OUT" | grep -c '^rustup (RUSTUP_VERSION).*1.29.3.1.30.0$')"
+sed -i 's|^rust-lang/rustup\tNORELEASE\t1.30.0 1.29.3|rust-lang/rustup\tFAIL\t1.30.0|' "$WORK/tags.up"
+run "$WORK/tags" "$WORK/tags.up"
+check "a tool that answers neither a release nor a tag still fails the run, naming it" "1 1" "$([ "$RC" -ne 0 ] && echo 1 || echo 0) $(printf '%s\n' "$ERR" | grep -c 'could not read the latest release of rust-lang/rustup')"
+
 echo "DONE pin-watch-tools.test.sh $pass $fail"
 [ "$fail" -eq 0 ]

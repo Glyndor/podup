@@ -69,6 +69,7 @@ impl Engine {
 			.service_build_query(service_name, service, build, opts, &tag, &plan)
 			.await?;
 		if let Some(remote) = &plan.remote {
+			crate::errors::redact::remember_context(remote);
 			qs.push_str(&format!("&remote={}", urlencoded(remote)));
 		}
 		let prepared = PreparedBuild {

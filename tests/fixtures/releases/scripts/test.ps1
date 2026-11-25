@@ -3,8 +3,9 @@
 Release-signing regression test for issue #1359, PowerShell side.
 
 Mirrors the bash test in test.sh:
-  1. Per-asset .sig loop with three populated rotation slots.
-  2. SLOT_RE recognises the third slot (corrupt slot 3 and confirm failure).
+  1. Per-asset .sig loop with the two rotation slots the consumers read.
+  2. The second slot is read (corrupt slot 2 and confirm failure), and a
+     third slot is refused, whatever key it carries.
   3. L7 error class - the embedded Python verifier reports rc=3 for a
      malformed key, distinct from rc=1 (tampered).
 
@@ -42,9 +43,9 @@ function Assert-True {
 }
 
 # -----------------------------------------------------------------------------
-# Part 1: per-asset .sig loop with three rotation slots.
+# Part 1: per-asset .sig loop with the two rotation slots.
 # -----------------------------------------------------------------------------
-Write-Host 'Part 1: per-asset .sig verification (3 rotation slots)' -ForegroundColor Cyan
+Write-Host 'Part 1: per-asset .sig verification (2 rotation slots)' -ForegroundColor Cyan
 
 $InstallerPath = Join-Path $FixtureDir 'install.sh'
 $sigs = Get-ChildItem -Path (Join-Path $FixtureDir 'signatures') -Filter '*.sig'
@@ -64,9 +65,9 @@ foreach ($sig in $sigs) {
 Assert-True ($passed -eq $total) "only $passed of $total signatures verified"
 
 # -----------------------------------------------------------------------------
-# Part 2: third slot is the one that verifies.
+# Part 2: the second slot is the one that verifies, and a third is refused.
 # -----------------------------------------------------------------------------
-Write-Host 'Part 2: SLOT_RE picks up the third rotation slot' -ForegroundColor Cyan
+Write-Host 'Part 2: the second rotation slot is read, a third is refused' -ForegroundColor Cyan
 
 # A valid Ed25519 public key that is NOT the test key.
 $WrongPk = & python3 -c @'
@@ -80,8 +81,8 @@ print(base64.b64encode(raw).decode().rstrip("="))
 
 $tmpInstall = [System.IO.Path]::GetTempFileName()
 $installLines = Get-Content -LiteralPath (Join-Path $FixtureDir 'install.sh') | ForEach-Object {
-	if ($_ -match '^PODUP_RELEASE_PUBKEY3_B64=.*') {
-		"PODUP_RELEASE_PUBKEY3_B64=`"${PODUP_RELEASE_PUBKEY3_B64:-$WrongPk}`""
+	if ($_ -match '^PODUP_RELEASE_PUBKEY2_B64=.*') {
+		'PODUP_RELEASE_PUBKEY2_B64="${PODUP_RELEASE_PUBKEY2_B64:-' + $WrongPk + '}"'
 	} else { $_ }
 }
 Set-Content -LiteralPath $tmpInstall -Value $installLines -Encoding UTF8
@@ -89,8 +90,16 @@ Set-Content -LiteralPath $tmpInstall -Value $installLines -Encoding UTF8
 $podupSig = Join-Path $FixtureDir 'signatures/podup-linux-x86_64.sig'
 $podupAsset = Join-Path $FixtureDir 'podup-linux-x86_64'
 & python3 $Verifier $podupAsset $podupSig $tmpInstall *> $null
-Assert-True ($LASTEXITCODE -ne 0) 'verifier accepted a signature with the matching key in slot 3 replaced'
-Write-Host '  OK    slot 3 is recognised (its absence flips the verifier to a no-match error)'
+Assert-True ($LASTEXITCODE -ne 0) 'verifier accepted a signature with the matching key in slot 2 replaced'
+Write-Host '  OK    slot 2 is read (its absence flips the verifier to a no-match error)'
+
+# A third slot carrying the key that does verify is refused for being a slot nobody reads.
+$ThirdPk = (Get-Content -LiteralPath (Join-Path $FixtureDir 'test-key.b64') -Raw).Trim().TrimEnd('=')
+Add-Content -LiteralPath $tmpInstall -Value ('PODUP_RELEASE_PUBKEY3_B64="${PODUP_RELEASE_PUBKEY3_B64:-' + $ThirdPk + '}"')
+$thirdOut = & python3 $Verifier $podupAsset $podupSig $tmpInstall 2>&1 | Out-String
+Assert-True ($LASTEXITCODE -ne 0) 'verifier accepted a signature through a third slot that no consumer reads'
+Assert-True ($thirdOut -match 'a key in a slot nobody reads') 'a third slot was refused for the wrong reason'
+Write-Host '  OK    a third slot is refused, whatever key it carries'
 
 # -----------------------------------------------------------------------------
 # Part 3: L7 error class - the embedded Python in install.ps1 returns rc=3

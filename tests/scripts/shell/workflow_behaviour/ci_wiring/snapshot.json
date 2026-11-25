@@ -1,0 +1,1458 @@
+{
+ "audit.yml": {
+  "concurrency": {
+   "cancel-in-progress": false,
+   "group": "${{ github.workflow }}-${{ github.run_id }}"
+  },
+  "jobs": {
+   "audit": {
+    "steps": [],
+    "uses": "./.github/workflows/reusable-rust-audit.yml"
+   },
+   "audit-develop": {
+    "env": {
+     "GH_REPO": "${{ github.repository }}",
+     "GH_TOKEN": "${{ github.token }}"
+    },
+    "if": "github.event_name == 'schedule'",
+    "name": "start the develop audit",
+    "permissions": {
+     "actions": "write"
+    },
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": "Dispatch audit.yml on develop and wait for it",
+      "sha": "27fe53f615eac159",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 150
+   },
+   "report": {
+    "env": {
+     "AUDIT_RESULT": "${{ needs.audit.result }}",
+     "DISPATCH_RESULT": "${{ needs.audit-develop.result }}",
+     "GH_REPO": "${{ github.repository }}",
+     "GH_TOKEN": "${{ github.token }}",
+     "ISSUE_TITLE": "Scheduled dependency audit failed",
+     "REF_NAME": "${{ github.ref_name }}",
+     "RUN_URL": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+    },
+    "if": "always() && ((github.event_name == 'schedule' && (needs.audit.result != 'success' || needs.audit-develop.result != 'success')) || (github.event_name == 'workflow_dispatch' && !inputs.parent-run && needs.audit.result != 'success'))",
+    "name": "open an issue when the scheduled audit fails",
+    "needs": [
+     "audit",
+     "audit-develop"
+    ],
+    "permissions": {
+     "issues": "write"
+    },
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": "Open a single tracking issue and update it on each failure",
+      "sha": "92958f7ad35add9e",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 10
+   }
+  },
+  "name": "Security audit",
+  "permissions": {
+   "contents": "read"
+  },
+  "run-name": "${{ inputs.parent-run && format('Security audit of develop for run {0}', inputs.parent-run) || github.workflow }}",
+  "true": {
+   "merge_group": {
+    "types": [
+     "checks_requested"
+    ]
+   },
+   "pull_request": {
+    "branches": [
+     "main",
+     "develop"
+    ],
+    "types": [
+     "opened",
+     "synchronize"
+    ]
+   },
+   "schedule": [
+    {
+     "cron": "0 6 * * *"
+    }
+   ],
+   "workflow_dispatch": {
+    "inputs": {
+     "parent-run": {
+      "default": "",
+      "description": "Set by the scheduled run on main to its own run id when it starts the develop audit; empty for a manual dispatch",
+      "type": "string"
+     }
+    }
+   }
+  }
+ },
+ "ci.yml": {
+  "concurrency": {
+   "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
+   "group": "${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}"
+  },
+  "jobs": {
+   "cancel-others": {
+    "if": "${{ failure() && github.event_name == 'pull_request' }}",
+    "needs": "rust",
+    "permissions": {
+     "actions": "write",
+     "contents": "read"
+    },
+    "steps": [],
+    "uses": "./.github/workflows/reusable-cancel-others.yml"
+   },
+   "deprecations": {
+    "if": "always()",
+    "needs": "rust",
+    "permissions": {
+     "actions": "read",
+     "checks": "read",
+     "contents": "read"
+    },
+    "steps": [],
+    "uses": "./.github/workflows/reusable-deprecation-notices.yml"
+   },
+   "rust": {
+    "steps": [],
+    "uses": "./.github/workflows/reusable-rust-ci.yml",
+    "with": {
+     "coverage-threshold": 76,
+     "doc-warnings": true,
+     "extra-clippy-args": "--no-default-features --features watch,completions",
+     "extra-test-os": "[\"macos-latest\", \"windows-latest\"]",
+     "msrv": "1.88",
+     "package-check": false,
+     "semver-check": false
+    }
+   },
+   "stop-on-failure": {
+    "permissions": {
+     "actions": "write",
+     "checks": "read",
+     "contents": "read"
+    },
+    "steps": [],
+    "uses": "./.github/workflows/reusable-stop-on-failure.yml"
+   }
+  },
+  "name": "CI",
+  "permissions": {
+   "contents": "read"
+  },
+  "true": {
+   "merge_group": {
+    "types": [
+     "checks_requested"
+    ]
+   },
+   "pull_request": {
+    "branches": [
+     "main",
+     "develop"
+    ],
+    "types": [
+     "opened",
+     "synchronize"
+    ]
+   },
+   "push": {
+    "branches": [
+     "main"
+    ]
+   }
+  }
+ },
+ "commit-hygiene.yml": {
+  "concurrency": {
+   "cancel-in-progress": false,
+   "group": "${{ github.workflow }}-${{ github.run_id }}"
+  },
+  "jobs": {
+   "cancel-others": {
+    "if": "${{ failure() && github.event_name == 'pull_request' }}",
+    "needs": [
+     "commit-identity",
+     "secret-scan",
+     "pin-values"
+    ],
+    "permissions": {
+     "actions": "write",
+     "contents": "read"
+    },
+    "steps": [],
+    "uses": "./.github/workflows/reusable-cancel-others.yml"
+   },
+   "commit-identity": {
+    "name": "commit identity${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
+    "permissions": {
+     "contents": "read"
+    },
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "3454c500a3dbc3ff",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Take the check from the base commit",
+      "sha": "c14703ae13b99332",
+      "uses": null
+     },
+     {
+      "name": "Every commit uses a GitHub noreply address",
+      "sha": "66250331c3bb0c17",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 5
+   },
+   "pin-values": {
+    "env": {
+     "BASE": "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
+     "HEAD": "${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}"
+    },
+    "name": "pin values${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
+    "permissions": {
+     "contents": "read"
+    },
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "d47e05bc7dd10448",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "sha": "2c2cfb428f4fb43a",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Take the judge from the base commit",
+      "sha": "65b4bd3420587ac0",
+      "uses": null
+     },
+     {
+      "name": "Every pin is the commit of its tag",
+      "sha": "e2da0f34d605fa6c",
+      "uses": null,
+      "working-directory": "${{ runner.temp }}"
+     }
+    ],
+    "timeout-minutes": 10
+   },
+   "secret-scan": {
+    "name": "secret scan${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
+    "permissions": {
+     "contents": "read"
+    },
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "3454c500a3dbc3ff",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Take the check from the base commit",
+      "sha": "50d2ababa4217153",
+      "uses": null
+     },
+     {
+      "name": "The change adds no credential-shaped line",
+      "sha": "77d26d2406ce4023",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 5
+   }
+  },
+  "name": "commit hygiene",
+  "permissions": {},
+  "true": {
+   "merge_group": {
+    "types": [
+     "checks_requested"
+    ]
+   },
+   "pull_request": {
+    "branches": [
+     "main",
+     "develop"
+    ],
+    "types": [
+     "opened",
+     "synchronize"
+    ]
+   }
+  }
+ },
+ "dco.yml": {
+  "concurrency": {
+   "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
+   "group": "${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}"
+  },
+  "jobs": {
+   "cancel-others": {
+    "if": "${{ failure() && github.event_name == 'pull_request' }}",
+    "needs": "dco",
+    "permissions": {
+     "actions": "write",
+     "contents": "read"
+    },
+    "steps": [],
+    "uses": "./.github/workflows/reusable-cancel-others.yml"
+   },
+   "dco": {
+    "steps": [],
+    "uses": "./.github/workflows/reusable-dco.yml"
+   }
+  },
+  "name": "DCO",
+  "permissions": {
+   "contents": "read"
+  },
+  "true": {
+   "merge_group": {
+    "types": [
+     "checks_requested"
+    ]
+   },
+   "pull_request": {
+    "branches": [
+     "main",
+     "develop"
+    ],
+    "types": [
+     "opened",
+     "synchronize"
+    ]
+   }
+  }
+ },
+ "line-limit.yml": {
+  "concurrency": {
+   "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
+   "group": "${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}"
+  },
+  "jobs": {
+   "cancel-others": {
+    "if": "${{ failure() && github.event_name == 'pull_request' }}",
+    "needs": "line-limit",
+    "permissions": {
+     "actions": "write",
+     "contents": "read"
+    },
+    "steps": [],
+    "uses": "./.github/workflows/reusable-cancel-others.yml"
+   },
+   "line-limit": {
+    "steps": [],
+    "uses": "./.github/workflows/reusable-line-limit.yml",
+    "with": {
+     "exclude-pattern": "^bench/scenarios/",
+     "extensions": "rs go ts tsx js jsx mjs cjs py sh astro vue svelte yml yaml"
+    }
+   }
+  },
+  "name": "Line limit",
+  "permissions": {
+   "contents": "read"
+  },
+  "true": {
+   "merge_group": {
+    "types": [
+     "checks_requested"
+    ]
+   },
+   "pull_request": {
+    "branches": [
+     "main",
+     "develop"
+    ],
+    "types": [
+     "opened",
+     "synchronize"
+    ]
+   },
+   "push": {
+    "branches": [
+     "main"
+    ]
+   }
+  }
+ },
+ "main-guard.yml": {
+  "concurrency": {
+   "cancel-in-progress": false,
+   "group": "${{ github.workflow }}-${{ github.run_id }}"
+  },
+  "jobs": {
+   "develop-only": {
+    "steps": [],
+    "uses": "./.github/workflows/reusable-main-guard.yml"
+   }
+  },
+  "name": "guard",
+  "permissions": {},
+  "true": {
+   "pull_request": {
+    "branches": [
+     "main"
+    ],
+    "types": [
+     "opened",
+     "synchronize",
+     "reopened",
+     "edited"
+    ]
+   }
+  }
+ },
+ "podman-lane.yml": {
+  "concurrency": {
+   "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
+   "group": "podman-lane-${{ github.event_name }}-${{ github.ref }}"
+  },
+  "jobs": {
+   "cancel-others": {
+    "if": "${{ failure() && github.event_name == 'pull_request' }}",
+    "needs": "podman-majors",
+    "permissions": {
+     "actions": "write",
+     "contents": "read"
+    },
+    "steps": [],
+    "uses": "./.github/workflows/reusable-cancel-others.yml"
+   },
+   "decide": {
+    "name": "Decide whether the VM has anything to look at",
+    "outputs": {
+     "engine": "${{ steps.files.outputs.engine }}"
+    },
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "753e982e1c332bfd",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "List the changed files against the base",
+      "sha": "eb10bb057d6a1cc4",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 10
+   },
+   "podman-majors": {
+    "if": "always()",
+    "name": "Supported Podman majors${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
+    "needs": [
+     "decide",
+     "podman-vm",
+     "podman-native"
+    ],
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": "Reflect the matrix result",
+      "sha": "ab99176dc793831b",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 10
+   },
+   "podman-native": {
+    "env": {
+     "GLYNDOR_APT_FPR": "9ADF04EA8C3139CDB67303CFA6705C2EA153F3D6",
+     "PODMAN_FLOOR": "6.2.0"
+    },
+    "if": "${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.decide.outputs.engine != 'false' }}",
+    "needs": "decide",
+    "permissions": {
+     "contents": "read"
+    },
+    "runs-on": "ubuntu-24.04",
+    "steps": [
+     {},
+     {
+      "name": "Install Podman from the Glyndor apt repository",
+      "timeout-minutes": 25
+     },
+     {
+      "name": "Install the Rust toolchain"
+     },
+     {
+      "name": "Build the engine test binaries"
+     },
+     {
+      "name": "Start the user Podman socket"
+     },
+     {
+      "name": "Run the engine suite and the leak scan"
+     },
+     {
+      "if": "${{ !cancelled() && steps.install.outcome == 'success' }}",
+      "name": "Run the Quadlet tests against the generator of this Podman"
+     },
+     {
+      "if": "always()",
+      "name": "Show what AppArmor refused"
+     },
+     {
+      "if": "always()",
+      "name": "Report the phases"
+     }
+    ],
+    "timeout-minutes": 60
+   },
+   "podman-vm": {
+    "if": "${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}",
+    "name": "podman-vm (${{ matrix.podman }}${{ matrix.mode == 'coverage' && ', coverage' || '' }})",
+    "needs": "decide",
+    "runs-on": "ubuntu-24.04",
+    "steps": [
+     {},
+     {
+      "if": "needs.decide.outputs.engine == 'false'",
+      "name": "Nothing to boot"
+     },
+     {
+      "if": "needs.decide.outputs.engine != 'false'",
+      "name": "Install qemu + cloud tools",
+      "timeout-minutes": 18
+     },
+     {
+      "if": "needs.decide.outputs.engine != 'false'",
+      "name": "Fetch Fedora cloud image (Podman 6 = rawhide)"
+     },
+     {
+      "if": "needs.decide.outputs.engine != 'false'",
+      "name": "Build cloud-init seed"
+     },
+     {
+      "if": "needs.decide.outputs.engine != 'false'",
+      "name": "Copy the judge out of the workspace"
+     },
+     {
+      "if": "needs.decide.outputs.engine != 'false'",
+      "name": "Boot VM (9p = repo only) + capture"
+     },
+     {
+      "if": "needs.decide.outputs.engine != 'false'",
+      "name": "Verify the VM"
+     }
+    ],
+    "strategy": {
+     "fail-fast": false,
+     "matrix": {
+      "include": [
+       {
+        "job_minutes": 100,
+        "mode": "suite",
+        "vm_seconds": 4500
+       },
+       {
+        "job_minutes": 129,
+        "mode": "coverage",
+        "vm_seconds": 6240
+       }
+      ],
+      "mode": [
+       "suite",
+       "coverage"
+      ],
+      "podman": [
+       "6"
+      ]
+     }
+    },
+    "timeout-minutes": "${{ matrix.job_minutes }}"
+   }
+  },
+  "name": "podman-lane",
+  "permissions": {
+   "contents": "read"
+  },
+  "true": {
+   "merge_group": {
+    "types": [
+     "checks_requested"
+    ]
+   },
+   "pull_request": {
+    "branches": [
+     "main",
+     "develop"
+    ],
+    "types": [
+     "opened",
+     "synchronize"
+    ]
+   },
+   "schedule": [
+    {
+     "cron": "0 9 * * *"
+    }
+   ],
+   "workflow_dispatch": null
+  }
+ },
+ "reusable-cancel-others.yml": {
+  "concurrency": {
+   "cancel-in-progress": false,
+   "group": "cancel-others-${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.run_id }}"
+  },
+  "jobs": {
+   "cancel": {
+    "if": "github.event_name == 'pull_request'",
+    "name": "cancel the other runs of this commit",
+    "permissions": {
+     "actions": "write",
+     "contents": "read"
+    },
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "6661403ee47251dc",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Run the base commit's copy of the cancel script",
+      "sha": "466c469c207f224b",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 5
+   }
+  },
+  "name": "Cancel the other runs of a failed commit (reusable)",
+  "permissions": {},
+  "true": {
+   "workflow_call": null
+  }
+ },
+ "reusable-dco.yml": {
+  "concurrency": {
+   "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
+   "group": "dco-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}"
+  },
+  "jobs": {
+   "dco": {
+    "name": "Signed-off-by present on every commit${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "753e982e1c332bfd",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Take the check from the base commit",
+      "sha": "fbe0478d2947b1d4",
+      "uses": null
+     },
+     {
+      "name": "Every commit is signed off and no merge hides a change",
+      "sha": "8eee61c2bc0731d2",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 10
+   }
+  },
+  "name": "DCO (reusable)",
+  "permissions": {
+   "contents": "read"
+  },
+  "true": {
+   "workflow_call": null
+  }
+ },
+ "reusable-deprecation-notices.yml": {
+  "jobs": {
+   "notices": {
+    "env": {
+     "BASE": "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}"
+    },
+    "name": "no deprecation notices${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
+    "permissions": {
+     "actions": "read",
+     "checks": "read",
+     "contents": "read"
+    },
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "d620817c305933d9",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "sha": "c956d71bef0d046f",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Take the check from the base commit",
+      "sha": "1158b0c5b9b26cb2",
+      "uses": null
+     },
+     {
+      "name": "Read the annotations of every job of this run",
+      "sha": "4c02e9d3a2335a4e",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 10
+   }
+  },
+  "name": "Deprecation notices (reusable)",
+  "permissions": {},
+  "true": {
+   "workflow_call": null
+  }
+ },
+ "reusable-line-limit.yml": {
+  "concurrency": {
+   "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
+   "group": "line-limit-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}"
+  },
+  "jobs": {
+   "line-limit": {
+    "name": "line limit${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Check file lengths",
+      "sha": "b00249359f27ebd2",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 10
+   }
+  },
+  "name": "Line limit (reusable)",
+  "permissions": {
+   "contents": "read"
+  },
+  "true": {
+   "workflow_call": {
+    "inputs": {
+     "exclude-pattern": {
+      "default": "^bench/scenarios/",
+      "description": "Optional extended regex; matching paths are skipped",
+      "type": "string"
+     },
+     "extensions": {
+      "default": "rs go ts tsx js jsx mjs cjs py sh astro vue svelte yml yaml",
+      "description": "Space-separated source file extensions to check",
+      "type": "string"
+     },
+     "hard-limit": {
+      "default": 500,
+      "description": "Files with more lines than this fail the build",
+      "type": "number"
+     },
+     "soft-limit": {
+      "default": 300,
+      "description": "Files with more lines than this emit a warning",
+      "type": "number"
+     }
+    }
+   }
+  }
+ },
+ "reusable-main-guard.yml": {
+  "concurrency": {
+   "cancel-in-progress": false,
+   "group": "main-guard-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}"
+  },
+  "jobs": {
+   "develop-only": {
+    "if": "github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'",
+    "name": "develop-only",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": "Require develop as source branch",
+      "sha": "2e45dc73745fadd3",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 10
+   }
+  },
+  "name": "Main guard (reusable)",
+  "permissions": {},
+  "true": {
+   "workflow_call": null
+  }
+ },
+ "reusable-rust-audit.yml": {
+  "concurrency": {
+   "cancel-in-progress": false,
+   "group": "rust-audit-${{ github.workflow }}-${{ github.run_id }}-${{ inputs.working-directory }}"
+  },
+  "jobs": {
+   "audit": {
+    "defaults": {
+     "run": {
+      "working-directory": "${{ inputs.working-directory }}"
+     }
+    },
+    "name": "cargo audit${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Install toolchain",
+      "sha": "ce42d5805d8f88ba",
+      "uses": null
+     },
+     {
+      "name": "Download cargo-audit and check its sum",
+      "sha": "14396717b487a351",
+      "uses": null
+     },
+     {
+      "name": "Run cargo audit",
+      "sha": "02bfd00c6b63fdc2",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 30
+   },
+   "deny": {
+    "defaults": {
+     "run": {
+      "working-directory": "${{ inputs.working-directory }}"
+     }
+    },
+    "name": "cargo deny${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Install toolchain",
+      "sha": "ce42d5805d8f88ba",
+      "uses": null
+     },
+     {
+      "name": "Download cargo-deny and check its sum",
+      "sha": "95d948f30c2df174",
+      "uses": null
+     },
+     {
+      "name": "Run cargo deny",
+      "sha": "bfec559426c3b59b",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 30
+   }
+  },
+  "name": "Rust audit (reusable)",
+  "permissions": {
+   "contents": "read"
+  },
+  "true": {
+   "workflow_call": {
+    "inputs": {
+     "cargo-audit-sha256": {
+      "default": "4f01c74ed84b2dffd0b1d37012a62cdf2a92c96e25bdf8eec7fcc0d4d3eb7811",
+      "description": "sha256 of that release's x86_64-unknown-linux-musl archive; travels with cargo-audit-version",
+      "type": "string"
+     },
+     "cargo-audit-version": {
+      "default": "0.23.0",
+      "description": "Exact version of cargo-audit to download; bumped by editing this file",
+      "type": "string"
+     },
+     "cargo-deny-sha256": {
+      "default": "13f7e825e9cb811c2f8de63f29b0f45851dfb53004029f0f2501af524728364d",
+      "description": "sha256 of that release's x86_64-unknown-linux-musl archive; travels with cargo-deny-version",
+      "type": "string"
+     },
+     "cargo-deny-version": {
+      "default": "0.22.1",
+      "description": "Exact version of cargo-deny to download; bumped by editing this file",
+      "type": "string"
+     },
+     "toolchain": {
+      "default": "1.100",
+      "description": "Rust toolchain to pin the audit and deny jobs to",
+      "type": "string"
+     },
+     "working-directory": {
+      "default": ".",
+      "description": "Directory containing the Cargo workspace",
+      "type": "string"
+     }
+    }
+   }
+  }
+ },
+ "reusable-rust-ci.yml": {
+  "concurrency": {
+   "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
+   "group": "rust-ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ inputs.working-directory }}"
+  },
+  "env": {
+   "BASE_REF": "${{ github.event.pull_request.base.ref }}",
+   "BASE_SHA": "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}",
+   "CARGO_INCREMENTAL": "0",
+   "CARGO_PROFILE_DEV_DEBUG": "line-tables-only",
+   "EVENT": "${{ github.event_name }}",
+   "HEAD_SHA": "${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}"
+  },
+  "jobs": {
+   "classify": {
+    "name": "Classify the range",
+    "outputs": {
+     "build": "${{ steps.build.outputs.build }}",
+     "ci_only": "${{ steps.decide.outputs.ci_only }}",
+     "docs_only": "${{ steps.decide.outputs.docs_only }}",
+     "run": "${{ steps.decide.outputs.run }}"
+    },
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "753e982e1c332bfd",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Decide whether the Rust lanes must run",
+      "sha": "df7231b0dadcbf68",
+      "uses": null
+     },
+     {
+      "name": "Decide whether the root build inputs changed",
+      "sha": "62d358a5610c5b3d",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 10
+   },
+   "coverage": {
+    "defaults": {
+     "run": {
+      "working-directory": "${{ inputs.working-directory }}"
+     }
+    },
+    "if": "${{ inputs.coverage-threshold > 0 && !cancelled() && (github.event_name != 'pull_request' || (needs.lint.result != 'failure' && needs.test.result != 'failure')) && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}",
+    "name": "Coverage",
+    "needs": [
+     "classify",
+     "lint",
+     "test"
+    ],
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Install toolchain",
+      "sha": "717948cfb523641b",
+      "uses": null
+     },
+     {
+      "sha": "b02c501fa795a627",
+      "uses": "actions/cache@<commit>"
+     },
+     {
+      "name": "Install cargo-llvm-cov",
+      "sha": "42756c2ee576405b",
+      "uses": null
+     },
+     {
+      "if": "inputs.podman",
+      "name": "Start Podman socket",
+      "sha": "5c086abe3ed31d6e",
+      "uses": null
+     },
+     {
+      "name": "Coverage gate",
+      "sha": "9d81d983c8e6bd65",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 30
+   },
+   "doc": {
+    "defaults": {
+     "run": {
+      "working-directory": "${{ inputs.working-directory }}"
+     }
+    },
+    "if": "${{ !cancelled() && inputs.doc-warnings && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.build != 'false') }}",
+    "name": "Doc warnings",
+    "needs": [
+     "classify",
+     "lint"
+    ],
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Install toolchain",
+      "sha": "ce42d5805d8f88ba",
+      "uses": null
+     },
+     {
+      "sha": "68e10bd5c2b0debe",
+      "uses": "actions/cache@<commit>"
+     },
+     {
+      "name": "Build docs with warnings denied",
+      "sha": "7ddffeb879704f5a",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 10
+   },
+   "gate": {
+    "if": "always()",
+    "name": "Gate${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
+    "needs": [
+     "classify",
+     "lint",
+     "test",
+     "test-extra",
+     "coverage",
+     "msrv",
+     "doc",
+     "package",
+     "semver"
+    ],
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": "Certify the plan and every skip",
+      "sha": "b55bf627dcb8fccf",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 10
+   },
+   "lint": {
+    "defaults": {
+     "run": {
+      "working-directory": "${{ inputs.working-directory }}"
+     }
+    },
+    "if": "${{ !cancelled() }}",
+    "name": "Format & lint",
+    "needs": "classify",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "if": "needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true'))",
+      "name": "Install toolchain",
+      "sha": "1f70cf4057a9b38c",
+      "uses": null
+     },
+     {
+      "if": "needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true'))",
+      "sha": "4e58b8e5cafb9102",
+      "uses": "actions/cache@<commit>"
+     },
+     {
+      "if": "needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true'))",
+      "name": "rustfmt",
+      "sha": "2ae32fed31813d96",
+      "uses": null
+     },
+     {
+      "if": "needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true'))",
+      "name": "clippy",
+      "sha": "bab1d5d5bc65b454",
+      "uses": null
+     },
+     {
+      "name": "no planning-note references",
+      "sha": "f653b5b91c9f845c",
+      "uses": null,
+      "working-directory": "."
+     },
+     {
+      "name": "no vetoed vocabulary",
+      "sha": "0c60e640fe378b64",
+      "uses": null,
+      "working-directory": "."
+     },
+     {
+      "name": "no private document references",
+      "sha": "bb507524ab8bfa4e",
+      "uses": null,
+      "working-directory": "."
+     },
+     {
+      "name": "folders hold at most twenty files",
+      "sha": "692fabc0038f29eb",
+      "uses": null,
+      "working-directory": "."
+     }
+    ],
+    "timeout-minutes": 10
+   },
+   "msrv": {
+    "defaults": {
+     "run": {
+      "working-directory": "${{ inputs.working-directory }}"
+     }
+    },
+    "if": "${{ !cancelled() && inputs.msrv != '' && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.build != 'false') }}",
+    "name": "MSRV (${{ inputs.msrv }})",
+    "needs": [
+     "classify",
+     "lint"
+    ],
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Install MSRV toolchain",
+      "sha": "d0854b8c8def48f4",
+      "uses": null
+     },
+     {
+      "sha": "8b02d9782d90ee59",
+      "uses": "actions/cache@<commit>"
+     },
+     {
+      "name": "Build on the declared MSRV",
+      "sha": "e0865c65da90b82f",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 15
+   },
+   "package": {
+    "defaults": {
+     "run": {
+      "working-directory": "${{ inputs.working-directory }}"
+     }
+    },
+    "if": "inputs.package-check",
+    "name": "Package check",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Install toolchain",
+      "sha": "ce42d5805d8f88ba",
+      "uses": null
+     },
+     {
+      "name": "cargo publish --dry-run",
+      "sha": "28b2fb7610d3e7b2",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 20
+   },
+   "semver": {
+    "defaults": {
+     "run": {
+      "working-directory": "${{ inputs.working-directory }}"
+     }
+    },
+    "if": "inputs.semver-check",
+    "name": "Semver checks",
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Install toolchain",
+      "sha": "ce42d5805d8f88ba",
+      "uses": null
+     },
+     {
+      "name": "Install cargo-semver-checks",
+      "sha": "3ba576693b67f485",
+      "uses": null
+     },
+     {
+      "name": "Check for public API breaks",
+      "sha": "d48751c4c3c59f93",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 20
+   },
+   "test": {
+    "defaults": {
+     "run": {
+      "working-directory": "${{ inputs.working-directory }}"
+     }
+    },
+    "if": "${{ !cancelled() && (github.event_name != 'pull_request' || needs.lint.result != 'failure') && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}",
+    "name": "Test",
+    "needs": [
+     "classify",
+     "lint"
+    ],
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Install toolchain",
+      "sha": "ce42d5805d8f88ba",
+      "uses": null
+     },
+     {
+      "sha": "dd45e120d31d35d1",
+      "uses": "actions/cache@<commit>"
+     },
+     {
+      "if": "${{ !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}",
+      "name": "Tests",
+      "sha": "b59f5cea6bb5177f",
+      "uses": null
+     },
+     {
+      "if": "needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true'",
+      "name": "Documentation tests",
+      "sha": "84c79d0256dca870",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 20
+   },
+   "test-extra": {
+    "defaults": {
+     "run": {
+      "shell": "bash",
+      "working-directory": "${{ inputs.working-directory }}"
+     }
+    },
+    "if": "${{ inputs.extra-test-os != '[]' && !cancelled() && (github.event_name != 'pull_request' || (needs.lint.result != 'failure' && needs.test.result != 'failure')) && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}",
+    "name": "Test (${{ matrix.os }})",
+    "needs": [
+     "classify",
+     "lint",
+     "test"
+    ],
+    "runs-on": "${{ matrix.os }}",
+    "steps": [
+     {
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Install toolchain",
+      "sha": "ce42d5805d8f88ba",
+      "uses": null
+     },
+     {
+      "sha": "dd45e120d31d35d1",
+      "uses": "actions/cache@<commit>"
+     },
+     {
+      "name": "Tests",
+      "sha": "fb8c3e3e083446f1",
+      "uses": null
+     }
+    ],
+    "strategy": {
+     "fail-fast": true,
+     "matrix": {
+      "os": "${{ fromJSON(inputs.extra-test-os) }}"
+     }
+    },
+    "timeout-minutes": 35
+   }
+  },
+  "name": "Rust CI (reusable)",
+  "permissions": {
+   "contents": "read"
+  },
+  "true": {
+   "workflow_call": {
+    "inputs": {
+     "coverage-ignore-regex": {
+      "default": "",
+      "description": "Regex of file paths to exclude from coverage (e.g. code covered only by a separate DB integration job)",
+      "type": "string"
+     },
+     "coverage-threshold": {
+      "default": 76,
+      "description": "Minimum line coverage percentage (0 disables the gate)",
+      "type": "number"
+     },
+     "doc-warnings": {
+      "default": true,
+      "description": "Build the docs with -D warnings so broken doc links fail the build",
+      "type": "boolean"
+     },
+     "extra-clippy-args": {
+      "default": "--no-default-features --features watch,completions",
+      "description": "Extra cargo clippy arguments for a second lint pass over another feature set (e.g. '--no-default-features --features watch,completions')",
+      "type": "string"
+     },
+     "extra-test-os": {
+      "default": "[\"macos-latest\", \"windows-latest\"]",
+      "description": "JSON array of extra runner images to also run tests on (e.g. '[\"macos-latest\"]')",
+      "type": "string"
+     },
+     "llvm-cov-version": {
+      "default": "0.9.2",
+      "description": "Exact version of the tool; bumped by editing this file",
+      "type": "string"
+     },
+     "msrv": {
+      "default": "1.88",
+      "description": "Minimum supported Rust version to verify a --locked build against (empty disables the check)",
+      "type": "string"
+     },
+     "package-check": {
+      "default": false,
+      "description": "Run cargo publish --dry-run on PRs to catch packaging breakage before tagging",
+      "type": "boolean"
+     },
+     "podman": {
+      "default": false,
+      "description": "Start rootless Podman socket before running the coverage job (ubuntu-latest only)",
+      "type": "boolean"
+     },
+     "semver-check": {
+      "default": false,
+      "description": "Run cargo-semver-checks to flag public API breaks against the last published release",
+      "type": "boolean"
+     },
+     "semver-checks-version": {
+      "default": "0.51.0",
+      "description": "Exact version of the tool; bumped by editing this file",
+      "type": "string"
+     },
+     "toolchain": {
+      "default": "1.100",
+      "description": "Rust toolchain to pin the build, lint and test jobs to",
+      "type": "string"
+     },
+     "working-directory": {
+      "default": ".",
+      "description": "Directory containing the Cargo workspace",
+      "type": "string"
+     }
+    }
+   }
+  }
+ },
+ "reusable-stop-on-failure.yml": {
+  "jobs": {
+   "watch": {
+    "if": "${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}",
+    "name": "stop at the first failure",
+    "permissions": {
+     "actions": "write",
+     "checks": "read",
+     "contents": "read"
+    },
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "6661403ee47251dc",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Watch the check runs of the commit and cut the rest at the first failure",
+      "sha": "09e2a4a9348de6c0",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 125
+   }
+  },
+  "name": "Stop the runs of a commit at its first failure (reusable)",
+  "permissions": {},
+  "true": {
+   "workflow_call": null
+  }
+ },
+ "workflow-lint.yml": {
+  "concurrency": {
+   "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
+   "group": "${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}"
+  },
+  "jobs": {
+   "cancel-others": {
+    "if": "${{ failure() && github.event_name == 'pull_request' }}",
+    "needs": "workflow-lint",
+    "permissions": {
+     "actions": "write",
+     "contents": "read"
+    },
+    "steps": [],
+    "uses": "./.github/workflows/reusable-cancel-others.yml"
+   },
+   "workflow-lint": {
+    "steps": [],
+    "uses": "./.github/workflows/reusable-workflow-lint.yml"
+   }
+  },
+  "name": "Workflow lint",
+  "permissions": {
+   "contents": "read"
+  },
+  "true": {
+   "merge_group": {
+    "types": [
+     "checks_requested"
+    ]
+   },
+   "pull_request": {
+    "branches": [
+     "main",
+     "develop"
+    ],
+    "types": [
+     "opened",
+     "synchronize"
+    ]
+   },
+   "push": {
+    "branches": [
+     "main"
+    ]
+   }
+  }
+ }
+}

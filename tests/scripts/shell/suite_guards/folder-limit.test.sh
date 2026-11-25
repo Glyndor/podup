@@ -140,6 +140,28 @@ exception leaf 21
 expect 'ceiling can decrease' 0 'folder-limit: OK' env BASE="$base" bash "$script"
 expect 'unreadable base is an error' 128 '' env BASE=deadbeef bash "$script"
 
+# An exception that the change itself adds does not approve the change.
+new_repo selfapproval
+files base_leaf 3
+git commit -qm base
+base="$(git rev-parse HEAD)"
+files fresh 21
+exception fresh 21
+expect 'a new folder of 21 files with its own new exception is refused' 1 $'fresh\t21\t21\tover the base\'s ceiling of 20' env BASE="$base" bash "$script"
+expect 'the same tree without a base passes, which is why the base is passed' 0 'folder-limit: OK' bash "$script"
+git commit -qm tree
+new_repo selfapproval2
+files grown 21
+exception grown 25
+git commit -qm base
+base="$(git rev-parse HEAD)"
+files extra 1
+expect 'a folder within the ceiling its base gives it passes' 0 'folder-limit: OK' env BASE="$base" bash "$script"
+files grown 26
+expect 'a folder over the ceiling its base gives it is refused whatever the exception says' 1 'over the base' env BASE="$base" bash "$script"
+exception grown 30
+expect 'raising the exception to cover the growth is refused too' 1 'over the base' env BASE="$base" bash "$script"
+
 # Sabotage: the same 21-file folder under a copy whose default ceiling is raised.
 # The refusals above are not vacuous because that copy lets the folder through.
 # shellcheck disable=SC2016  # the pattern is text to match, not an expansion

@@ -4,18 +4,13 @@
 //! whether the range touches anything the lint, test, coverage and
 //! extra-platform lanes read, and skips what it does not need to run.
 //!
-//! The names the ruleset requires are `rust / Format & lint`, `rust / Test`,
-//! `rust / Coverage`, `rust / Doc warnings`, `rust / MSRV` and
-//! `rust / Extra platforms`. A skipped job reports `skipped`, which a required
-//! check accepts, so the jobs whose own name is required (`Test`, `Coverage`)
-//! are skipped whole by an `if:` on the `classify` job's output. Two shapes
-//! are never skipped that way:
-//!
-//! - `lint` also runs checks that must see a documentation-only change, so it
-//!   skips only its heavy STEPS, behind a decision of its own.
-//! - the macOS and Windows matrix is not required by name (`Test (${{
-//!   matrix.os }})` moves with the matrix), `Extra platforms` is, so the
-//!   matrix is skipped whole while the aggregate gate always runs.
+//! The name the rulesets require is `rust / Gate`. A skipped job reports
+//! `skipped`, which a required check accepts, so the suites are not required by
+//! name: the jobs skipped whole (`Test`, `Coverage`, the matrix, `MSRV`, `Doc
+//! warnings`) are skipped by an `if:` on the `classify` job's output, and the gate
+//! reads each result and certifies each skip. `lint` also runs checks that must
+//! see a documentation-only change, so it skips only its heavy STEPS, behind the
+//! decision `classify` gives it.
 //!
 //! Properties asserted here:
 //!
@@ -28,8 +23,14 @@
 //! 3. The judge is read from the reviewed base commit, never from the pull
 //!    request's own tree, so a pull request cannot rewrite the judge of its
 //!    own diff.
-//! 4. The aggregate gates keep running and fail on anything but success or
+//! 4. The aggregate gate keeps running and fails on anything but success or
 //!    skipped.
+//!
+//!    `rust / Gate` is the one that certifies the pipeline: it waits for every
+//!    other job, runs on every outcome, and its verdict is exercised by
+//!    `tests/scripts/shell/workflow_behaviour/rust-gate.test.sh`. The tests
+//!    below hold its wiring: nothing it certifies is left out of its `needs`,
+//!    and every job it certifies starts even when the plan failed.
 //!
 //! 5. The classifier lets files skip the Rust lanes that the Rust test
 //!    `no_private_document_references` still reads (a shell test, the
@@ -62,7 +63,7 @@ const JOB_GOVERNED: [(&str, &str); 3] = [
 ];
 
 /// The guard every heavy step of a step-governed job carries.
-const GUARD: &str = "steps.decide.outputs.run != 'false'";
+const GUARD: &str = "needs.classify.outputs.run != 'false'";
 
 fn reusable() -> Value {
 	let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/reusable-rust-ci.yml");
@@ -73,6 +74,17 @@ fn reusable() -> Value {
 
 fn job(spec: &Value, id: &str) -> Value {
 	spec["jobs"][id].clone()
+}
+
+fn needs_of(job: &Value) -> Vec<String> {
+	match &job["needs"] {
+		Value::String(one) => vec![one.clone()],
+		Value::Sequence(many) => many
+			.iter()
+			.filter_map(|v| v.as_str().map(str::to_string))
+			.collect(),
+		_ => Vec::new(),
+	}
 }
 
 fn steps(job: &Value) -> Vec<Value> {
@@ -128,7 +140,7 @@ fn the_guard_runs_the_lanes_when_the_decision_never_arrived() {
 	for (id, _) in STEP_GOVERNED {
 		for step in steps(&job(&spec, id)) {
 			let cond = if_text(&step);
-			if !cond.contains("steps.decide.outputs.run") {
+			if !cond.contains("needs.classify.outputs.run") {
 				continue;
 			}
 			assert!(
@@ -143,29 +155,52 @@ fn the_guard_runs_the_lanes_when_the_decision_never_arrived() {
 #[test]
 fn the_judge_is_read_from_the_base_and_never_from_the_working_tree() {
 	let spec = reusable();
-	for id in ["classify", "lint"] {
+	// `classify` is the only job that judges, and it asks twice: which lanes
+	// run, and whether the root build inputs changed.
+	for (id, script) in [
+		("classify", "rust-ci-inputs.sh"),
+		("classify", "rust-build-inputs.sh"),
+	] {
 		let job = job(&spec, id);
 		let asked: Vec<String> = steps(&job)
 			.iter()
 			.map(|s| run_text(s).to_string())
-			.filter(|r| r.contains("rust-ci-inputs.sh"))
+			.filter(|r| r.contains(script))
 			.collect();
 		assert_eq!(
 			asked.len(),
 			1,
-			"{id} asks the classifier {asked:?}; exactly one question per job"
+			"{id} asks {script} {asked:?}; exactly one question per judge"
 		);
 		assert!(
-			asked[0].contains("git show \"$BASE_SHA:.github/scripts/checks/rust-ci-inputs.sh\""),
-			"{id} does not read the judge from the reviewed base: {}",
+			asked[0].contains(&format!(
+				"git show \"$BASE_SHA:.github/scripts/checks/{script}\""
+			)),
+			"{id} does not read {script} from the reviewed base: {}",
 			asked[0]
 		);
 		assert!(
-			!asked[0].contains("bash .github/scripts/checks/rust-ci-inputs.sh"),
-			"{id} runs the judge from the working tree, so a pull request could \
+			!asked[0].contains(&format!("bash .github/scripts/checks/{script}")),
+			"{id} runs {script} from the working tree, so a pull request could \
 			 rewrite the judge of its own diff: {}",
 			asked[0]
 		);
+	}
+	// No other job asks either judge: one plan, certified by the gate.
+	for (id, j) in spec["jobs"].as_mapping().expect("jobs").iter() {
+		let id = id.as_str().unwrap_or_default();
+		if id == "classify" {
+			continue;
+		}
+		for step in steps(j) {
+			let run = run_text(&step);
+			assert!(
+				!run.contains("rust-ci-inputs.sh") && !run.contains("rust-build-inputs.sh"),
+				"{id} judges the range itself ({:?}); the plan is `classify`'s alone, \
+				 or the gate cannot certify what it skipped",
+				step["name"]
+			);
+		}
 	}
 }
 
@@ -174,9 +209,8 @@ fn the_jobs_skipped_whole_take_their_decision_from_classify_and_ask_nothing_them
 	let spec = reusable();
 	for (id, _) in JOB_GOVERNED {
 		let job = job(&spec, id);
-		assert_eq!(
-			job["needs"].as_str(),
-			Some("classify"),
+		assert!(
+			needs_of(&job).contains(&"classify".to_string()),
 			"{id} does not wait for the classifier"
 		);
 		for step in steps(&job) {
@@ -227,40 +261,42 @@ fn classify_exposes_the_decision_and_the_job_that_must_not_be_skipped_stays_whol
 		Some("${{ steps.decide.outputs.run }}"),
 		"classify no longer exposes the answer the other jobs read"
 	);
-	for id in ["lint", "msrv-gate", "doc"] {
-		let cond = job(&spec, id)["if"]
-			.as_str()
-			.unwrap_or_default()
-			.to_string();
-		assert!(
-			!cond.contains("classify"),
-			"{id} reads the classifier at job level. `lint` runs checks a \
-			 documentation-only change must see, and the other two have their own \
-			 judge: {cond:?}"
-		);
-	}
+	assert_eq!(
+		job(&spec, "classify")["outputs"]["build"].as_str(),
+		Some("${{ steps.build.outputs.build }}"),
+		"classify no longer exposes the build answer `msrv`, `doc` and the gate read"
+	);
+	let id = "lint";
+	let cond = job(&spec, id)["if"]
+		.as_str()
+		.unwrap_or_default()
+		.to_string();
+	assert!(
+		!cond.contains("outputs."),
+		"{id} reads a classifier answer at job level. `lint` runs checks a \
+		 documentation-only change must see, and the name the \
+		 ruleset requires is the gate's: {cond:?}"
+	);
 }
 
 #[test]
 fn the_governed_jobs_check_out_the_history_the_classifier_reads() {
 	let spec = reusable();
-	for id in ["classify", "lint"] {
-		let checkout = steps(&job(&spec, id))
-			.into_iter()
-			.find(|s| {
-				s["uses"]
-					.as_str()
-					.unwrap_or_default()
-					.starts_with("actions/checkout")
-			})
-			.unwrap_or_else(|| panic!("{id} checks the repository out"));
-		assert_eq!(
-			checkout["with"]["fetch-depth"].as_u64(),
-			Some(0),
-			"{id} does not fetch the history, so the classifier cannot read the \
-			 base commit or diff the range"
-		);
-	}
+	let checkout = steps(&job(&spec, "classify"))
+		.into_iter()
+		.find(|s| {
+			s["uses"]
+				.as_str()
+				.unwrap_or_default()
+				.starts_with("actions/checkout")
+		})
+		.unwrap_or_else(|| panic!("classify checks the repository out"));
+	assert_eq!(
+		checkout["with"]["fetch-depth"].as_u64(),
+		Some(0),
+		"classify does not fetch the history, so the classifier cannot read the \
+		 base commit or diff the range"
+	);
 }
 
 #[test]
@@ -301,8 +337,6 @@ fn the_check_names_the_ruleset_requires_are_unchanged() {
 		("test", "Test"),
 		("coverage", "Coverage"),
 		("doc", "Doc warnings"),
-		("msrv-gate", "MSRV"),
-		("extra-platforms-gate", "Extra platforms"),
 	] {
 		assert_eq!(
 			job(&spec, id)["name"].as_str(),
@@ -319,36 +353,79 @@ fn the_check_names_the_ruleset_requires_are_unchanged() {
 	}
 }
 
-/// The gate that stands in for the extra-platform matrix treats a skipped
-/// dependency as a pass, so a matrix that never ran still leaves
-/// `rust / Extra platforms` reported, and it fails on anything else.
+/// `msrv` and `doc` are skipped whole on the plan's build answer, and only on
+/// an explicit `false`.
 #[test]
-fn the_extra_platform_gate_accepts_a_matrix_that_did_not_run_and_rejects_the_rest() {
+fn msrv_and_doc_skip_only_on_an_explicit_false_from_the_plan() {
 	let spec = reusable();
-	let gate = job(&spec, "extra-platforms-gate");
-	assert_eq!(gate["needs"].as_str(), Some("test-extra"));
+	for id in ["msrv", "doc"] {
+		let job = job(&spec, id);
+		assert!(
+			needs_of(&job).contains(&"classify".to_string()),
+			"{id} does not wait for the plan"
+		);
+		let cond = job["if"].as_str().unwrap_or_default();
+		assert!(
+			cond.contains("!cancelled()")
+				&& cond.contains("needs.classify.result != 'success'")
+				&& cond.contains("needs.classify.outputs.build != 'false'"),
+			"{id} is guarded by {cond:?}; it must start when the plan failed and \
+			 skip only on an explicit `false`"
+		);
+		assert!(
+			!cond.contains("== 'true'") && !cond.contains("always()"),
+			"{id} is guarded by {cond:?}"
+		);
+	}
+}
+
+/// The gate waits for every other job, runs on every outcome, and every job it
+/// certifies starts even when the plan failed.
+#[test]
+fn the_gate_waits_for_every_job_and_every_suite_starts_when_the_plan_failed() {
+	let spec = reusable();
+	let gate = job(&spec, "gate");
+	assert!(
+		gate["name"]
+			.as_str()
+			.unwrap_or_default()
+			.starts_with("Gate"),
+		"the gate keeps the name the ruleset requires, with the run kind after it"
+	);
 	assert_eq!(
 		gate["if"].as_str(),
 		Some("always()"),
-		"the gate must run whatever the matrix did, or a skipped matrix leaves \
-		 the required check missing"
+		"the gate must run whatever the suites did, or a skip leaves it unreported"
 	);
-	let body: String = steps(&gate)
+	let needs: Vec<&str> = gate["needs"]
+		.as_sequence()
+		.expect("the gate lists its needs")
 		.iter()
-		.map(run_text)
-		.collect::<Vec<_>>()
-		.join("\n");
-	assert!(
-		body.contains("success | skipped)"),
-		"the extra-platform gate no longer accepts a skipped matrix, so \
-		 `rust / Extra platforms` stops being reported when the matrix did \
-		 not run: {body}"
-	);
-	assert!(
-		body.contains("*) echo") && body.contains("exit 1"),
-		"the extra-platform gate no longer fails on a failed or cancelled \
-		 matrix: {body}"
-	);
+		.filter_map(Value::as_str)
+		.collect();
+	for (id, _) in spec["jobs"].as_mapping().expect("jobs").iter() {
+		let id = id.as_str().unwrap_or_default();
+		if id == "gate" {
+			continue;
+		}
+		assert!(
+			needs.contains(&id),
+			"the gate does not wait for `{id}`, so a result it never reads can \
+			 leave the pull request green"
+		);
+	}
+	for id in ["lint", "test", "test-extra", "coverage", "msrv", "doc"] {
+		let cond = job(&spec, id)["if"]
+			.as_str()
+			.unwrap_or_default()
+			.to_string();
+		assert!(
+			cond.contains("!cancelled()"),
+			"{id} is guarded by {cond:?}. Without `!cancelled()` it is skipped \
+			 when the plan failed, and a job skipped for that reason is the \
+			 fail-open the gate exists to catch"
+		);
+	}
 }
 
 /// The classifier skips files that `no_private_document_references` reads.
@@ -379,4 +456,44 @@ fn the_private_document_scan_runs_in_lint_whatever_the_classifier_says() {
 		scans[0].get("continue-on-error").is_none(),
 		"the private-document scan must be able to fail the job"
 	);
+}
+
+/// The suites are layered so that the first failure stops the expensive ones:
+/// the cheap job first, the Linux suite after it, and only then coverage and the
+/// other platforms. The ordering is applied on pull requests only, it names the
+/// real gates and never the plan, and it uses `!= 'failure'` so a skipped or
+/// cancelled gate does not hold the next layer back.
+#[test]
+fn the_layers_wait_for_the_cheap_jobs_on_pull_requests_only() {
+	let spec = reusable();
+	for (id, gates) in [
+		("test", vec!["lint"]),
+		("msrv", vec!["lint"]),
+		("doc", vec!["lint"]),
+		("coverage", vec!["lint", "test"]),
+		("test-extra", vec!["lint", "test"]),
+	] {
+		let job = job(&spec, id);
+		let needs = needs_of(&job);
+		let cond = job["if"].as_str().unwrap_or_default();
+		for gate in &gates {
+			assert!(
+				needs.contains(&gate.to_string()),
+				"{id} does not wait for {gate}"
+			);
+			assert!(
+				cond.contains(&format!("needs.{gate}.result != 'failure'")),
+				"{id} is not held back by a failed {gate}: {cond:?}"
+			);
+		}
+		assert!(
+			cond.contains("github.event_name != 'pull_request' ||"),
+			"{id} applies the ordering outside pull requests: {cond:?}"
+		);
+		assert!(
+			!cond.contains("needs.classify.result == 'failure'")
+				&& !cond.contains("contains(needs.*.result"),
+			"{id} lets the plan order the layers: {cond:?}"
+		);
+	}
 }

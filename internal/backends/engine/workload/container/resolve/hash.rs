@@ -90,6 +90,17 @@ pub(crate) fn config_hash(
 	for (kind, key, resolved) in overridden_resource_identities(service, file, project) {
 		hash_resource_identity(&mut hasher, kind, &key, &resolved);
 	}
+	// The aliases other services' `links:` give this one. They are network
+	// aliases of this container, so a link added to or dropped from a sibling
+	// has to recreate it. Nothing is folded in when there are none, which keeps
+	// the hash of every project without `name:alias` links as it was.
+	if let Some(name) = name_in_file(file, service) {
+		for net in service.networks.names() {
+			for alias in crate::engine::network_link_aliases(file, name, &net) {
+				hash_resource_identity(&mut hasher, b"link-alias", &net, &alias);
+			}
+		}
+	}
 	for secret_ref in &service.secrets {
 		if let Some(def) = file.secrets.get(secret_ref.source()) {
 			hash_inline_payload(
@@ -159,6 +170,18 @@ pub(crate) fn config_hash(
 		.iter()
 		.map(|b| format!("{b:02x}"))
 		.collect())
+}
+
+/// The name `file` knows `service` by, when `service` is one of its services.
+///
+/// The hash is asked for from the service itself, so the name is found by
+/// identity: every caller hands in a reference into `file`. A service that is
+/// not in the file (a job's service, a copy) has no inbound links to fold in.
+fn name_in_file<'a>(file: &'a ComposeFile, service: &Service) -> Option<&'a str> {
+	file.services
+		.iter()
+		.find(|(_, candidate)| std::ptr::eq(*candidate, service))
+		.map(|(name, _)| name.as_str())
 }
 
 /// The effective identities of the resources a service references, as

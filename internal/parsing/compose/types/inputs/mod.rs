@@ -5,4 +5,6 @@
 pub mod build;
 mod build_ssh;
 pub mod env;
+pub(crate) mod mode;
+pub(crate) mod mode_render;
 pub mod volume;

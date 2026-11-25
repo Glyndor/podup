@@ -26,6 +26,6 @@ mod api_prefix_tests;
 
 pub use client::Client;
 pub use client::DrivenBody;
-pub(crate) use client::{is_valid_object_name, urlencoded};
+pub(crate) use client::{image_urlencoded, is_valid_object_name, urlencoded};
 pub use error::PodmanError;
 pub use types::stream::{parse_json_lines, parse_multiplexed, parse_raw, LogOutput};

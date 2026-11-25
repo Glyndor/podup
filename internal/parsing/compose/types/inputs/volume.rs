@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::super::Labels;
+use super::mode;
 
 /// Volume mount type: `volume`, `bind`, `tmpfs`, `npipe`, or `cluster`.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -125,7 +126,7 @@ pub struct TmpfsOptions {
 /// before we see it: a `0o`-prefixed literal arrives as its numeric value
 /// (`0o700` → 448), a leading-zero literal (`0700`) arrives as a string, and a
 /// bare `700` arrives unchanged. We normalise all of them to the actual
-/// permission bits (see [`int_mode_bits`] for the integer case), so the renderer
+/// permission bits (see [`mode`] for the rules), so the renderer
 /// can octal-encode a single canonical value. A string is parsed as octal,
 /// accepting an optional `0o` prefix and rejecting non-octal digits with a clear
 /// message.
@@ -144,32 +145,29 @@ where
 
 	match Option::<Raw>::deserialize(deserializer)? {
 		None => Ok(None),
-		Some(Raw::Int(n)) => Ok(Some(int_mode_bits(n))),
+		// A number the reader had already decoded: its spelling is not known here
+		// (it is recovered before this point for a compose file), so it is read
+		// only when its two readings are the same mode, and refused otherwise.
+		Some(Raw::Int(n)) if mode::is_resolved() => Ok(Some(
+			mode::read_resolved_number(n).map_err(D::Error::custom)?,
+		)),
+		Some(Raw::Int(n)) => {
+			let bits = mode::read_unknown_number(n).map_err(D::Error::custom)?;
+			#[cfg(test)]
+			mode::count_agreed_number();
+			Ok(Some(bits))
+		}
 		Some(Raw::Str(s)) => {
-			let trimmed = s.trim();
-			let digits = trimmed
-				.strip_prefix("0o")
-				.or_else(|| trimmed.strip_prefix("0O"))
-				.unwrap_or(trimmed);
-			u32::from_str_radix(digits, 8).map(Some).map_err(|_| {
-				D::Error::custom(format!(
-					"invalid mode {s:?}: use octal notation like 0700 or 0o700"
-				))
-			})
+			let read = mode::parse_mode_text(&s)
+				.map_err(|why| D::Error::custom(format!("invalid mode {s:?}: {why}")))?;
+			if read.bare {
+				mode::note(mode::bare_notice(s.trim(), read.bits));
+				#[cfg(test)]
+				mode::count_bare_notice();
+			}
+			Ok(Some(read.bits))
 		}
 	}
-}
-
-/// Interpret a bare YAML integer `mode:` as octal permission bits.
-///
-/// A bare `700` is the octal file-mode the user typed, so its decimal digits are
-/// read as octal (`700` → `0o700` = 448). A digit of `8` or `9` cannot be a real
-/// octal digit, so such a value can only be a `0o` literal that serde_yaml has
-/// already decoded to its numeric value (`0o700` → 448, `0o755` → 493); it is
-/// taken as the actual permission bits verbatim. The same fallback covers an
-/// out-of-range octal reading, so the conversion never panics.
-fn int_mode_bits(n: u32) -> u32 {
-	u32::from_str_radix(&n.to_string(), 8).unwrap_or(n)
 }
 
 /// A volume mount entry: either a short-form string or a long-form typed block.

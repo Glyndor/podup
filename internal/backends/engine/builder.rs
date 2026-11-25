@@ -202,12 +202,9 @@ impl Engine {
 	}
 
 	/// Set the CLI `--no-warn` flag. Builder-style; when set, the engine
-	/// suppresses the host-binding / privilege-escalation warnings it emits
-	/// during `up`/`create`/`run`/`exec`. Operators who deliberately wrote
-	/// `privileged: true` (or any other host-binding mode) into the compose
-	/// file use this to silence the per-run warning; `config`'s surface-mode
-	/// listing is unaffected (`config` is the "show me what will happen"
-	/// command, where the warning is the whole point).
+	/// suppresses the advisory warnings it emits (the rootless caveats). The
+	/// host-binding and privilege-escalation warnings are security warnings and
+	/// are emitted whatever this says.
 	pub fn with_no_warn(mut self, no_warn: bool) -> Self {
 		self.no_warn = no_warn;
 		self

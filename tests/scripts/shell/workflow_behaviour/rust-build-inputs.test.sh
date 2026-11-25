@@ -29,7 +29,8 @@ for path in tests/hostile/input/parsing/x.rs docs/commands.md README.md CONTRIBU
 	bench/run.sh fuzz/fuzz_targets/a.rs debian/rules install.sh install.ps1 \
 	.github/workflows/binary-budget.yml .github/workflows/reusable-rust-fuzz.yml \
 	.github/workflows/podman-lane.yml .github/scripts/checks/podman-lane-paths.sh \
-	.github/dependabot.yml; do
+	.github/dependabot.yml .github/actionlint.yaml .github/folder-limit-exceptions.txt .github/vocabulary-exceptions.txt \
+	.github/podman_lane/budget .github/podman_lane/known-failures-6; do
 	run_case 0 "$path"
 done
 run_case 0 $'tests/a.rs\ndocs/b.md'
@@ -40,6 +41,7 @@ for path in internal/lib.rs internal/backends/engine/observe/stats/stats_tests.r
 	.github/workflows/ci.yml .github/workflows/lint-shell.yml .github/workflows/lint-powershell.yml \
 	.github/workflows/release.yml .github/workflows/reusable-shell-ci.yml \
 	.github/workflows/a-workflow-nobody-reviewed.yml \
+	.github/actionlint.yml .github/podman_lane.txt .github/vocabulary-exceptions.txt.bak \
 	unknown.txt; do
 	run_case 1 "$path"
 	run_case 1 $'tests/a.rs\n'"$path"
@@ -48,13 +50,17 @@ run_case 1 ""
 check "no argument builds" 1 "$(bash "$script" >/dev/null 2>&1; echo $?)"
 # The workflow reads the judge from the base commit and guards the steps with it.
 # shellcheck disable=SC2016
-check "msrv and doc both read the judge from the base" 2 \
+check "the plan reads the judge from the base, and nothing else asks it" 1 \
 	"$(grep -c 'git show "\$BASE_SHA:.github/scripts/checks/rust-build-inputs.sh"' "$workflow")"
 # shellcheck disable=SC2016
-check "only pull_request, push and merge_group can skip" 2 \
+check "only pull_request, push and merge_group can skip" 1 \
 	"$(grep -c '\[\[ "\$EVENT" = pull_request || "\$EVENT" = push || "\$EVENT" = merge_group \]\]' "$workflow")"
-check "the build steps are guarded" 6 \
-	"$(grep -c "steps.inputs.outputs.build == 'true'" "$workflow")"
+# msrv and doc are skipped whole on an explicit `false` from the plan; no step
+# inside them asks again.
+check "msrv and doc are skipped whole on the plan's explicit false" 2 \
+	"$(grep -c "needs.classify.outputs.build != 'false'" "$workflow")"
+check "no step of the reusable judges the build inputs itself" 0 \
+	"$(grep -c "steps.inputs.outputs.build" "$workflow")"
 # The macOS and Windows hardening jobs skip the release build with the same judge.
 for wf in lint-shell lint-powershell; do
 	file="$HERE/.github/workflows/$wf.yml"

@@ -4,11 +4,13 @@
 Run from the repository root by the `tooling-isolation` step of
 reusable-workflow-lint.yml.
 """
-import glob
 import re
 import sys
 
 import yaml
+
+sys.path.insert(0, ".github/scripts/lib")
+import ci_yaml  # noqa: E402  (the one loader and enumerator; run from the repository root)
 
 # Three forms reach a secret at runtime: `secrets.<id>`,
 # `secrets['<id>']` and `secrets["<id>"]` (with optional
@@ -76,14 +78,10 @@ def normalize_run(value):
 def find_violations(spec_path):
     violations = []
     try:
-        with open(spec_path) as fh:
-            spec = yaml.safe_load(fh)
+        spec = ci_yaml.load(spec_path)
     except yaml.YAMLError as e:
-        # Silent skip would hide a misconfigured workflow that the
-        # caller is going to learn about elsewhere in CI for the
-        # wrong reason. Warning annotation instead.
-        print(f"::warning file={spec_path}::skipped: YAML parse error: {e}")
-        return violations
+        print(f"::error file={spec_path}::YAML parse error: {e}")
+        sys.exit(1)
     if not isinstance(spec, dict):
         return violations
 
@@ -139,10 +137,7 @@ def find_violations(spec_path):
 
 
 def main():
-    files = sorted(set(
-        glob.glob(".github/workflows/*.yml")
-        + glob.glob(".github/workflows/*.yaml")
-    ))
+    files = ci_yaml.files(".")
     violations = []
     for path in files:
         violations.extend(find_violations(path))

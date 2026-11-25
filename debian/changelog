@@ -1,3 +1,30 @@
+podup (6.1.0) unstable; urgency=medium
+
+  * `--no-warn` no longer silences the warnings that say what a compose file opens up:
+    host namespaces and privilege, a port published on every interface, and the
+    privileged and host-network warnings of `generate quadlet`. `config` shows them too.
+  * `rm` without `-f` skips a running or paused container with a warning and exits 0,
+    as docker compose does, and still removes the stopped and created ones.
+  * `up --wait` fails for a service in a crash loop, naming the container, its restarts
+    and its last exit code, and `up --wait-timeout` is the whole budget of the wait.
+  * `exec` passes SIGTERM, SIGINT and SIGHUP to its command and keeps the exit status of
+    the command. `-t -1` on `up`, `down`, `stop` and `restart` waits with no limit.
+  * `up --watch` reports the rules and the syncs as `watch` does.
+  * `generate quadlet` writes a unit per project that creates the secrets and configs a
+    service mounts from a file, writes the interface name, the driver options and the
+    priority of a network, the alias a `links` entry gives, a volume with `driver: image`
+    and the removal of a bare environment key. It stops before writing for a secret file
+    that `up` refuses (a link, a directory, a pipe, a mode with an execute bit).
+  * A pod carries the interface name and the driver options of its networks when the
+    services agree on them, and `up` says when they do not.
+  * A `mode:` written as `0o644`, `0644` or `0x1a4` is read as the number it spells.
+  * The platform variant, the log path, the options of a volume and the unset variables
+    of an image now reach Podman in the fields it reads.
+  * The credentials of an image reference, a build context and every URL in an error
+    message are removed from what podup prints.
+
+ -- Glyndor <packages@glyndor.net>  Wed, 25 Nov 2026 07:00:00 -0500
+
 podup (6.0.0) unstable; urgency=medium
 
   * Podman 6.2.0 or newer is required, and no upper bound is set. Podman 5 is no longer

@@ -168,8 +168,41 @@ pub(crate) fn collect_warnings(
 	if !service.storage_opt.is_empty() {
 		warn("storage_opt", skipped);
 	}
-	if !service.links.is_empty() {
+	if in_pod && !service.links.is_empty() {
 		warn("links", skipped);
+	}
+	if !in_pod {
+		for link in &service.links {
+			let Some((target, alias)) = link.split_once(':') else {
+				continue;
+			};
+			if alias == target || alias.is_empty() {
+				continue;
+			}
+			// The same rule the unit of the target is written by.
+			let carried = services.get(target).is_some_and(|linked| {
+				linked.networks.names().iter().any(|net| {
+					crate::engine::network_link_aliases_among(std::iter::once(service), target, net)
+						.iter()
+						.any(|a| a == alias)
+				})
+			});
+			if carried {
+				warn(
+					&format!("link '{link}'"),
+					&format!(
+						"gives '{target}' the network alias '{alias}' on the networks both share, \
+						 so every container on them resolves it, not only '{name}'"
+					),
+				);
+			} else {
+				warn(
+					&format!("link '{link}'"),
+					"is skipped: the services share no named network, or the target is not a \
+					 service of this file",
+				);
+			}
+		}
 	}
 	if !service.external_links.is_empty() {
 		warn("external_links", skipped);
@@ -233,5 +266,29 @@ pub(crate) fn collect_warnings(
 			"ipv4_address/ipv6_address",
 			"is set on multiple networks; inside a pod Quadlet emits only the first",
 		);
+	}
+	// The pod owns the attachments and carries no per-network options, so what a
+	// service sets on one network has nowhere to go inside it.
+	if in_pod {
+		type Set = fn(&crate::compose::types::ServiceNetworkConfig) -> bool;
+		let checks: [(&str, Set); 3] = [
+			("interface_name", |c| c.interface_name.is_some()),
+			("driver_opts", |c| !c.driver_opts.is_empty()),
+			("priority", |c| c.priority.is_some()),
+		];
+		for (field, set) in checks {
+			if service
+				.networks
+				.names()
+				.iter()
+				.filter_map(|n| service.networks.config_for(n))
+				.any(set)
+			{
+				warn(
+					&format!("networks.*.{field}"),
+					"is not exported inside a pod unit; the pod carries the networks without per-network options",
+				);
+			}
+		}
 	}
 }

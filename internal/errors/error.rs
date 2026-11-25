@@ -149,6 +149,17 @@ pub enum ComposeError {
 		/// The ceiling in force when the request was refused.
 		max: u32,
 	},
+	/// A container being waited on has no healthcheck and its restart policy keeps
+	/// starting it again: it is in a crash loop, not running.
+	WaitServiceRestarting {
+		/// The container name Podman reported.
+		container: String,
+		/// The exit status of the last run, when the container was between two
+		/// runs when it was read.
+		code: Option<i64>,
+		/// How many times the restart policy had started it again.
+		restarts: i64,
+	},
 	/// `start --wait --wait-timeout` elapsed before services became healthy.
 	WaitTimeout {
 		/// The budget that elapsed, in whole seconds, as `--wait-timeout`
@@ -322,8 +333,16 @@ impl fmt::Display for ComposeError {
 			}
 			Self::InvalidPort(s) => write!(f, "invalid port mapping: {s}"),
 			Self::InvalidSignal(s) => write!(f, "invalid signal: {s}"),
-			Self::Build(s) => write!(f, "build error: {s}"),
-			Self::ImagePull(s) => write!(f, "failed to pull image {s}"),
+			Self::Build(s) => write!(
+				f,
+				"build error: {}",
+				crate::errors::redact::redact_urls_in_text(s)
+			),
+			Self::ImagePull(s) => write!(
+				f,
+				"failed to pull image {}",
+				crate::errors::redact::redact_urls_in_text(s)
+			),
 			Self::Copy(s) => write!(f, "cp error: {s}"),
 			Self::Extends(s) => write!(f, "extends error: {s}"),
 			Self::Include(s) => write!(f, "include error: {s}"),
@@ -367,6 +386,21 @@ impl fmt::Display for ComposeError {
 				"container '{}' exited with code {code} while waiting for it to be ready",
 				sanitize_name(container)
 			),
+			Self::WaitServiceRestarting {
+				container,
+				code,
+				restarts,
+			} => {
+				write!(
+					f,
+					"container '{}' keeps restarting ({restarts} restart(s) so far",
+					sanitize_name(container)
+				)?;
+				if let Some(code) = code {
+					write!(f, ", last exit code {code}")?;
+				}
+				write!(f, "); it is not running")
+			}
 			Self::ReplicaLimitExceeded {
 				service,
 				replicas,

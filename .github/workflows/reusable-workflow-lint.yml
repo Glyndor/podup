@@ -40,7 +40,16 @@ concurrency:
 
 jobs:
   workflow-lint:
-    name: workflow-lint
+    # The name says which kind of run produced it: nothing for a pull request into
+    # `develop` and for the merge queue, `(promotion)` for a pull request into `main`,
+    # and the event in brackets for everything else (a push, a schedule, a pull request
+    # on any other base). `==` in an expression ignores case, so the trigger limits the
+    # bases with `branches`, which does not, and the gate checks the base in shell. A required
+    # check is matched by name on a commit, so the push that lands on `develop` and
+    # the pull request that promotes the same commit into `main` must not be able to
+    # answer for each other: they get different names and the ruleset of each branch
+    # requires its own.
+    name: workflow-lint${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 32s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
@@ -51,6 +60,7 @@ jobs:
       # step that installs a tool or reads a workflow reads these, so the
       # range is named once instead of in each step.
       EVENT: ${{ github.event_name }}
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
       BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
     steps:
@@ -68,9 +78,15 @@ jobs:
       # answer is "run".
       - name: Decide whether the workflow lint must run
         id: decide
-        run: git show "$BASE_SHA:.github/scripts/checks/workflow-lint-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
+        run: |
+          # The plan is trusted for a pull request only when its base is exactly develop.
+          if [ "$EVENT" = pull_request ] && [ "$BASE_REF" != develop ]; then
+            echo "run=true" >>"$GITHUB_OUTPUT"
+          else
+            git show "$BASE_SHA:.github/scripts/checks/workflow-lint-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
+          fi
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         if: steps.decide.outputs.run != 'false'
         with:
           go-version: "1.27"
@@ -199,6 +215,9 @@ jobs:
 
           import yaml
 
+          sys.path.insert(0, ".github/scripts/lib")
+          import ci_yaml
+
           # Reusables whose jobs' `name:` becomes part of a required check
           # name when a job here calls them. Each entry is the basename of
           # the reusable; the matching caller is any job with
@@ -211,8 +230,7 @@ jobs:
           # pulled by reading the live ruleset, not by guessing.
           REQUIRED_REUSABLES = {
               "reusable-rust-ci.yml": [
-                  "Format & lint", "Test", "Coverage", "Doc warnings",
-                  "MSRV", "Extra platforms",
+                  "Format & lint", "Test", "Coverage", "Doc warnings", "Gate",
               ],
               "reusable-dco.yml": [
                   "Signed-off-by present on every commit",
@@ -226,6 +244,12 @@ jobs:
               "reusable-workflow-lint.yml": [
                   "workflow-lint",
               ],
+              "reusable-rust-audit.yml": [
+                  "cargo audit", "cargo deny",
+              ],
+              "reusable-deprecation-notices.yml": [
+                  "no deprecation notices",
+              ],
           }
 
           # Required check names emitted directly by a job in this
@@ -235,6 +259,9 @@ jobs:
           # incidental.
           DIRECT_EMITTER_NAMES = {
               "Supported Podman majors",
+              "commit identity",
+              "secret scan",
+              "pin values",
           }
 
           # `if: always()` is the only `if:` value allowed on a caller of
@@ -277,10 +304,7 @@ jobs:
 
 
           def main():
-              files = sorted(set(
-                  glob.glob(".github/workflows/*.yml")
-                  + glob.glob(".github/workflows/*.yaml")
-              ))
+              files = ci_yaml.files(".")
 
               # First pass: walk the reusables themselves to learn which
               # required check names each one emits. The map is asserted
@@ -299,11 +323,10 @@ jobs:
                       # wrapping it is not gated. Leave it alone.
                       continue
                   try:
-                      with open(path) as fh:
-                          spec = yaml.safe_load(fh)
+                      spec = ci_yaml.load(path)
                   except yaml.YAMLError as e:
-                      print(f"::warning file={path}::skipped: YAML parse error: {e}")
-                      continue
+                      print(f"::error file={path}::YAML parse error: {e}")
+                      sys.exit(1)
                   if not isinstance(spec, dict):
                       continue
                   expected = set(REQUIRED_REUSABLES[name])
@@ -312,7 +335,7 @@ jobs:
                   for job_id, job in jobs.items():
                       if not isinstance(job, dict):
                           continue
-                      jname = job.get("name")
+                      jname = ci_yaml.check_name(job.get("name"))
                       if isinstance(jname, str) and jname in expected:
                           found.add(jname)
                   missing = expected - found
@@ -336,11 +359,10 @@ jobs:
                   if name.startswith("reusable-"):
                       continue
                   try:
-                      with open(path) as fh:
-                          spec = yaml.safe_load(fh)
+                      spec = ci_yaml.load(path)
                   except yaml.YAMLError as e:
-                      print(f"::warning file={path}::skipped: YAML parse error: {e}")
-                      continue
+                      print(f"::error file={path}::YAML parse error: {e}")
+                      sys.exit(1)
                   if not isinstance(spec, dict):
                       continue
                   jobs = spec.get("jobs") or {}
@@ -353,7 +375,7 @@ jobs:
                       # check name. The file the job sits in is
                       # incidental; what the ruleset matches is the
                       # name GitHub reports.
-                      job_name = job.get("name")
+                      job_name = ci_yaml.check_name(job.get("name"))
                       if isinstance(job_name, str) and job_name in DIRECT_EMITTER_NAMES:
                           required_name = job_name
                       else:
@@ -445,6 +467,9 @@ jobs:
 
           import yaml
 
+          sys.path.insert(0, ".github/scripts/lib")
+          import ci_yaml
+
           SHA1_RE = re.compile(r"[0-9a-f]{40}")
           DOCKER_RE = re.compile(r"docker://.+@sha256:[0-9a-f]{64}")
 
@@ -453,7 +478,7 @@ jobs:
               pass
 
 
-          class WorkflowLoader(yaml.SafeLoader):
+          class WorkflowLoader(ci_yaml.StrictLoader):
               pass
 
 
@@ -532,10 +557,7 @@ jobs:
 
 
           def main():
-              files = sorted(set(
-                  glob.glob(".github/workflows/*.yml")
-                  + glob.glob(".github/workflows/*.yaml")
-              ))
+              files = ci_yaml.files(".")
               violations = []
               for path in files:
                   violations.extend((path, message) for message in find_violations(path))
@@ -598,9 +620,27 @@ jobs:
       # A workflow that emits a develop-required check must trigger on
       # merge_group (with checks_requested in types:), and no other
       # workflow may carry the trigger. Logic lives in
-      # .github/scripts/checks/check-merge-group-triggers.py because this file
+      # .github/scripts/checks/triggers/check-merge-group-triggers.py because this file
       # is near the 500-code-line hard limit already.
       - name: A workflow that emits a check required on develop must trigger on merge_group
         if: steps.decide.outputs.run != 'false'
         run: |
-          python3 .github/scripts/checks/check-merge-group-triggers.py
+          python3 .github/scripts/checks/triggers/check-merge-group-triggers.py
+
+      # The token that can cancel other runs (`actions: write`) is held to an
+      # exact list of steps, by its effective permissions: `write-all`, a grant
+      # at the top of a workflow, and what a job inherits all count. A job that
+      # holds it may run only the steps the script lists, and the one launcher
+      # that runs a script runs the copy of the base commit, never a file of the
+      # pull request's tree. Logic lives in the script; its tests plant each way
+      # around it.
+      - name: A job that can end other runs runs only the steps the list holds
+        if: steps.decide.outputs.run != 'false'
+        run: python3 .github/scripts/ci/check-write-token-jobs.py
+
+      # The merge queue runs a workflow on the commit that lands in develop, so a
+      # workflow with both a queue trigger and a push to develop runs twice on one
+      # tree. A workflow with a push to develop is on a short list, with its reason.
+      - name: No workflow repeats on a push to develop what the queue ran
+        if: steps.decide.outputs.run != 'false'
+        run: python3 .github/scripts/checks/triggers/check-push-triggers.py

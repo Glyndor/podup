@@ -45,15 +45,44 @@ scripts="$(git ls-files '*.sh' | grep -v '^tests/scripts/shell/')"
 check "there are shell scripts to check" "1" \
 	"$([ -n "$scripts" ] && echo 1 || echo 0)"
 
+# A `sort` is pinned by `LC_ALL` on its own line, or by an `export LC_ALL=` that the
+# script makes before anything runs (a script that is copied from elsewhere holds its
+# own pin once at the top, and has to stay a copy). The export has to come before the
+# sort.
+unpinned_in() { # <file>: the sorts of the file that no collation pin covers
+	local f="$1" first_export
+	first_export="$(grep -nE '^export LC_ALL=' "$f" 2>/dev/null | head -n 1 | cut -d: -f1)"
+	grep -nE '(^|[|;&(]|\$\()[[:space:]]*sort\b' "$f" 2>/dev/null \
+		| grep -v '^[0-9]*:[[:space:]]*#' \
+		| grep -v 'LC_ALL' \
+		| while IFS=: read -r n rest; do
+			if [ -n "$first_export" ] && [ "$n" -gt "$first_export" ]; then continue; fi
+			printf '%s:%s\n' "$n" "$rest"
+		done
+}
 unpinned=""
 for f in $scripts; do
-	hits="$(grep -nE '(^|[|;&(]|\$\()[[:space:]]*sort\b' "$f" 2>/dev/null \
-		| grep -v '^[0-9]*:[[:space:]]*#' \
-		| grep -v 'LC_ALL' || true)"
+	hits="$(unpinned_in "$f")"
 	[ -n "$hits" ] && unpinned="$unpinned$f: $hits"$'\n'
 done
 
 check "every sort runs under a pinned collation" "" "${unpinned%$'\n'}"
+
+# The guard itself: each way a sort stays unpinned, and the ways it is pinned.
+T="$(mktemp -d)"
+trap 'rm -rf "$T"' EXIT
+printf 'ls | sort -u\n' >"$T/bare.sh"
+printf 'ls | LC_ALL=C sort -u\n' >"$T/inline.sh"
+printf 'export LC_ALL=C\nls | sort -u\n' >"$T/exported.sh"
+printf 'ls | sort -u\nexport LC_ALL=C\n' >"$T/late.sh"
+printf '# export LC_ALL=C\nls | sort -u\n' >"$T/commented.sh"
+printf 'LC_ALL=C\nls | sort -u\n' >"$T/notexported.sh"
+check "a bare sort is not pinned" 1 "$(unpinned_in "$T/bare.sh" | grep -c .)"
+check "a sort with LC_ALL on its line is pinned" 0 "$(unpinned_in "$T/inline.sh" | grep -c .)"
+check "a sort after an exported LC_ALL is pinned" 0 "$(unpinned_in "$T/exported.sh" | grep -c .)"
+check "a sort before the export is not pinned" 1 "$(unpinned_in "$T/late.sh" | grep -c .)"
+check "an export in a comment pins nothing" 1 "$(unpinned_in "$T/commented.sh" | grep -c .)"
+check "an assignment that is not exported pins nothing" 1 "$(unpinned_in "$T/notexported.sh" | grep -c .)"
 
 echo
 echo "$pass passed, $fail failed"

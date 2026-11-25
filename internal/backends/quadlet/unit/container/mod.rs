@@ -3,10 +3,10 @@
 use indexmap::IndexMap;
 
 use crate::compose::dependencies::effective_depends_on;
-use crate::compose::types::{SecretConfig, Service};
+use crate::compose::types::{ConfigConfig, SecretConfig, Service};
 
 use super::health::render_healthcheck;
-use super::security::{is_inline_secret, map_security_opt, render_secret};
+use super::security::{is_inline_secret, map_security_opt, render_secret, secret_field};
 // Shared helpers from the sibling `render`/`warnings`/`security` modules and
 // the parent `QuadletUnit` type, imported here so the emitters take them from
 // `super::` rather than reaching past this module, as the sibling `unit`
@@ -69,12 +69,22 @@ pub(crate) struct UnitContext<'a> {
 	pub external_volumes: &'a ExternalNames<'a>,
 	/// Top-level `secrets:` definitions, for resolving a service's secret refs.
 	pub secrets: &'a IndexMap<String, SecretConfig>,
+	/// Top-level `configs:` definitions, for resolving a service's config refs.
+	pub configs: &'a IndexMap<String, ConfigConfig>,
+	/// Whether the export writes the project's secrets unit, so that a container
+	/// which mounts a secret created from a file may require it. The units
+	/// `autostart --mode quadlet` installs are not given one yet, and a container
+	/// that required a unit nobody installed would not start.
+	pub secrets_unit: bool,
 	/// Directory compose resolves relative paths against: the compose file's
 	/// own directory, not the unit's. See [`abs_against`].
 	pub base_dir: &'a std::path::Path,
 	/// Every service in the file, so a `depends_on` condition can be judged
 	/// against the service it names rather than in the abstract.
 	pub services: &'a IndexMap<String, Service>,
+	/// The services and jobs whose `links: [target:alias]` give `target` a network
+	/// alias, in the order of the file.
+	pub linkers: &'a [&'a Service],
 	/// `true` when the compose file opts into `x-podman-pod: true`. Each
 	/// container unit then references the project pod by `Pod=<stem>.pod`
 	/// and drops its own `PublishPort=` and `Network=` lines.
@@ -180,8 +190,11 @@ fn render_container_unit(
 		external_networks,
 		external_volumes,
 		secrets,
+		configs,
+		secrets_unit,
 		base_dir,
 		services,
+		linkers,
 		pod_mode,
 		pod_network_mode,
 		pod_fields,
@@ -235,6 +248,7 @@ fn render_container_unit(
 		project,
 		declared_networks,
 		external_networks,
+		linkers,
 		in_pod,
 		&mut container,
 	);
@@ -268,7 +282,18 @@ fn render_container_unit(
 	emit_logging(name, service, &mut container, warnings);
 	emit_pull(service, mode, &mut container);
 	emit_deploy_limits(service, &mut container);
-	emit_secrets(name, project, service, secrets, &mut container, warnings);
+	emit_secrets(
+		name,
+		project,
+		service,
+		secrets,
+		configs,
+		*secrets_unit,
+		base_dir,
+		&mut unit,
+		&mut container,
+		warnings,
+	);
 	let waits_for_health = render_healthcheck(name, service, &mut container, warnings);
 
 	let mut svc = Section::new("Service");
@@ -283,9 +308,21 @@ fn render_container_unit(
 	}
 	emit_bind_dirs(name, service, base_dir, &mut svc, warnings);
 
+	// The configs a service mounts are written as `Secret=` lines when the secrets
+	// unit is written, so they are not reported as skipped.
+	let without_configs;
+	let reported = if *secrets_unit && !service.configs.is_empty() {
+		without_configs = Service {
+			configs: Vec::new(),
+			..service.clone()
+		};
+		&without_configs
+	} else {
+		service
+	};
 	collect_warnings(
 		name,
-		service,
+		reported,
 		services,
 		warnings,
 		mode == ContainerUnitMode::Prebuilt && super::build::emits_build_unit(service),

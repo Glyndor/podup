@@ -123,7 +123,7 @@ must_run "changes a workflow the lint reads" \
 	.github/workflows/ci.yml .github/workflows/reusable-workflow-lint.yml
 must_run "changes a check the lint runs" \
 	.github/scripts/checks/check-caller-with-defaults.py \
-	.github/scripts/checks/check-merge-group-triggers.py \
+	.github/scripts/checks/triggers/check-merge-group-triggers.py \
 	.github/scripts/checks/check-local-reusables.py
 must_run "changes the actionlint configuration" \
 	.github/actionlint.yaml .github/actionlint.yml
@@ -189,7 +189,7 @@ check "the judge is read from the base" 1 \
 	"$(grep -c 'git show "\$BASE_SHA:.github/scripts/checks/workflow-lint-inputs.sh"' "$workflow")"
 check "the judge is never read from the working tree" 0 \
 	"$(grep -c 'bash .github/scripts/checks/workflow-lint-inputs.sh' "$workflow")"
-check "every step behind the guard carries it" 11 \
+check "every step behind the guard carries it" 13 \
 	"$(grep -c "steps.decide.outputs.run != 'false'" "$workflow")"
 check "the checkout fetches the history the judge reads" 1 \
 	"$(grep -c 'fetch-depth: 0' "$workflow")"
@@ -198,8 +198,9 @@ check "the checkout fetches the history the judge reads" 1 \
 # job `workflow-lint` and the reusable's job is named `workflow-lint`.
 check "the caller's job id is still workflow-lint" 1 \
 	"$(grep -c '^  workflow-lint:$' "$caller")"
+# shellcheck disable=SC2016
 check "the reusable's job is still named workflow-lint" 1 \
-	"$(grep -c '^    name: workflow-lint$' "$workflow")"
+	"$(grep -c '^    name: workflow-lint\${{' "$workflow")"
 
 echo "$pass passed, $fail failed"
 printf 'DONE %s %d %d\n' "${BASH_SOURCE[0]##*/}" "$pass" "$fail"

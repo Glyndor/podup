@@ -20,7 +20,7 @@ podup [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS] [SERVICE...]
 | `--project-directory <PATH>` | | Base directory for relative paths (env_file, build context, bind mounts, config/secret sources). Defaults to the compose file's directory. |
 | `--ansi <WHEN>` | | Colour output: `auto`, `always` or `never`. `--ansi always` forces colour even into a pipe or file and overrides `NO_COLOR`; `--ansi auto` honours `NO_COLOR` and TTY detection. |
 | `--env-file <PATH>` | | Env file(s) for interpolation. External extends chains retain the root compose file's resolved env paths. Repeatable; later files win. A relative path is read from the working directory, not the compose file's. Replaces `.env` rather than adding to it. Process environment takes precedence. `COMPOSE_ENV_FILES` (comma-separated) is the same list. A value in an env file can refer to the process environment and to the keys before it (`B=${A} World`, `${X:-fallback}`); a single-quoted value stays literal. `COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR`, `COMPOSE_PROJECT_NAME` and `COMPOSE_PROFILES` can be set in these files too: a flag wins over the process environment, and that over the file. With `run`, also seeds the one-off container's environment below service `environment:` and `-e`. The variables it defines interpolate the compose file; they do not reach the `env_file:` of a service. |
-| `--no-warn` | | Suppress host-binding / privilege-escalation warnings during `up`/`create`/`run`/`exec`. The port-exposure warning is shown only by `up`/`create`/`run`/`scale`/`watch`/`generate quadlet`/`autostart` unless `--no-warn` is set, and by `config` regardless of `--no-warn`. `config` still surfaces the active modes at the default log level. |
+| `--no-warn` | | Suppress the advisory warnings: the client-address notice for published ports and the notes about what rootless Podman cannot honour. It does not silence the security warnings, which `up`, `create`, `run`, `exec`, `config`, `generate quadlet` and the rest print on every run: host namespaces and privilege (`network_mode: host`, `privileged: true`, `pid`/`ipc`/`uts`/`cgroup: host`, `userns_mode: host`, and a `container:` or `service:` namespace shared with another container) and a port published on every interface. `config` honours the switch like `up`. |
 | `--dry-run` | | Show what a command would do and change nothing: no request that is not a read reaches Podman, and nothing is written on the host. The commands that only read (`ps`, `config`, `ls`, `images`, `volumes`, `audit`, `version`, `port`, `logs`, `events`, `stats`, `generate quadlet` to stdout, `autostart status`) run as usual, and `autostart install` prints the unit and the actions it would run. Every other command refuses with an error that names it and exits 2, before it touches anything, rather than ignoring the flag. A `--dry-run` written after the command of `run` or `exec` belongs to that command, so podup refuses it instead of running; put the flag before the command name. |
 | `-h, --help` | | Per-command help, including inherited global options. `help [COMMAND]` shows command-specific help without those global options. |
 | `-V, --version` | | Print `podup version vX.Y.Z`. Same as `podup version`. |
@@ -33,7 +33,7 @@ podup [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS] [SERVICE...]
 
 | Compose key | Default | Notes |
 |---|---|---|
-| `logging` | `driver: k8s-file` + `max-size: 10m` | Use journald to delegate rotation; `max-size: -1` removes this cap but host `log_size_max` may still apply. Positive `max-size` without driver selects k8s-file; nonpositive/absent size keeps the host driver. Podman keeps no rotated history. Quadlet uses the same default. |
+| `logging` | `driver: k8s-file` + `max-size: 10m` | Use journald to delegate rotation; `max-size: -1` removes this cap but host `log_size_max` may still apply. Positive `max-size` or a `path` without driver selects k8s-file; nonpositive/absent size keeps the host driver. Podman keeps no rotated history. Quadlet uses the same default. |
 
 ## Lifecycle
 
@@ -52,18 +52,18 @@ A container that already exists is left in place when two facts both hold: its r
 |---|---|---|
 | `-d, --detach` | Run containers in the background. | off |
 | `--build` | Build images before starting. | off |
-| `-w, --watch` | After starting, watch for changes per `develop.watch`. | off |
+| `-w, --watch` | After starting, watch for changes per `develop.watch`, and report the rules and each sync as `watch` does. | off |
 | `--remove-orphans` | Remove containers for services no longer in the file. | off |
 | `--no-recreate` | Leave existing containers as they are: a stopped one is started without applying configuration changes. | off |
 | `--force-recreate` | Recreate containers even if their config is unchanged. | off |
 | `--no-deps` | Do not start the `depends_on` services of the named services. | off |
-| `-t, --timeout <SECS>` | Seconds to wait for a container to stop when recreating; zero or more. | Podman default |
+| `-t, --timeout <SECS>` | Seconds to wait for a container to stop when recreating; `-1` waits without limit. | Podman default |
 | `--scale <SERVICE=N>` | Override a service's replica count for this run. Repeatable; N is a whole number of at least 1, so `0` and `+3` are refused (use `down` or `stop` to remove a service). | from file |
 | `--pull <POLICY>` | Pull policy before starting: `always`, `missing`, `never`, `newer`, `build`. (`newer` is Podman's extension.) | per service; otherwise `missing` |
 | `--no-build` | Do not build images, even for services with a `build:` section. | off |
 | `--quiet-pull` | Suppress image-pull progress output. | off |
 | `--wait` | Wait until services are running/healthy before returning. | off |
-| `--wait-timeout <SECS>` | Maximum seconds to wait with `--wait` before giving up. | no additional overall cap |
+| `--wait-timeout <SECS>` | The whole budget, in seconds, of the wait of `--wait`: it extends a service's own health budget when longer and ends the wait when spent. | no additional overall cap |
 | `--no-start` | Create the containers but do not start them. | off |
 | `--timestamps` | Prefix attached log lines with a timestamp (ignored with `-d`). | off |
 | `-V, --renew-anon-volumes` | Recreate anonymous volumes instead of keeping the previous ones. | off |
@@ -79,7 +79,9 @@ A container that already exists is left in place when two facts both hold: its r
 | `--always-recreate-deps` | Recreate the containers of the services that were not named on the command line even when they are unchanged. With no service named there is nothing to single out. Cannot be combined with `--no-recreate`. | off |
 | `-y, --yes` | Accepted for compatibility. `up` never asks for confirmation, so there is nothing to answer. | off |
 
-`--wait` implies `-d` and checks every replica of each selected service. Health polling retains its per-service budget (interval × retries + start_period); `--wait-timeout` does not extend this dependency budget.
+`--wait` implies `-d` and checks every replica of each selected service. Each service is polled for its own budget (interval × retries + start_period). `--wait-timeout` is the whole budget of the wait, as it is for `start --wait`: it extends a service's budget when it is longer and ends the wait when it is spent. The pull, build and create before the wait are not part of it, and a `service_healthy` wait that gates a dependent inside `up` keeps its own budget. `docker compose up --wait --wait-timeout` does not extend the budget: it fails as soon as the runtime marks the container unhealthy (1.8 s with two retries and a 30 s timeout, measured against the same Podman 6.2.0 socket) and caps the wait at the timeout while retries remain.
+
+A service with no healthcheck is ready when it is running. If its restart policy can start it again (`always`, `unless-stopped` or `on-failure`), podup keeps reading it for three seconds and fails the wait when the restart count rises or the container is between two runs, so a service in a crash loop does not pass; the error names the container, the restarts and the last exit code. A one-shot under `restart: "no"` that ends with status 0 passes and one that ends with another status fails. `docker compose up --wait` reads the state once: against the same Podman 6.2.0 socket it returns 0 for `sh -c 'sleep 1; exit 3'` under `restart: unless-stopped`, and it fails with `exited (N)` for any container that has ended when it looks, a status 0 included, which podup accepts.
 
 With `missing`, an observed local image skips redundant pulls. `always`/`newer` and platform-pinned services still pull; build services use or build their local image.
 
@@ -96,7 +98,7 @@ Stop and remove containers, networks, and (with `-v`) volumes. With service name
 | `--remove-orphans` | Remove containers for services no longer in the file. | off |
 | `--force` | Run `-v` or `--remove-orphans` even when the project was created from another directory (a second checkout, or `COMPOSE_PROJECT_NAME` in another `.env`); without it they are refused, because they would remove that directory's volumes or containers. | off |
 | `--rmi <SCOPE>` | Also remove service images: `all`, or `local` (only the images built from a `build:` section that set no `image:` tag of their own). | keep images |
-| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them; zero or more. | Podman default |
+| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them; `-1` waits without limit for a container that ignores SIGTERM. | Podman default |
 
 ### `create`
 Create the containers for services without starting them. Accepts a trailing service list.
@@ -119,14 +121,14 @@ Start existing stopped containers. Accepts a trailing service list. `start --wai
 | Flag | Description | Default |
 |---|---|---|
 | `--wait` | Wait until services are running/healthy before returning. | off |
-| `--wait-timeout <SECS>` | Maximum seconds to wait with `--wait` before giving up. | no additional overall cap |
+| `--wait-timeout <SECS>` | The whole budget, in seconds, of the wait of `--wait`: it extends a service's own health budget when longer and ends the wait when spent. | no additional overall cap |
 
 ### `stop`
 Stop running containers without removing them. Accepts a trailing service list.
 
 | Flag | Description | Default |
 |---|---|---|
-| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them; zero or more. | Podman default |
+| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them; `-1` waits without limit for a container that ignores SIGTERM. | Podman default |
 
 ### `restart`
 Restart service containers (default: all, or the named ones).
@@ -134,7 +136,7 @@ Restart reuses the existing containers and does not apply compose changes (ports
 
 | Flag | Description | Default |
 |---|---|---|
-| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them; zero or more. | Podman default |
+| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them; `-1` waits without limit for a container that ignores SIGTERM. | Podman default |
 | `--no-deps` | Do not cascade-restart dependents that declare a `depends_on` restart condition. | off |
 
 ### `build`
@@ -306,6 +308,8 @@ Execute a command in a running service container.
 
 Standard input is a separate matter from the pseudo-terminal: a pipe or a redirected file is sent to the command, which then sees the end of that input when the file is exhausted. A terminal is not sent on a non-interactive session, so a command started that way reads an empty input rather than waiting for the operator.
 
+A SIGTERM, SIGINT or SIGHUP sent to `podup exec` is passed on to the command in the container, and `podup exec` waits for the command to end and exits with its status, so a command that handles the signal and exits with its own code is reported with that code. A command that ignores the signal keeps running, and so does `podup exec`; send SIGKILL or SIGQUIT to end podup alone. In an interactive session Ctrl-C reaches the command as a keystroke. `docker compose exec` ends on the signal with status 130 and leaves the command running in the container (measured against the same Podman 6.2.0 socket).
+
 ```bash
 podup exec -u root web sh
 podup exec -T db psql < dump.sql
@@ -339,7 +343,7 @@ Send a signal to service containers.
 | `--remove-orphans` | Then remove containers for services no longer in the file. | off |
 
 ### `rm [SERVICE...]`
-Remove stopped service containers.
+Remove stopped service containers. A container that is running or paused is skipped with a warning and the command still exits 0, so one `rm` removes the stopped ones and leaves the others; `-f` removes it anyway, and `-s` stops it first.
 
 | Flag | Description | Default |
 |---|---|---|

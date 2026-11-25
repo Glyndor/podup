@@ -63,10 +63,23 @@ judge() { # <event> <base> <head>
 		cd "$work" || exit 1
 		GITHUB_OUTPUT="$out" EVENT="$1" bash "$script" "$2" "$3"
 	)" || rc=$?
-	printf '%s\n%s\n%s\n%s\n' \
+	printf '%s\n%s\n%s\n%s\n%s\n' \
 		"$(sed -n 's/^run=//p' "$out")" \
 		"$(sed -n 's/^docs_only=//p' "$out")" \
-		"$reason" "$rc"
+		"$reason" "$rc" \
+		"$(sed -n 's/^ci_only=//p' "$out")"
+}
+
+# ci_only <path>...: the range is the CI alone (or the CI and documents), so
+# the Linux suite runs and coverage, the other platforms and the lint do not.
+ci_only() { # <path>...
+	local head out
+	head="$(change "$@")"
+	out="$(judge pull_request "$base" "$head")"
+	check "classify $* runs the lanes" true "$(printf '%s\n' "$out" | sed -n 1p)"
+	check "classify $* is not documentation only" false "$(printf '%s\n' "$out" | sed -n 2p)"
+	check "classify $* exits 3" 3 "$(printf '%s\n' "$out" | sed -n 4p)"
+	check "classify $* is the CI-only answer" true "$(printf '%s\n' "$out" | sed -n 5p)"
 }
 
 # must_run <reason> <path>...: the lanes run, and this is why.
@@ -79,6 +92,7 @@ must_run() { # <reason> <path>...
 		check "classify $path runs the lanes" true "$(printf '%s\n' "$out" | sed -n 1p)"
 		check "classify $path is not documentation only" false "$(printf '%s\n' "$out" | sed -n 2p)"
 		check "classify $path exits 1" 1 "$(printf '%s\n' "$out" | sed -n 4p)"
+		check "classify $path is not the CI-only answer" false "$(printf '%s\n' "$out" | sed -n 5p)"
 		check "classify $path names its rule" 1 \
 			"$(printf '%s\n' "$out" | sed -n 3p | grep -cF "$reason")"
 	done
@@ -154,17 +168,35 @@ must_run "changes the test suite" \
 	tests/hostile/input/hostile_compose.rs tests/fixtures/interpolation/ordinary-config.yml \
 	tests/scripts/stray.rs tests/scripts/shell/notes.md
 must_run "changes the packaging" debian/rules debian/control
-must_run "changes the CI" .github/workflows/ci.yml .github/workflows/reusable-rust-ci.yml
-must_run "changes the checks CI runs" .github/scripts/checks/check-planning-words.sh
+must_run "changes the pipeline of the Rust lanes" \
+	.github/workflows/ci.yml .github/workflows/reusable-rust-ci.yml .github/scripts/checks/rust-build-inputs.sh
 must_run "is read by the repository tests" \
 	fuzz/seeds/parse_compose/multi-document.yml bench/scenarios/build/Dockerfile
 must_run "is read by the release-key test" install.sh install.ps1
-must_run "is read by the supply-chain test" deny.toml .github/dependabot.yml
+must_run "is read by the supply-chain test" deny.toml
 must_run "is not a known input of the Rust lanes" unknown.txt
 
 # One path that may be skipped does not excuse one that may not.
 mixed "changes the crate" tests/scripts/shell/workflow_behaviour/rust-ci-inputs.test.sh internal/lib.rs
-mixed "changes the CI" docs/assets/demo.sh .github/workflows/ci.yml
+mixed "changes the pipeline of the Rust lanes" docs/assets/demo.sh .github/workflows/ci.yml
+mixed "changes the crate" .github/workflows/lint-shell.yml internal/lib.rs
+mixed "changes the test suite" .github/scripts/checks/folder-limit.sh tests/hostile/input/hostile_compose.rs
+mixed "changes the crate" .github/actionlint.yaml internal/lib.rs
+mixed "changes the dependency graph" .github/folder-limit-exceptions.txt Cargo.lock
+mixed "changes the pipeline of the Rust lanes" .github/podman_lane/budget .github/workflows/reusable-rust-ci.yml
+must_run "is not a known input of the Rust lanes" .github/podman_lane.txt .github/actionlint.yml .github/vocabulary-exceptions.txt.bak
+
+# The CI-only answer: the files of the CI and nothing the crate reads.
+ci_only .github/workflows/lint-shell.yml
+ci_only .github/workflows/podman-lane.yml .github/scripts/checks/folder-limit.sh
+ci_only .github/scripts/release/sign.py .github/scripts/hygiene/check-secrets.sh
+ci_only .github/dependabot.yml
+ci_only .github/actionlint.yaml
+ci_only .github/folder-limit-exceptions.txt .github/vocabulary-exceptions.txt
+ci_only .github/podman_lane/known-failures-6 .github/podman_lane/baseline-tests .github/podman_lane/budget
+ci_only .github/actionlint.yaml .github/workflows/lint-shell.yml docs/commands.md
+ci_only .github/workflows/dco.yml docs/commands.md
+ci_only .github/workflows/audit.yml tests/scripts/shell/workflow_behaviour/rust-ci-inputs.test.sh LICENSE
 
 # The third answer: a range of documents alone. The focused lane runs, and
 # only the tests that read a document run in it.
@@ -217,31 +249,34 @@ check "an empty range is not documentation only" false \
 check "an empty range exits 1" 1 "$(judge pull_request "$base" "$base" | sed -n 4p)"
 
 # The workflow reads the judge from the reviewed base, never from the pull
-# request's own tree. Two jobs ask it: `classify`, whose answer the jobs
-# skipped whole read, and `lint`, which skips only its heavy steps.
+# request's own tree. One job asks it, `classify`, and every other job reads
+# its answer: the jobs skipped whole and the heavy steps of `lint`.
 # shellcheck disable=SC2016
-check "two jobs read the judge from the base" 2 \
+check "one job reads the judge from the base" 1 \
 	"$(grep -c 'git show "\$BASE_SHA:.github/scripts/checks/rust-ci-inputs.sh"' "$workflow")"
 check "the judge is never read from the working tree" 0 \
 	"$(grep -c 'bash .github/scripts/checks/rust-ci-inputs.sh' "$workflow")"
 # shellcheck disable=SC2016
 check "the range comes from the event" 1 \
 	"$(grep -c '^  BASE_SHA: \${{ github.event.pull_request.base.sha' "$workflow")"
-check "a missing step decision runs the lanes" 4 \
+check "no step decides for itself" 0 \
 	"$(grep -c "steps.decide.outputs.run != 'false'" "$workflow")"
-check "a missing job decision runs the lanes" 3 \
+check "a missing decision runs the lanes (three jobs and four steps)" 7 \
 	"$(grep -c "needs.classify.outputs.run != 'false'" "$workflow")"
-check "a classifier that failed runs the lanes" 3 \
+check "a classifier that failed runs the lanes" 5 \
 	"$(grep -c "needs.classify.result != 'success'" "$workflow")"
 
 # The third answer has to reach the jobs that read it.
 # shellcheck disable=SC2016
 check "the classifier exposes the documentation answer" 1 \
 	"$(grep -c 'docs_only: ${{ steps.decide.outputs.docs_only }}' "$workflow")"
-check "the lint job's heavy steps skip a documentation-only range" 4 \
-	"$(grep -c "steps.decide.outputs.run != 'false' && !(steps.decide.outputs.run == 'true' && steps.decide.outputs.docs_only == 'true')" "$workflow")"
-check "the matrix and the coverage skip a documentation-only range" 2 \
-	"$(grep -c "needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}" "$workflow")"
+check "the lint job's heavy steps skip a documentation-only or CI-only range" 4 \
+	"$(grep -c "needs.classify.outputs.run != 'false' && !(needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true'))" "$workflow")"
+check "the matrix and the coverage skip a documentation-only or CI-only range" 2 \
+	"$(grep -c "needs.classify.outputs.run != 'false') && !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && (needs.classify.outputs.docs_only == 'true' || needs.classify.outputs.ci_only == 'true')) }}" "$workflow")"
+# shellcheck disable=SC2016
+check "the classifier exposes the CI-only answer" 1 \
+	"$(grep -c 'ci_only: ${{ steps.decide.outputs.ci_only }}' "$workflow")"
 check "the full suite runs unless a healthy classifier said documentation only" 1 \
 	"$(grep -c "if: \${{ !(needs.classify.result == 'success' && needs.classify.outputs.run == 'true' && needs.classify.outputs.docs_only == 'true') }}" "$workflow")"
 check "the focused lane runs only for a healthy documentation-only answer" 1 \

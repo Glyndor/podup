@@ -8,7 +8,7 @@ use tracing::{info, warn};
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::image::ImagePullProgress;
-use crate::libpod::{urlencoded, PodmanError, API_PREFIX};
+use crate::libpod::{image_urlencoded, PodmanError, API_PREFIX};
 
 use crate::engine::Engine;
 
@@ -61,7 +61,7 @@ where
 		Some(err) => Err(ComposeError::Build(format!("push {image}: {err}"))),
 		None => {
 			if quiet {
-				tracing::debug!("pushed {image}");
+				tracing::debug!("pushed {}", crate::errors::redact::redact_label(image));
 			} else {
 				crate::ui::progress_line("Image", image, "Pushed");
 			}
@@ -197,7 +197,10 @@ impl Engine {
 		match self.push_image(image, opts, quiet).await {
 			Ok(()) => Ok(true),
 			Err(e) if opts.ignore_failures => {
-				warn!("push {image} failed (ignored): {e}");
+				warn!(
+					"push {} failed (ignored): {e}",
+					crate::errors::redact::redact_label(image)
+				);
 				Ok(false)
 			}
 			Err(e) => Err(e),
@@ -217,15 +220,18 @@ impl Engine {
 	/// log floor, which it does not.
 	async fn push_image(&self, image: &str, opts: &PushOptions, quiet: bool) -> Result<()> {
 		if quiet {
-			tracing::debug!("pushing {image}");
+			tracing::debug!("pushing {}", crate::errors::redact::redact_label(image));
 		} else {
 			crate::ui::progress_line("Image", image, "Pushing");
 		}
-		let mut query = format!("destination={}", urlencoded(image));
+		let mut query = format!("destination={}", image_urlencoded(image));
 		if let Some(tls) = opts.tls_verify {
 			query.push_str(&format!("&tlsVerify={tls}"));
 		}
-		let path = format!("{API_PREFIX}/images/{}/push?{query}", urlencoded(image));
+		let path = format!(
+			"{API_PREFIX}/images/{}/push?{query}",
+			image_urlencoded(image)
+		);
 
 		let resp = self
 			.client

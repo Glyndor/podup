@@ -83,7 +83,11 @@ mod scaled_replicas;
 mod top_images;
 #[path = "engine_integration/workload/recreate/up_recreate.rs"]
 mod up_recreate;
+#[path = "engine_integration/workload/lifecycle/wait_restart_loop.rs"]
+mod wait_restart_loop;
 
+#[path = "engine_integration/host_files/copy/cp_link_target.rs"]
+mod cp_link_target;
 #[cfg(all(unix, feature = "test-helpers"))]
 #[path = "engine_integration/host_files/copy/cp_sparse.rs"]
 mod cp_sparse;
@@ -92,6 +96,8 @@ mod cp_sparse;
 #[path = "engine_integration/host_files/copy/cp_directory.rs"]
 mod cp_directory;
 
+#[path = "engine_integration/objects/network/attachment_options.rs"]
+mod attachment_options;
 #[path = "engine_integration/objects/network/dns_resolution.rs"]
 mod dns_resolution;
 #[path = "engine_integration/compose_files/error_surfacing.rs"]
@@ -100,6 +106,8 @@ mod error_surfacing;
 mod exec_flags;
 #[path = "engine_integration/workload/dependencies/health_waits.rs"]
 mod health_waits;
+#[path = "engine_integration/images/platform/platform_variant.rs"]
+mod platform_variant;
 #[path = "engine_integration/compose_files/profiles.rs"]
 mod profiles;
 
@@ -171,6 +179,8 @@ mod recreate_on_image;
 mod run_flags;
 #[path = "engine_integration/objects/resources/secrets.rs"]
 mod secrets;
+#[path = "engine_integration/workload/environment/unset_image_env.rs"]
+mod unset_image_env;
 
 #[cfg(feature = "test-helpers")]
 #[path = "engine_integration/host_files/watch/watch.rs"]
@@ -204,25 +214,35 @@ mod watch_delete;
 #[path = "engine_integration/host_files/watch/watch_ignore_relative.rs"]
 mod watch_ignore_relative;
 
+#[path = "engine_integration/workload/logging/log_path.rs"]
+mod log_path;
 #[path = "engine_integration/workload/autoupdate/x_podman_autoupdate.rs"]
 mod x_podman_autoupdate;
 
 #[path = "engine_integration/cli/inspect/cli_absent_project.rs"]
 mod cli_absent_project;
+#[path = "engine_integration/cli/images_files/cli_build_flags.rs"]
+mod cli_build_flags;
 #[path = "engine_integration/cli/images_files/cli_build_push.rs"]
 mod cli_build_push;
 #[path = "engine_integration/cli/lifecycle/cli_commands.rs"]
 mod cli_commands;
 #[path = "engine_integration/cli/images_files/cli_cp.rs"]
 mod cli_cp;
+#[path = "engine_integration/cli/lifecycle/cli_data_removal.rs"]
+mod cli_data_removal;
 #[path = "engine_integration/cli/lifecycle/cli_down_orphans_rmi.rs"]
 mod cli_down_orphans_rmi;
 #[path = "engine_integration/cli/logs_exec/cli_exec.rs"]
 mod cli_exec;
+#[path = "engine_integration/cli/lifecycle/cli_exec_signals.rs"]
+mod cli_exec_signals;
 #[path = "engine_integration/cli/logs_exec/cli_logs.rs"]
 mod cli_logs;
 #[path = "engine_integration/cli/logs_exec/cli_logs_tail.rs"]
 mod cli_logs_tail;
+#[path = "engine_integration/cli/lifecycle/cli_mode_forms.rs"]
+mod cli_mode_forms;
 #[path = "engine_integration/cli/inspect/cli_output.rs"]
 mod cli_output;
 #[path = "engine_integration/cli/inspect/cli_port.rs"]
@@ -235,14 +255,23 @@ mod cli_pull;
 mod cli_pull_flags;
 #[path = "engine_integration/cli/lifecycle/cli_restart_stop_kill.rs"]
 mod cli_restart_stop_kill;
+#[path = "engine_integration/cli/lifecycle/cli_rm_live_containers.rs"]
+mod cli_rm_live_containers;
 #[path = "engine_integration/cli/lifecycle/cli_run.rs"]
 mod cli_run;
 #[path = "engine_integration/cli/lifecycle/cli_service_ops.rs"]
 mod cli_service_ops;
 #[path = "engine_integration/cli/inspect/cli_stats.rs"]
 mod cli_stats;
+// Unix only: the container is a `sh` that traps SIGTERM and the bound on the
+// command kills it with a signal.
+#[cfg(unix)]
+#[path = "engine_integration/cli/lifecycle/cli_timeout_unlimited.rs"]
+mod cli_timeout_unlimited;
 #[path = "engine_integration/cli/inspect/cli_top_images.rs"]
 mod cli_top_images;
+#[path = "engine_integration/cli/lifecycle/cli_up_deploy_flags.rs"]
+mod cli_up_deploy_flags;
 #[path = "engine_integration/cli/lifecycle/cli_up_down.rs"]
 mod cli_up_down;
 #[path = "engine_integration/cli/lifecycle/cli_up_flags.rs"]
@@ -251,6 +280,8 @@ mod cli_up_flags;
 mod cli_volumes_config;
 #[path = "engine_integration/cli/lifecycle/cli_wait_flags.rs"]
 mod cli_wait_flags;
+#[path = "engine_integration/cli/lifecycle/cli_wait_timeout.rs"]
+mod cli_wait_timeout;
 #[path = "engine_integration/workload/lifecycle/create_ls.rs"]
 mod create_ls;
 #[path = "engine_integration/workload/lifecycle/lifecycle_output.rs"]
@@ -258,6 +289,8 @@ mod lifecycle_output;
 
 // Unix only, with the test helpers: it reaches the Podman socket through
 // `podman_socket_url`, which is exported under the same condition.
+#[path = "engine_integration/workload/lifecycle/down_rmi_in_use.rs"]
+mod down_rmi_in_use;
 #[cfg(all(unix, feature = "test-helpers"))]
 #[path = "engine_integration/workload/lifecycle/healthcheck_inherits_image.rs"]
 mod healthcheck_inherits_image;
@@ -277,6 +310,8 @@ mod pod_dns;
 mod pod_exit_policy;
 #[path = "engine_integration/workload/pod/pod_fixtures.rs"]
 mod pod_fixtures;
+#[path = "engine_integration/workload/pod/pod_network_options.rs"]
+mod pod_network_options;
 // pasta pods are a Linux feature, and the helpers it uses are Unix-only.
 #[cfg(unix)]
 #[path = "engine_integration/workload/pod/pod_on_pasta.rs"]

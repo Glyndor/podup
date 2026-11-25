@@ -29,6 +29,7 @@ pub(crate) use images::context;
 use images::image;
 use objects::network;
 use objects::secrets;
+pub(crate) use objects::secrets::{is_valid_secret_name, scoped_name};
 use objects::volume;
 pub(crate) use objects::volume_mounts;
 pub(crate) use observe::events;
@@ -46,6 +47,7 @@ pub use copy::CpOptions;
 pub use events::EventsOptions;
 pub use image::{resolve_image_digests, CommitOptions};
 pub use lifecycle::{validate_stop_timeout, ContainerSnapshot, RunOptions, RunOverrides};
+pub(crate) use project::lock::reject_dangerous_secret_mode;
 pub use project::ProjectLock;
 
 pub(crate) use container_config::build_log_config;
@@ -53,6 +55,9 @@ pub(crate) use container_config::resources::{
 	cdi_devices, effective_cpu_quota, effective_memory_limit, effective_pids_limit, is_known_ulimit,
 };
 pub(crate) use network::apply_default_isolation;
+pub(crate) use network::by_priority as network_by_priority;
+pub(crate) use network::link_aliases as network_link_aliases;
+pub(crate) use network::link_aliases_among as network_link_aliases_among;
 /// Re-exported so `startup::config_render` (in the binary crate) can call the
 /// same function `up` uses, instead of duplicating the resolution rule.
 pub use network::resolve_network_name;
@@ -198,12 +203,9 @@ pub struct Engine {
 	/// uploaded. The mount reads this instead of asking the path again, which by
 	/// then may name another file.
 	pub(crate) uploaded_file_modes: std::sync::Mutex<std::collections::HashMap<String, u32>>,
-	/// CLI `--no-warn`: suppress the host-binding / privilege-escalation
-	/// warnings the engine emits during `up`/`create`/`run`/`exec`. The
-	/// operator wrote the compose file deliberately, so the default-warning
-	/// behaviour is opt-out per run rather than per command. `config`'s
-	/// surface-mode listing is unaffected; `config` is the "show me what will
-	/// happen" command, where the warnings stay visible there.
+	/// CLI `--no-warn`: suppress the advisory warnings the engine emits (the
+	/// rootless caveats). The security warnings, the host-binding and
+	/// privilege-escalation modes, are emitted whatever it says.
 	pub(crate) no_warn: bool,
 	/// Services already warned about missing last-pull tracking on this engine.
 	pull_policy_warned: std::sync::Mutex<std::collections::HashSet<String>>,

@@ -194,6 +194,27 @@ pub fn effective_pids_limit(service: &crate::compose::types::Service) -> Option<
 pub fn resolve_bind_source(src: &str, base_dir: &std::path::Path) -> String {
 	crate::engine::container::resolve_bind_source(src, base_dir)
 }
+/// Write the mode of every secret, config and tmpfs of a rendered `config`
+/// document as text with its leading zero (`"0644"`), the spelling that reads
+/// back as the same mode. Exists for the podup binary's `config` command; not
+/// part of the library's supported public surface.
+#[doc(hidden)]
+pub fn render_modes_as_text_yaml(value: &mut serde_yaml::Value) {
+	parsing::compose::types::inputs::mode_render::modes_as_text_yaml(value);
+}
+/// Say the notices that reading the modes of the compose file gave, each once. The
+/// podup binary calls it for the commands that apply a mode or check the file.
+#[doc(hidden)]
+pub fn emit_mode_notices() {
+	for notice in parsing::compose::types::inputs::mode::take_pending() {
+		tracing::warn!("{notice}");
+	}
+}
+/// The same for a JSON document.
+#[doc(hidden)]
+pub fn render_modes_as_text_json(value: &mut serde_json::Value) {
+	parsing::compose::types::inputs::mode_render::modes_as_text_json(value);
+}
 /// The CFS CPU quota the engine will forward into `LinuxCPU.quota`, in
 /// microseconds over `cpu_period` (default 100_000). `cpu_quota:` wins
 /// when present, including `-1` (Docker's "unlimited" sentinel) and

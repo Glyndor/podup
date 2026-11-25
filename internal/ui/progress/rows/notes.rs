@@ -83,6 +83,7 @@ pub(crate) fn plain_line(name: &str, line: &str) -> String {
 /// emits `\n` between blocks would otherwise fill the tail with blanks and
 /// push the meaningful lines off the end.
 pub fn note_for(kind: &str, name: &str, line: &str) {
+	let name = &crate::errors::redact::redact_label(name);
 	let Some(kind) = Kind::from_noun(kind) else {
 		return;
 	};

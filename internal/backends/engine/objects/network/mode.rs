@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use crate::compose::types::{ComposeFile, Service};
 use crate::libpod::types::container::{Namespace, PerNetworkOptions};
 
+use super::link_aliases::link_aliases;
 use super::names::resolve_network_name;
 use super::per_network_options::build_per_network_options;
 
@@ -94,6 +95,7 @@ pub(in crate::backends::engine) fn resolve_network_mode(
 				service_name,
 				service.networks.config_for(net_name),
 				service.mac_address.as_deref(),
+				&link_aliases(file, service_name, net_name),
 			);
 			(full, opts)
 		})

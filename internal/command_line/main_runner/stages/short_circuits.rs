@@ -301,11 +301,13 @@ pub(crate) fn setup_output(cli: &Cli) {
 	podup::ui::set_progress(true);
 	// `watch` is an interactive, long-running command; surface its per-action
 	// progress (synced/rebuilt/restarted) by defaulting to INFO instead of the
-	// quiet WARN floor. `RUST_LOG` always overrides.
-	let log_floor = if matches!(cli.command, Commands::Watch) {
-		"info"
-	} else {
-		"warn"
+	// quiet WARN floor. `up --watch` runs the same loop behind a start, but only
+	// the loop is raised: the start-up and build phases of `up` log their own
+	// `info` lines, and those stay at the default. `RUST_LOG` always overrides.
+	let log_floor = match &cli.command {
+		Commands::Watch => "info",
+		Commands::Up(up) if up.watch => "warn,podup::backends::engine::host_files::watch=info",
+		_ => "warn",
 	};
 	crate::startup::init_tracing(log_floor);
 }

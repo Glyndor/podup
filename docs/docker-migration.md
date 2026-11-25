@@ -38,30 +38,34 @@ The following Compose fields are translated onto Podman's libpod API. Fields out
 | Category | Keys |
 |---|---|
 | Images / build | `image`, `build` (context, dockerfile, args, target, cache_from, cache_to, secrets, labels, network), `pull_policy` (time policies map to `newer`), `pull_refresh_after` (strict syntax only) |
-| Execution | `command`, `entrypoint`, `working_dir`, `user`, `umask`, `platform`, `tty`, `stdin_open` |
+| Execution | `command`, `entrypoint`, `working_dir`, `user`, `umask`, `platform`, `tty`, `stdin_open`, `init`, `runtime`, `stop_signal` |
 | Environment | `environment`, `env_file` (dotenv format, or `format: raw`; see the note below the table), variable substitution (`${VAR:-default}`) |
-| Networking | `ports`, `expose`, `networks`, `network_mode`, `hostname`, `domainname`, `dns`, `dns_opt`, `dns_search`, `extra_hosts` |
+| Networking | `ports`, `expose`, `networks`, `network_mode`, `hostname`, `dns`, `dns_opt`, `dns_search`, `extra_hosts` |
 | Volumes | `volumes` (bind, named, tmpfs, npipe; a long-form bind with `create_host_path: false` fails `up` naming the service and the missing path instead of creating it), `tmpfs`, `volumes_from` |
 | Secrets / configs | `secrets`, `configs` (file, inline content, environment source, and `external: true` Podman-native secrets) |
 | Dependencies | `depends_on` (with `condition:` set to `service_started`, `service_healthy` or `service_completed_successfully`) |
-| Health checks | `healthcheck` (test, interval, timeout, retries, start_period, disable) |
+| Health checks | `healthcheck` (test, interval, timeout, retries, start_period, disable; `start_interval` is accepted and not honored, see [Other parsed-but-ignored fields](#other-parsed-but-ignored-fields)) |
 | Lifecycle hooks | `pre_start` (ephemeral init containers), `post_start`, `pre_stop` |
 | Restart policies | `restart`, `deploy.restart_policy` (`condition`, `max_attempts`) |
 | Replicas / scale | `deploy.replicas`, `scale:` |
-| Resource limits | `deploy.resources`, `mem_limit`, `cpus`, `cpu_shares`, `cpu_quota`, `pids_limit`, `ulimits`, `blkio_config` |
+| Resource limits | `deploy.resources`, `mem_limit`, `memswap_limit`, `cpus`, `cpu_shares`, `cpu_quota`, `cpu_period`, `cpuset`, `pids_limit`, `ulimits`, `blkio_config`, `oom_score_adj` |
 | Devices | `devices`, `device_cgroup_rules` |
 | GPU | `deploy.resources.reservations.devices`, `gpus:`; see the note below |
-| Security | `cap_add`, `cap_drop`, `security_opt`, `read_only`, `privileged`, `userns_mode` |
+| Security | `cap_add`, `cap_drop`, `security_opt`, `read_only`, `privileged`, `userns_mode`, `group_add`, `sysctls` |
 | Namespaces | `pid`, `ipc`, `uts`, `cgroup`, `shm_size` |
 | Metadata | `labels`, `annotations`, `container_name`, `profiles` |
 | Logging | `logging` (driver + options) |
 | Compose features | `extends`, `include`, YAML anchors, x-extensions, `develop.watch` |
+
+`platform: os/arch/variant` (for example `linux/arm/v7`) selects the image when it is pulled and again when the container is created, where Podman picks the instance of a manifest list by operating system, architecture and variant together.
 
 A memory amount that cannot be used (`mem_limit`, `memswap_limit`, `mem_reservation`, `shm_size`, `deploy.resources.limits.memory`, `deploy.resources.reservations.memory`) is an error that names the service and the key, for example `service 'web': mem_limit "1e100" is not a valid memory amount`. Docker Compose drops such a value and runs the container without the limit; podup refuses to start it. An empty value (`mem_limit: ${MEM:-}` with `MEM` unset) means no limit and is not an error. Valid amounts are a byte count or a number with `b`, `k`, `m`, `g`, `t` or `p` (optionally followed by `b`, or by `ib` as in `512MiB`; any case, all binary multiples, as Docker Compose reads them), and `-1` where the engine takes it.
 
 An `env_file` entry is read as dotenv by default. Unquoted and double-quoted values are interpolated, looking each name up in the project environment first, then in the service's `environment:`, then in the keys set by the env files before it and by the file itself; a single-quoted value stays literal. `format: raw` reads the file line by line with every value kept as written, quotes included, and none interpolated.
 
 Interpolation follows `docker compose config`. A form Docker refuses is an error that names the key, such as `${A:foo}`, `${A:=foo}` or an unclosed `${A`. A `{` inside a default is text (`${A:-{}` gives `{`), and the message of `${A:?msg}` is interpolated too. Mapping keys are not interpolated: `${NAME}` as a key stays as written, with a warning. The project `.env` is read as strictly as `--env-file`, so a required variable with no value or an invalid form in it is an error naming the file and the key.
+
+A variable that `environment:` lists without a value (`- KEY`, or `KEY:` in a mapping) and that the project environment, `.env` and the `env_file` entries leave undefined is removed from the container, including a value the image gives it, as the Compose Specification says. `up` sends its name in `unsetenv`, which Podman applies to the image's environment before the service's own. The Quadlet export writes a bare `Environment=KEY`, which `podman` reads from the environment of the process that starts the unit, and `PodmanArgs=--unsetenv=KEY`, which removes the image's value when nothing defines the variable (measured on Podman 6.2.0: a value the starting process defines is kept).
 
 `umask` sets the initial process permission mask. Use a string of one to four octal digits, such as `"0022"`, `"022"` or `"22"` (range `0000` to `7777`). Only integer `0` is accepted; quote every other numeric value to avoid YAML radix ambiguity. Validation follows normal interpolation and refuses leftover variables with the service name and a quote hint before container or pod replacement. Normal interpolation can turn numeric text into a YAML integer, so use a leading-zero value such as `0022`. With `config --no-interpolate`, a placeholder in `umask` is refused because the typed field still requires a valid mask. Valid output is padded to four digits. Omitted or null leaves the runtime default; explicit zero sends `"0000"` and masks no permission bits. The quadlet export writes it as `Umask=<value>`. Scalar inheritance, `!reset` and `!override` apply. Explicit `umask: null` changes the configuration hash once on upgrade because the previously unknown null key is now omitted. Tagged payloads use normal interpolation before merge tags are stripped; unresolved masks still fail validation.
 
@@ -96,6 +100,10 @@ The pod keeps `PodmanArgs=--share=net` and `ExitPolicy=continue`. Only the netwo
 ### Bridge network isolation
 
 podup creates every bridge network with the netavark option `isolate=true`, so two bridge networks do not reach each other's unpublished ports, as in Docker. The Quadlet export writes the same default on the `.network` unit as `Options=isolate=true`, so a project started from the exported units is isolated like one started with `podup up`. A compose file that sets `isolate` in the network's `driver_opts` wins, including `"false"` for a project that deliberately spans networks. Networks with another driver are left alone. A network that already exists on the host keeps the options it was created with: after updating the units, remove the old network (`podman network rm <project>_<name>`) so the unit creates it again with `isolate=true`.
+
+### Network priority, interface names and driver options
+
+`networks.<name>.priority` orders the service's networks: the one with the highest priority is connected first and holds `eth0`, as in Docker Compose. `up` sends the order to Podman when any network sets a priority other than 0; networks of equal priority keep Podman's own order, by name, which is also the order of a service that sets none. The Quadlet export writes the `Network=` lines in that order, and the per-network `interface_name` and `driver_opts` on each line, as `interface_name=` and `key=value` options. A driver option whose name Podman reads as one of its own (`alias`, `ip`, `ip6`, `mac`, `interface_name`), or whose name or value holds a character the option list cannot carry, is left out and reported. Inside a pod unit none of the three has a place and each is reported.
 
 ### Time-based pull policies
 
@@ -164,6 +172,8 @@ secrets:
 ```
 
 Secrets appear under `/run/secrets/<name>`; configs default to `/<name>`, and a long-form `target:` overrides either. If the named Podman secret does not exist, `podup up` fails fast rather than starting a container without it. Use a top-level `name:` when the Podman secret is named differently from the compose reference.
+
+The `mode:` of a secret, a config or a tmpfs is octal, and podup reads it from the text it was written as. `0o644`, `0644`, `"0644"` and `"0o644"` are 0644, and `0x1a4` is 0644 too. A mode written as an integer with no leading zero (`644`, `420`, `256`) keeps the reading it has always had, the digits as octal when each is below 8 and the decimal value otherwise, and podup says what it applied and how to write the mode so it does not depend on that rule, once for each mode, in the commands that apply a mode or check the file (`up`, `create`, `run`, `config`, `generate`, `audit` and `autostart install`) and in no other (`ps`, `logs`, `down` and the rest say nothing); `docker compose` reads such an integer as a decimal number, so `644` is 01204 there. A value that is not a mode (a sign, a fraction, an octal digit that is 8 or 9 after a leading `0` or `0o`, text, more than `0o7777`) is refused with the service, the secret or config and the value written. A mode that reaches the model as a number whose spelling was not recovered is read only when its digits as octal and the number itself are the same mode, and refused otherwise (every command does this, since there is no model to use); a value that comes out of an interpolation keeps its text, so that case does not arise there. `config` prints the mode of a secret, a config and a tmpfs as a string with its leading zero (`"0644"`), which reads back as the same mode.
 
 ## Behaves differently under rootless Podman
 
@@ -373,6 +383,12 @@ A `depends_on` that names a service the file does not define is refused, with it
 
 `volumes_from: [data]`, `links: [data:alias]`, and `network_mode` / `ipc` / `pid` / `uts` set to `service:data` add implicit dependencies on the named service. Dependency cycles are rejected.
 
+Podman has no `links` option, so `links: [data:alias]` is carried out as a network alias: `alias` becomes one more name of `data` on every network that `data` and the linking service both join. Docker scopes the alias to the linking container; here every container on those networks resolves it. `up` says so for each aliased link, and says when a link is ignored because the two services share no network or the target is not a service of the file. A link without an alias adds nothing, because every service already answers to its own name. `external_links` and `domainname` are not honored (Podman has no equivalent for either) and `up` reports each one.
+
+### Per-network `driver_opts`
+
+`networks.<name>.driver_opts` on a service reaches Podman as written, as the options of that attachment, and the network backend receives the ones it does not know untouched. `priority` is not a driver option and is not sent as one.
+
 ### Interpolation reaches the keys of top-level maps
 
 The Compose Specification says interpolation applies to YAML values and not to keys. podup interpolates keys as well, so `networks: {"${NET_NAME}": {}}` names the network from the variable and the file loads. docker compose refuses that file (`networks additional properties '${NET_NAME}' not allowed`). It is a deliberate difference: a file that depends on it runs only under podup, so for portability write the name out and keep variables in values.
@@ -437,13 +453,21 @@ The `[Build]` keys `Annotation=`, `Volume=` and `DNS=` have no compose `build:` 
 | `pull_refresh_after` | strictly validated after interpolation, syntax only; no last-pull clock is available, so it has no runtime effect |
 | `attach` | Honoured by `up`: a service with `attach: false` is never followed. Ignored only by `generate quadlet`, where there is no log following |
 | `use_api_socket` | no podup equivalent |
+| `healthcheck.start_interval` | Podman probes at `healthcheck.interval` during the start period, so `up --wait` can take that long to see the service healthy; `up` reports it |
+| `domainname` | Podman 6.2.0 has no setting for a container's domain name (the `kernel.domainname` sysctl is refused by `podman run` and fails at start through the API); `up` reports it |
+| `external_links` | Podman has no link option, and a container outside the project cannot be given another name; `up` reports it |
 | `provider:` / top-level `models:` | podup runs no model runner; the service/model is not honored |
 | volume long-form `driver_config` | not forwarded to Podman |
 | `networks.*.enable_ipv4` | Podman networks enable IPv4 by default and expose no toggle |
 | `networks.*.ipam.config[].aux_addresses` | not supported by Podman |
 | service `networks.*.gw_priority` | not supported by Podman |
+| service `networks.*.link_local_ips` | Podman cannot add an address to the interface; it used to be sent as the container's own static address, which stopped the container from starting for one outside the network's subnet |
 | `logging.options.tag` with `json-file` or `k8s-file` | Podman's file logger refuses a tag when the container starts; podup drops it with a warning, as it does `max-file` |
+| `logging.options.path` with a driver other than `json-file` or `k8s-file` | only the two file drivers write a file; podup drops the path with a warning |
+| any `logging.options` key other than `path`, `max-size`, `max-file` and `tag` | Podman's generator reads nothing else, so the key is forwarded and reported; see below |
 | `secrets`/`configs` `driver` / `template_driver` (on non-`external` defs) | external secret-store plugins (Vault, AWS SM, …) podup does not invoke; the secret/config is still staged from its `file`, `content` or `environment` source, and only a definition with none has nothing to stage |
+
+What the generator of Podman 6.2.0 consumes from `logging`: `driver`; `options.path` (the log file, `json-file` and `k8s-file` only) and `options.max-size` (the cap in bytes), which podup sends in the typed fields Podman reads them from, because Podman ignores both inside `options`; and `options.tag` (`journald` only). `options.max-file` is dropped, since Podman keeps one file. A `path` with no `driver` selects `k8s-file`, as a positive `max-size` does. The Quadlet export writes `path` and `max-size` as `LogOpt=` lines.
 
 ## Not yet supported
 
@@ -465,7 +489,7 @@ podup ships for Linux, macOS and Windows, each x86_64/arm64. Install paths are i
 
 ### Engine and transport
 
-podup needs a Podman 6.2.0 or newer engine and sets no upper bound: a newer release is accepted. The libpod client compares the engine's reported version (major, minor and patch) with `MIN_PODMAN_VERSION` (6.2.0), and the engine version is checked on the first request that contacts Podman. Commands that contact Podman check the version. `config --resolve-image-digests` and `autostart uninstall --purge` also contact it.
+podup needs a Podman 6.2.0 or newer engine and sets no upper bound: a newer release is accepted. On Debian and Ubuntu the [README](../README.md#install) shows how to install just that Podman. The libpod client compares the engine's reported version (major, minor and patch) with `MIN_PODMAN_VERSION` (6.2.0), and the engine version is checked on the first request that contacts Podman. Commands that contact Podman check the version. `config --resolve-image-digests` and `autostart uninstall --purge` also contact it.
 
 The transport is local-only. Only `unix://` (or `npipe://` on Windows) is accepted, from `--socket`, `PODMAN_SOCKET`, `DOCKER_HOST`, or auto-detection; remote `tcp://`/`ssh://`/`http(s)://`/`fd://` schemes are rejected before any connection. This applies to `podman machine` as well. Driving a remote engine over TCP or SSH is not supported; run podup beside the engine.
 

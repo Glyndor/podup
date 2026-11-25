@@ -31,8 +31,9 @@
 #   build.rs                    the crate's build script
 #   tests/                      the Rust test suite the package build runs
 #   debian/                     the packaging
-#   .github/workflows/          what CI runs
-#   .github/scripts/            the checks CI runs, this script among them
+#   .github/workflows/debian-build.yml, reusable-rust-debian.yml, release.yml, reusable-release-build.yml
+#                               the CI that builds the package
+#   .github/scripts/checks/debian-ci-inputs.sh   this script
 #   install.sh, install.ps1     the installers
 #
 # What may be skipped is the shell and PowerShell test suite under
@@ -93,9 +94,20 @@ while IFS= read -r path; do
 		# the Rust tests, which the package build runs.
 		tests/scripts/*.sh | tests/scripts/*.ps1) ;;
 		tests/*) answer true "$path changes the Rust test suite" ;;
-		# The CI itself.
-		.github/workflows/*) answer true "$path changes the CI" ;;
-		.github/scripts/*) answer true "$path changes the checks CI runs" ;;
+		# The CI that builds the package: its caller, its reusable and the
+		# release workflow, which builds the same package.
+		.github/workflows/debian-build.yml | .github/workflows/reusable-rust-debian.yml | .github/workflows/release.yml | .github/workflows/reusable-release-build.yml)
+			answer true "$path changes the CI"
+			;;
+		# The rest of the CI. The package build runs `cargo test`, and the Rust
+		# tests that read a workflow or a script are the same tests the Linux
+		# suite of the Rust lanes runs on every such change, with the same
+		# answer: the feature set debian/rules selects does not change what
+		# they read. Nothing else in these directories reaches the package.
+		.github/workflows/* | .github/scripts/*) ;;
+		# The configuration and the lists that only a check of the CI reads (actionlint's, the exceptions of the
+		# folder limit and of the banned vocabulary, the lists of the Podman lane). No Rust test reads them.
+		.github/actionlint.yaml | .github/folder-limit-exceptions.txt | .github/vocabulary-exceptions.txt | .github/podman_lane/*) ;;
 		# The installers. The package build reads neither, but a change to
 		# one is not a script-only test change.
 		install.sh | install.ps1) answer true "$path changes an installer" ;;

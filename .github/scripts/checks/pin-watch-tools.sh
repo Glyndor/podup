@@ -128,7 +128,8 @@ tag_version() { # <tag> <prefix>
 # tool: rustsec/cargo-audit publishes the CVSS schema (`cvss/v3.0.0`)
 # alongside its crate releases, and that schema is newer than the crate.
 # The release list is consulted when the newest release does not carry a
-# version, and the newest release that does is the answer.
+# version, and the newest release that does is the answer. When there is no
+# release at all the tags are read.
 upstream_version() { # <repo> <prefix>
 	local tag version candidate best
 	local tags=""
@@ -152,6 +153,23 @@ upstream_version() { # <repo> <prefix>
 	done <<EOF
 $tags
 EOF
+	# A repository that publishes tags and no GitHub release at all (rust-lang/rustup does:
+	# `gh release view` answers 404) is read from its tags, the same way. Without this the
+	# whole watch failed on the one pin that had no release to read, and a watcher that fails
+	# on one row reports no drift at all.
+	if [ -z "$best" ]; then
+		tags=$(gh api "repos/$1/tags?per_page=30" --jq '.[].name' 2>/dev/null) || tags=""
+		while IFS= read -r tag; do
+			[ -n "$tag" ] || continue
+			candidate=$(tag_version "$tag" "$2") || continue
+			is_version "$candidate" || continue
+			if [ -z "$best" ] || [ "$(printf '%s\n%s\n' "$best" "$candidate" | LC_ALL=C sort -V | tail -n1)" = "$candidate" ]; then
+				best=$candidate
+			fi
+		done <<EOF
+$tags
+EOF
+	fi
 	[ -n "$best" ] || return 1
 	printf '%s\n' "$best"
 }
@@ -186,6 +204,7 @@ cargo-about|EmbarkStudios/cargo-about|
 shellcheck|koalaman/shellcheck|v
 actionlint|rhysd/actionlint|v
 PSScriptAnalyzer|PowerShell/PSScriptAnalyzer|
+rustup|rust-lang/rustup|
 TOOLS
 
 # ---- the sites that pin them -----------------------------------------------
@@ -202,7 +221,7 @@ site_count=0
 
 sites_table=$(cat <<'SITES'
 cargo-llvm-cov|.github/workflows/reusable-rust-ci.yml|input|llvm-cov-version
-cargo-llvm-cov|.github/workflows/podman-lane.yml|install|cargo-llvm-cov
+cargo-llvm-cov|.github/scripts/podman_lane/user-data.tpl|install|cargo-llvm-cov
 cargo-llvm-cov|.github/workflows/podman-lane-develop-nightly.yml|install|cargo-llvm-cov
 cargo-semver-checks|.github/workflows/reusable-rust-ci.yml|input|semver-checks-version
 cargo-audit|.github/workflows/reusable-rust-audit.yml|input|cargo-audit-version
@@ -210,13 +229,14 @@ cargo-deny|.github/workflows/reusable-rust-audit.yml|input|cargo-deny-version
 cargo-fuzz|.github/workflows/reusable-rust-fuzz.yml|input|cargo-fuzz-version
 cargo-cyclonedx|.github/workflows/reusable-rust-supply-chain.yml|input|cyclonedx-version
 cargo-about|.github/workflows/reusable-rust-supply-chain.yml|input|cargo-about-version
-cargo-about|.github/workflows/release.yml|install|cargo-about
-cargo-audit|.github/workflows/release.yml|install|cargo-audit
-cargo-cyclonedx|.github/workflows/release.yml|install|cargo-cyclonedx
+cargo-about|.github/workflows/reusable-release-build.yml|install|cargo-about
+cargo-audit|.github/workflows/reusable-release-verify.yml|install|cargo-audit
+cargo-cyclonedx|.github/workflows/reusable-release-build.yml|install|cargo-cyclonedx
 shellcheck|.github/workflows/reusable-shell-ci.yml|input|shellcheck-version
 shellcheck|.github/workflows/reusable-workflow-lint.yml|input|shellcheck-version
 actionlint|.github/workflows/reusable-workflow-lint.yml|env|ACTIONLINT_VERSION
 PSScriptAnalyzer|.github/workflows/reusable-powershell-ci.yml|input|pssa-version
+rustup|.github/workflows/reusable-release-build.yml|env|RUSTUP_VERSION
 SITES
 )
 while IFS='|' read -r tool file shape key; do

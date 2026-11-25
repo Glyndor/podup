@@ -119,7 +119,15 @@ fn problems(units: &[(&str, &str)], canary: &str) -> Vec<String> {
 			{
 				bad.push(format!("{name}: line is not Key=Value: {line:?}"));
 			}
-			if line.contains(&format!("/bin/{canary}")) && key.starts_with("Exec") && key != "Exec"
+			// The secrets unit holds file paths in the arguments of its `ExecStart=`
+			// lines, each as one double-quoted word: the text of a payload inside the
+			// quotes is an argument, not a directive.
+			let in_quotes =
+				key == "ExecStart" && only_inside_quotes(line, &format!("/bin/{canary}"));
+			if line.contains(&format!("/bin/{canary}"))
+				&& key.starts_with("Exec")
+				&& key != "Exec"
+				&& !in_quotes
 			{
 				bad.push(format!("{name}: injected directive: {line:?}"));
 			}
@@ -129,6 +137,24 @@ fn problems(units: &[(&str, &str)], canary: &str) -> Vec<String> {
 		}
 	}
 	bad
+}
+
+/// Whether every occurrence of `needle` in `line` is inside a double-quoted word,
+/// where systemd reads it as part of one argument. A `\"` does not close a quote.
+fn only_inside_quotes(line: &str, needle: &str) -> bool {
+	let (mut inside, mut escaped) = (false, false);
+	let mut quoted = vec![false; line.len() + 1];
+	for (at, c) in line.char_indices() {
+		if escaped {
+			escaped = false;
+		} else if c == '\\' {
+			escaped = true;
+		} else if c == '"' {
+			inside = !inside;
+		}
+		quoted[at..at + c.len_utf8()].fill(inside);
+	}
+	line.match_indices(needle).all(|(at, _)| quoted[at])
 }
 
 /// The (file name, contents) of every unit in `out`.
@@ -185,6 +211,10 @@ fn the_structure_check_sees_each_kind_of_injection() {
 		("single percent", "[Container]\nEnvironment=A=%h\n"),
 		("folding backslash", "[Container]\nImage=a\\\nExec=b\n"),
 		("not key value", "[Container]\nnonsense\n"),
+		(
+			"a quote that closed early",
+			"[Service]\nExecStart=/bin/sh -c \"x\" \"a\" ; ExecStartPre=/bin/c\n",
+		),
 	];
 	for (what, contents) in cases {
 		assert!(
@@ -193,4 +223,50 @@ fn the_structure_check_sees_each_kind_of_injection() {
 		);
 	}
 	assert!(problems(&unit("[Container]\nImage=a\nEnvironment=A=%%h\n"), "c").is_empty());
+	// A payload that stays inside a quoted argument is an argument.
+	let quoted = unit("[Service]\nExecStart=/bin/sh -c \"x\" \"a\\\"; ExecStartPre=/bin/c\"\n");
+	assert!(problems(&quoted, "c").is_empty());
+}
+
+/// `generate quadlet` stops, before it writes a unit, for a secret whose file is a
+/// link (`up` refuses it too), and says which file and why.
+#[cfg(unix)]
+#[test]
+fn a_link_where_a_secret_file_should_be_stops_generate_quadlet_before_any_unit() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(dir.path().join("real"), "x").unwrap();
+	std::os::unix::fs::symlink(dir.path().join("real"), dir.path().join("link")).unwrap();
+	let compose = dir.path().join("compose.yaml");
+	std::fs::write(
+		&compose,
+		"services:\n  web:\n    image: img\n    secrets: [token]\nsecrets:\n  token:\n    file: ./link\n",
+	)
+	.unwrap();
+	let out = dir.path().join("units");
+	let run = std::process::Command::new(env!("CARGO_BIN_EXE_podup"))
+		.args(["-f", compose.to_str().unwrap(), "generate", "quadlet", "-o"])
+		.arg(&out)
+		.output()
+		.unwrap();
+	assert!(!run.status.success());
+	assert!(String::from_utf8_lossy(&run.stderr).contains("it is a link"));
+	assert!(!out.exists());
+	// A file that is not there yet is written.
+	std::fs::write(
+		&compose,
+		std::fs::read_to_string(&compose)
+			.unwrap()
+			.replace("./link", "./later"),
+	)
+	.unwrap();
+	let run = std::process::Command::new(env!("CARGO_BIN_EXE_podup"))
+		.args(["-f", compose.to_str().unwrap(), "generate", "quadlet", "-o"])
+		.arg(&out)
+		.output()
+		.unwrap();
+	assert!(run.status.success());
+	assert!(
+		out.join("proj-podup-secrets.service").exists()
+			|| std::fs::read_dir(&out).unwrap().count() > 1
+	);
 }

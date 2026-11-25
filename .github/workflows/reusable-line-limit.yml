@@ -50,7 +50,16 @@ concurrency:
 
 jobs:
   line-limit:
-    name: line limit
+    # The name says which kind of run produced it: nothing for a pull request into
+    # `develop` and for the merge queue, `(promotion)` for a pull request into `main`,
+    # and the event in brackets for everything else (a push, a schedule, a pull request
+    # on any other base). `==` in an expression ignores case, so the trigger limits the
+    # bases with `branches`, which does not, and the gate checks the base in shell. A required
+    # check is matched by name on a commit, so the push that lands on `develop` and
+    # the pull request that promotes the same commit into `main` must not be able to
+    # answer for each other: they get different names and the ruleset of each branch
+    # requires its own.
+    name: line limit${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 8s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.

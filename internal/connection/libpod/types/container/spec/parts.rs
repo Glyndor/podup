@@ -78,8 +78,16 @@ pub struct PerNetworkOptions {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub interface_name: Option<String>,
 
-	/// Driver-specific per-connection options.
-	#[serde(skip_serializing_if = "Option::is_none")]
+	/// The compose `priority` of this attachment. It is not part of the request:
+	/// libpod has no such field, and the order it asks for travels as
+	/// `networkOrder` on the container instead.
+	#[serde(skip)]
+	pub priority: Option<u32>,
+
+	/// Driver-specific per-connection options. Podman's `PerNetworkOptions`
+	/// names this field `options`; under any other name its decoder accepts the
+	/// request and drops the value without a word.
+	#[serde(rename = "options", skip_serializing_if = "Option::is_none")]
 	pub driver_opts: Option<HashMap<String, String>>,
 }
 
@@ -469,6 +477,12 @@ pub struct LogConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub driver: Option<String>,
 
+	/// Where the log file is written. libpod reads it from this field and
+	/// ignores a `path` key inside [`options`](Self::options); only the
+	/// `json-file` and `k8s-file` drivers use it.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub path: Option<String>,
+
 	/// Maximum log file size in **bytes**. libpod reads rotation from this
 	/// sibling field and ignores `max-size` keys inside [`options`](Self::options)
 	/// (#1417). `-1` disables rotation, matching the Docker `--log-opt max-size=-1`
@@ -476,10 +490,10 @@ pub struct LogConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub size: Option<i64>,
 
-	/// Driver-specific options. The only keys libpod honours for the built-in
-	/// log drivers are `path` and `tag` (see `man podman-run`); `max-file` is
-	/// silently dropped by libpod regardless of where it appears, and `max-size`
-	/// must travel as the typed [`size`](Self::size) field above.
+	/// Driver-specific options. The only key libpod's generator reads from this
+	/// map is `tag` (journald); `max-file` is silently dropped by libpod
+	/// regardless of where it appears, and `max-size` and `path` must travel as
+	/// the typed [`size`](Self::size) and [`path`](Self::path) fields above.
 	#[serde(skip_serializing_if = "HashMap::is_empty", default)]
 	pub options: HashMap<String, String>,
 }

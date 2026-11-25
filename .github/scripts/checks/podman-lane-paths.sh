@@ -18,6 +18,20 @@ while IFS= read -r f; do
 	case "$f" in
 		.github/workflows/podman-lane.yml | .github/podman_lane/*) no "$f" ;;
 		.github/scripts/release/sign-requirements.txt) ;;
+		# What the VM reads from here: the image fetcher, the coverage floor, and
+		# the two helpers that decide whether it boots at all. Every other script
+		# under checks/, ci/, hygiene/, hardening/ and release/ is something a CI job
+		# runs, and nothing the VM does reads it. A directory nobody named stays
+		# closed: an unknown path boots.
+		.github/scripts/fedora_image/* | .github/scripts/podman_lane/*) no "$f" ;;
+		.github/scripts/checks/is-version-bump.sh | .github/scripts/checks/podman-lane-paths.sh) no "$f" ;;
+		.github/scripts/checks/* | .github/scripts/ci/* | .github/scripts/hygiene/* | .github/scripts/hardening/* | .github/scripts/release/*) ;;
+		# What the CI reads and the VM never does: the helpers every check imports (ci_yaml), the scripts that
+		# pack the release for the other distributions, and their tests.
+		.github/scripts/lib/* | .github/scripts/packaging/* | tests/packaging/*) ;;
+		# The configuration and the lists of the CI checks: actionlint's, and the exceptions of the folder
+		# limit and of the banned vocabulary. The lists of the lane itself (.github/podman_lane/) boot it.
+		.github/actionlint.yaml | .github/folder-limit-exceptions.txt | .github/vocabulary-exceptions.txt) ;;
 		.github/scripts/*) no "$f" ;;
 		*.md | docs/* | .github/ISSUE_TEMPLATE/* | LICENSE | .editorconfig) ;;
 		.github/dependabot.yml | .github/CODEOWNERS) ;;
@@ -50,18 +64,23 @@ while IFS= read -r f; do
 		.github/workflows/release.yml) ;;
 		.github/workflows/repository-health.yml) ;;
 		.github/workflows/reusable-branch-health.yml) ;;
+		.github/workflows/reusable-cancel-others.yml) ;;
 		.github/workflows/reusable-dco.yml) ;;
+		.github/workflows/reusable-deprecation-notices.yml) ;;
 		.github/workflows/reusable-dependabot-freshness.yml) ;;
 		.github/workflows/reusable-installer-contract.yml) ;;
 		.github/workflows/reusable-line-limit.yml) ;;
 		.github/workflows/reusable-main-guard.yml) ;;
 		.github/workflows/reusable-powershell-ci.yml) ;;
+		.github/workflows/reusable-release-build.yml) ;;
+		.github/workflows/reusable-release-verify.yml) ;;
 		.github/workflows/reusable-rust-audit.yml) ;;
 		.github/workflows/reusable-rust-ci.yml) ;;
 		.github/workflows/reusable-rust-debian.yml) ;;
 		.github/workflows/reusable-rust-fuzz.yml) ;;
 		.github/workflows/reusable-rust-supply-chain.yml) ;;
 		.github/workflows/reusable-schedule-freshness.yml) ;;
+		.github/workflows/reusable-stop-on-failure.yml) ;;
 		.github/workflows/reusable-shell-ci.yml) ;;
 		.github/workflows/reusable-workflow-lint.yml) ;;
 		.github/workflows/supply-chain.yml) ;;

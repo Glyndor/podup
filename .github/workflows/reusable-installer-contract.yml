@@ -22,9 +22,9 @@ on:
         type: string
         default: "install.sh"
       release-workflow:
-        description: Path to the release workflow that publishes assets
+        description: Path to the workflow that declares the assets the release builds (the matrix of the binaries)
         type: string
-        default: ".github/workflows/release.yml"
+        default: ".github/workflows/reusable-release-build.yml"
       install-ps1-path:
         description: Path to the PowerShell install script (skipped if absent)
         type: string

@@ -1,0 +1,46 @@
+# Filled in by inner.sh: @VERSION@ and @FILES@ (the %files list, from the
+# staged tree). Nothing is compiled here; the binary was built by the release
+# and arrives in the staged tree.
+Name:           podup
+Version:        @VERSION@
+Release:        1.glyndor.any
+Summary:        Run Compose projects on rootless Podman through its native libpod API
+License:        MIT
+URL:            https://glyndor.net/projects/podup
+Vendor:         Glyndor
+Packager:       Glyndor <noreply@glyndor.net>
+Requires:       podman >= 6.2.0
+
+# The binary is static and already stripped. No debuginfo package, no build-id
+# links, and none of the post-install scripts that would recompress the man
+# page or strip the binary a second time: the files must reach the install
+# byte for byte as they are in the .deb.
+%global debug_package %{nil}
+%global _build_id_links none
+%global __os_install_post %{nil}
+%global _binary_payload w9.gzdio
+%global _source_payload w9.gzdio
+# The binary is static; the loader dependency rpm would read off an ELF header
+# is not one it has.
+%global __requires_exclude ^rtld\\(GNU_HASH\\)$
+%global source_date_epoch_from_changelog 0
+%global use_source_date_epoch_as_buildtime 1
+%global clamp_mtime_to_source_date_epoch 1
+
+%description
+podup reads Compose files and drives rootless Podman through its native libpod
+API to create the containers, networks, volumes and secrets they describe. It
+covers the Compose lifecycle (up, down, build, push, exec, run, logs and
+inspection) and exports projects as systemd Quadlet units, as a single binary
+with no daemon and no Python runtime.
+
+%prep
+
+%build
+
+%install
+mkdir -p %{buildroot}
+cp -a "@STAGE@/root/." %{buildroot}/
+
+%files
+@FILES@

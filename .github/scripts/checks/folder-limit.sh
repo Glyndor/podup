@@ -101,6 +101,13 @@ while IFS= read -r -d '' dir; do
 	if [ -n "${BASE:-}" ] && [ -n "${parsed["$dir"]:-}" ] && [ "$cap" -gt "${parsed["$dir"]}" ]; then
 		issue="${issue:+$issue; }ceiling increased from ${parsed["$dir"]}; it may only decrease"
 	fi
+	# The count is judged against the ceiling the BASE gives the folder: its exception
+	# if it lists one, and the default if it does not. An exception that the change adds
+	# for a folder the base does not list raises the cap only for the change that adds
+	# it, so it cannot approve itself.
+	if [ -n "${BASE:-}" ] && [ "$count" -gt "${parsed["$dir"]:-20}" ]; then
+		issue="${issue:+$issue; }over the base's ceiling of ${parsed["$dir"]:-20} for this folder"
+	fi
 	if [ -n "$issue" ]; then
 		printf '%q\t%d\t%d\t%s\n' "$dir" "$count" "$cap" "$issue"
 		failed=1

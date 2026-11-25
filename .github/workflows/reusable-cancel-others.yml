@@ -1,0 +1,65 @@
+name: Cancel the other runs of a failed commit (reusable)
+
+# Called by a job that runs when a workflow of a pull request has failed. It
+# cancels the other, still unfinished runs of the same head commit, so the rest
+# of the pull request stops spending runners on a commit that is already red.
+# Cancelling is not resolving: the failing workflow keeps its own result.
+#
+# This job holds `actions: write`, which is the one token in the repository that
+# can end other runs, and it follows four rules.
+#
+# 1. The permission is on this job alone. No workflow declares it at the top.
+# 2. It never runs a file from the pull request's tree. The checkout is there to
+#    read the BASE commit's copy of the script, which is written to a temporary
+#    file and run from there. A base that has no script runs nothing.
+# 3. The values of the event reach the step through `env`, never through the
+#    text of `run`.
+# 4. It does nothing else.
+#
+# What it cancels, and what it never does, is written in the script itself and
+# held by tests/scripts/shell/workflow_behaviour/cancel-others.test.sh. The rule
+# that holds the permission to exactly these steps is
+# .github/scripts/ci/check-write-token-jobs.py.
+
+on:
+  workflow_call:
+
+permissions: {}
+
+concurrency:
+  group: cancel-others-${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  cancel:
+    name: cancel the other runs of this commit
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    # Bound: one listing and a handful of cancellations, a few seconds. Ten times a generous
+    # 30 s, rounded up; the six-hour default is what a hang would otherwise cost.
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - name: Run the base commit's copy of the cancel script
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BASE_SHA" 2>/dev/null || true
+          if git show "${BASE_SHA}:.github/scripts/ci/cancel-others.sh" >"$RUNNER_TEMP/others.sh" 2>/dev/null; then
+            bash "$RUNNER_TEMP/others.sh"
+          else
+            echo "::warning::the base commit has no cancel script; nothing is cancelled"
+          fi

@@ -97,7 +97,7 @@ step_script "$WORKFLOW" "A job holding a secret must not install" | inline_check
 check "the tooling assertion was extracted from the workflow" "1" \
 	"$(grep -c 'INSTALL_PATTERNS' "$WORK/tooling.sh" | awk '{print ($1>0)}')"
 
-new() { rm -rf "$WORK/t"; mkdir -p "$WORK/t/.github/workflows"; printf '%s' "$WORK/t"; }
+new() { rm -rf "$WORK/t"; mkdir -p "$WORK/t/.github/workflows"; mkdir -p "$WORK/t/.github/scripts/lib"; cp "$HERE/.github/scripts/lib/ci_yaml.py" "$WORK/t/.github/scripts/lib/"; printf '%s' "$WORK/t"; }
 run_in() { # $1=dir $2=script -> stdout+stderr, status in $?
 	( cd "$1" && bash "$2" 2>&1 )
 }
@@ -270,11 +270,11 @@ check "and the step did not silently pass it" "0" \
 check "and there is no parse-error warning hiding the miss" "0" \
 	"$(said "$out" '::warning')"
 
-# --- an unparseable workflow is a warning, not a silent skip -------------
+# --- an unparseable workflow fails the step: what it cannot read it does not compare -----
 d="$(new)"; printf 'name: [\n' > "$d/.github/workflows/broken.yml"
 out="$(run_in "$d" "$WORK/tooling.sh")"; rc=$?
-check "a workflow that does not parse does not fail the step" "0" "$rc"
-check "but is reported as skipped, so the silence is visible" "1" "$(said "$out" '::warning')"
+check "a workflow that does not parse fails the step" "1" "$rc"
+check "and is reported as an error" "1" "$(said "$out" 'YAML parse error')"
 
 echo "$pass passed, $fail failed"
 printf 'DONE %s %d %d\n' "${BASH_SOURCE[0]##*/}" "$pass" "$fail"

@@ -10,14 +10,19 @@
 mod create;
 mod ipam;
 mod isolation;
+mod link_aliases;
 mod mode;
 mod names;
+mod order;
 mod per_network_options;
 
 pub(crate) use isolation::apply_default_isolation;
+pub(crate) use link_aliases::{link_aliases, link_aliases_among};
 pub(in crate::backends::engine) use mode::{
 	network_mode_options, resolve_network_mode, resolve_service_namespace,
 	split_network_mode_options,
 };
 pub(in crate::backends::engine) use names::default_network_name;
 pub use names::resolve_network_name;
+pub(crate) use order::by_priority;
+pub(in crate::backends::engine) use order::network_order;

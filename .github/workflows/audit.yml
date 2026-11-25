@@ -1,29 +1,17 @@
 name: Security audit
 
-# Three triggers, three questions, and the split is the whole point.
+# Four triggers, one rule: an advisory appears without any file changing, so
+# the audit is not conditioned on paths. It runs on every pull request and in the
+# merge queue, which is the run of the commit that lands on develop (a push to
+# develop would repeat it on the same commit), and the daily schedule audits both
+# branches and opens an issue when either fails.
 #
-# The daily schedule audits the WHOLE tree on both branches against an
-# advisory database that moves on somebody else's schedule. A finding
-# there belongs to a third party: RustSec published something today
-# about a crate nobody here touched. That must not be able to block a
-# pull request, which is why this workflow kept pull requests off the
-# third-party-timing lane: a finding that belongs to a third party must NOT
-# fail the run, or someone else's disclosure timing blocks every pull request
-# in the organisation.
-#
-# The pull-request trigger asks the other question: does THIS change
-# introduce a dependency with a known advisory? That finding belongs to
-# the pull request, and blocking is the right answer. Scoping it to the
-# manifest, the lockfile and the two ignore lists is what keeps the two
-# apart: a pull request that touches none of them cannot introduce a
-# dependency, so upstream's timing reaches it through the cron and not
-# through a red check it did not cause.
-#
-# The residue, stated rather than discovered: a pull request that does
-# change the lockfile on the day an unrelated advisory lands is blocked
-# by that advisory. That is the narrow case where the two questions
-# overlap, and it lands on the pull request that is changing
-# dependencies, which is where someone is already looking at them.
+# The cost is the trade the rule accepts: a finding published today about a
+# crate nobody here touched can turn a pull request red. That is the audit doing
+# its job, and the response is to fix or ignore the advisory with a written
+# reason in the ignore lists, not to look away from it. Both tools are downloaded
+# at a pinned version and checked against a sum on every run (see
+# reusable-rust-audit.yml), so the run costs seconds.
 #
 # The schedule audits main and starts a run of this workflow on develop;
 # the report job below opens an issue when either does not succeed
@@ -38,16 +26,12 @@ on:
         type: string
         default: ""
   pull_request:
+    types: [opened, synchronize]
     branches:
       - main
       - develop
-    paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "deny.toml"
-      - ".cargo/audit.toml"
-      - ".github/workflows/audit.yml"
-      - ".github/workflows/reusable-rust-audit.yml"
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -59,9 +43,10 @@ permissions:
 run-name: ${{ inputs.parent-run && format('Security audit of develop for run {0}', inputs.parent-run) || github.workflow }}
 
 # Cancels superseded pull_request runs only; see asset-contract.yml.
+# A security result is never cancelled by a newer push: the group is the run itself.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   # Kept as audit so its check names stay the same.
