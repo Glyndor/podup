@@ -331,7 +331,11 @@ jobs:
           DEB_ARCH: ${{ matrix.deb_arch }}
         run: |
           set -euo pipefail
-          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$COMMIT")" >>"$GITHUB_ENV"
+          # The step that follows reads the variable from the file, and this one has to have it set itself:
+          # what is written to GITHUB_ENV is not in the environment of the step that writes it.
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct "$COMMIT")"
+          export SOURCE_DATE_EPOCH
+          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" >>"$GITHUB_ENV"
           python3 -I .github/scripts/packaging/stage-payload.py --deb "$RUNNER_TEMP/deb/podup_${VERSION}_${DEB_ARCH}.deb" \
             --version "$VERSION" --arch "$DEB_ARCH" --license LICENSE --out "$RUNNER_TEMP/stage"
 
@@ -398,7 +402,11 @@ jobs:
           COMMIT: ${{ inputs.commit }}
         run: |
           set -euo pipefail
-          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$COMMIT")" >>"$GITHUB_ENV"
+          # The step that follows reads the variable from the file, and this one has to have it set itself:
+          # what is written to GITHUB_ENV is not in the environment of the step that writes it.
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct "$COMMIT")"
+          export SOURCE_DATE_EPOCH
+          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" >>"$GITHUB_ENV"
           python3 -I .github/scripts/packaging/stage-payload.py --deb "$RUNNER_TEMP/deb/podup_${VERSION}_amd64.deb" \
             --version "$VERSION" --arch amd64 --license LICENSE --out "$RUNNER_TEMP/stage"
 
