@@ -318,7 +318,7 @@ podup validates a schedule and does not fire it. `run`, `up` and `config` print 
 
 ### Pods
 
-`x-podman-pod: true` at the top level puts every service of the project into one Podman pod, named after the project, with a shared network namespace. The pod uses the project networks, or pasta/slirp4netns when every service declares the same such `network_mode`.
+`x-podman-pod: true` at the top level puts every service of the project into one Podman pod, named after the project, with a shared network namespace. The pod uses the project networks, or pasta/slirp4netns when every service declares the same such `network_mode`. The pod attaches each network once, so what a service sets for one is carried to the pod when the services that set it agree: `interface_name` and `driver_opts` of `networks.<name>` are applied (measured on Podman 6.2.0: a pod created with `interface_name=eth7` gives its members an `eth7`), and a change to them recreates the pod. When services disagree, or a service sets `priority`, which orders the networks of one container and has nothing to order in a pod, `up` warns that the option is not applied.
 
 The infra container stays running when the last service exits, in both API and Quadlet deployments. What changes inside the pod:
 
