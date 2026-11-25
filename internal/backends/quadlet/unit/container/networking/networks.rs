@@ -11,12 +11,14 @@ use super::super::{sorted_label_pairs, unit_stem, ExternalNames, Section};
 
 /// Emit a `Network=` line per declared network the service attaches to, unless
 /// the pod carries the attachment instead.
+#[allow(clippy::too_many_arguments)]
 pub(in super::super) fn emit_networks(
 	name: &str,
 	service: &Service,
 	project: &str,
 	declared_networks: &[&str],
 	external_networks: &ExternalNames<'_>,
+	linkers: &[&Service],
 	in_pod: bool,
 	container: &mut Section,
 ) {
@@ -41,7 +43,9 @@ pub(in super::super) fn emit_networks(
 					.unwrap_or(net.as_str())
 					.to_string()
 			};
-			let options = attachment_options(name, service, &net);
+			let links =
+				crate::engine::network_link_aliases_among(linkers.iter().copied(), name, &net);
+			let options = attachment_options(name, service, &net, links);
 			container.add("Network", format!("{target}:{}", options.join(",")));
 		}
 	}
@@ -156,7 +160,8 @@ fn is_plain_option_text(text: &str) -> bool {
 
 /// The options of one network attachment, the way `up` builds them
 /// (`build_per_network_options`): the service name as an alias so siblings
-/// resolve it, the aliases declared for this network, its static addresses, its
+/// resolve it, the aliases declared for this network, the aliases that other
+/// services' `links:` give it (`links`), its static addresses, its
 /// interface name and its driver options. Podman reads them after the network
 /// name, so each one is scoped to that network instead of to every network the
 /// container joins.
@@ -165,12 +170,15 @@ fn is_plain_option_text(text: &str) -> bool {
 /// or a driver option that could break it is left out and reported, and an
 /// address is written only once it parses. Podman hands every name it does not
 /// know to the network backend, which is how a driver option travels.
-fn attachment_options(name: &str, service: &Service, net: &str) -> Vec<String> {
+fn attachment_options(name: &str, service: &Service, net: &str, links: Vec<String>) -> Vec<String> {
 	let config = service.networks.config_for(net);
 	let declared = config.and_then(|c| c.aliases.clone()).unwrap_or_default();
 	let mut options = Vec::new();
 	let mut seen = std::collections::HashSet::new();
-	for alias in std::iter::once(name.to_string()).chain(declared) {
+	for alias in std::iter::once(name.to_string())
+		.chain(declared)
+		.chain(links)
+	{
 		if alias.is_empty() || !seen.insert(alias.clone()) {
 			continue;
 		}

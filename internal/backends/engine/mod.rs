@@ -57,6 +57,7 @@ pub(crate) use container_config::resources::{
 pub(crate) use network::apply_default_isolation;
 pub(crate) use network::by_priority as network_by_priority;
 pub(crate) use network::link_aliases as network_link_aliases;
+pub(crate) use network::link_aliases_among as network_link_aliases_among;
 /// Re-exported so `startup::config_render` (in the binary crate) can call the
 /// same function `up` uses, instead of duplicating the resolution rule.
 pub use network::resolve_network_name;

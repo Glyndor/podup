@@ -82,6 +82,9 @@ pub(crate) struct UnitContext<'a> {
 	/// Every service in the file, so a `depends_on` condition can be judged
 	/// against the service it names rather than in the abstract.
 	pub services: &'a IndexMap<String, Service>,
+	/// The services and jobs whose `links: [target:alias]` give `target` a network
+	/// alias, in the order of the file.
+	pub linkers: &'a [&'a Service],
 	/// `true` when the compose file opts into `x-podman-pod: true`. Each
 	/// container unit then references the project pod by `Pod=<stem>.pod`
 	/// and drops its own `PublishPort=` and `Network=` lines.
@@ -191,6 +194,7 @@ fn render_container_unit(
 		secrets_unit,
 		base_dir,
 		services,
+		linkers,
 		pod_mode,
 		pod_network_mode,
 		pod_fields,
@@ -244,6 +248,7 @@ fn render_container_unit(
 		project,
 		declared_networks,
 		external_networks,
+		linkers,
 		in_pod,
 		&mut container,
 	);
