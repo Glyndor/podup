@@ -125,6 +125,13 @@ updates:
     # the binary: build with that version in the lock and compare with these sizes.
       - dependency-name: "hyper"
         versions: [">= 1.13.0"]
+    # notify 9.0.0 is held back for the same budget. It builds and passes the tests on Rust 1.91, but it
+    # takes the release binary from 9 905 928 bytes to 10 081 064, 175 136 more and 172 021 over the
+    # 9.45 MiB budget (9 909 043 bytes), because `xxhash-rust` and new code come with it and no feature
+    # removes them. Measured on 2026-11-25 with `cargo build --release --locked --bin podup`; the
+    # follow-up is #2673. The ignore ends when the binary has room for it or the budget moves with a reason.
+      - dependency-name: "notify"
+        versions: [">= 9.0.0"]
     commit-message:
       prefix: chore
 
@@ -155,11 +162,13 @@ updates:
     groups:
       fuzz-crate:
         patterns: ["*"]
-    # hyper stays at 1.12.0 here as in the root lockfile, so the two resolve the same version; see the
+    # hyper stays at 1.12.0 and notify at 8 here as in the root lockfile, so the two resolve the same versions; see the
     # entry for `/` above for the measured reason.
     ignore:
       - dependency-name: "hyper"
         versions: [">= 1.13.0"]
+      - dependency-name: "notify"
+        versions: [">= 9.0.0"]
     commit-message:
       prefix: chore
 
