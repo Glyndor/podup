@@ -442,6 +442,13 @@ def problems(path):
                 with_keys = {str(k) for k in (s.get("with") or {})}
                 if "cache" in str(s.get("uses", "")).lower() or with_keys & CACHE_INPUTS:
                     bad(f"{label} `{name}`: `{s.get('name') or s.get('uses')}` restores or saves a cache, which another run can poison")
+    # 12. What a step writes to GITHUB_ENV is not in its own environment: the step that stages the payload runs
+    # a script that needs SOURCE_DATE_EPOCH, so it sets and exports the variable itself before it.
+    for name in ("build-rpm", "build-pacman"):
+        for s in runs(rjobs[name]):
+            text = s["run"]
+            if "stage-payload.py" in text and not re.search(r"^\s*export SOURCE_DATE_EPOCH$", text.split("stage-payload.py")[0], re.M):
+                bad(f"the builds `{name}`: `{s.get('name')}` runs stage-payload.py without exporting SOURCE_DATE_EPOCH first")
     if "dry_run" not in (spec.get("on", spec.get(True)) or {}).get("workflow_dispatch", {}).get("inputs", {}):
         bad("release.yml has no `dry_run` input")
     return out

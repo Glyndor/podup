@@ -200,6 +200,9 @@ MUTANTS["seal-assets-python-without-isolation"] = without_isolation("r", "seal",
 MUTANTS["release-verify-python-without-isolation"] = without_isolation("r", "release", "Verify every signature")
 MUTANTS["release-create-python-without-isolation"] = without_isolation("r", "release", "Create GitHub Release")
 MUTANTS["stage-python-without-isolation"] = without_isolation("b", "build-rpm", "Stage the payload")
+for _j in ("build-rpm", "build-pacman"):
+    MUTANTS[f"{_j}-stages-without-the-epoch"] = (lambda j: lambda r, b, v: step(b, j, "Stage the payload").update(
+        {"run": step(b, j, "Stage the payload")["run"].replace("export SOURCE_DATE_EPOCH\n", "")}))(_j)
 MUTANTS["rustup-piped-into-a-shell"] = bld(lambda m: step(m, "build-deb", "Install the pinned Rust").update(
     {"run": "curl -fsSL https://sh.rustup.rs | sh -s -- -y"}))
 
