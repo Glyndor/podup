@@ -128,7 +128,8 @@ tag_version() { # <tag> <prefix>
 # tool: rustsec/cargo-audit publishes the CVSS schema (`cvss/v3.0.0`)
 # alongside its crate releases, and that schema is newer than the crate.
 # The release list is consulted when the newest release does not carry a
-# version, and the newest release that does is the answer.
+# version, and the newest release that does is the answer. When there is no
+# release at all the tags are read.
 upstream_version() { # <repo> <prefix>
 	local tag version candidate best
 	local tags=""
@@ -152,6 +153,23 @@ upstream_version() { # <repo> <prefix>
 	done <<EOF
 $tags
 EOF
+	# A repository that publishes tags and no GitHub release at all (rust-lang/rustup does:
+	# `gh release view` answers 404) is read from its tags, the same way. Without this the
+	# whole watch failed on the one pin that had no release to read, and a watcher that fails
+	# on one row reports no drift at all.
+	if [ -z "$best" ]; then
+		tags=$(gh api "repos/$1/tags?per_page=30" --jq '.[].name' 2>/dev/null) || tags=""
+		while IFS= read -r tag; do
+			[ -n "$tag" ] || continue
+			candidate=$(tag_version "$tag" "$2") || continue
+			is_version "$candidate" || continue
+			if [ -z "$best" ] || [ "$(printf '%s\n%s\n' "$best" "$candidate" | LC_ALL=C sort -V | tail -n1)" = "$candidate" ]; then
+				best=$candidate
+			fi
+		done <<EOF
+$tags
+EOF
+	fi
 	[ -n "$best" ] || return 1
 	printf '%s\n' "$best"
 }
