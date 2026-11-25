@@ -45,7 +45,7 @@ import ci_yaml  # noqa: E402  (the one loader and enumerator; run from the repos
 WORKFLOWS = ".github/workflows"
 
 # Reusable workflows a job that holds the permission may call.
-CALLABLE = {"reusable-cancel-others.yml"}
+CALLABLE = {"reusable-cancel-others.yml", "reusable-stop-on-failure.yml"}
 
 # (workflow file, job id) -> (fingerprint of the surroundings, fingerprints of
 # its steps in order). A step is
@@ -58,6 +58,15 @@ KNOWN = {
         [
             "6661403ee47251dc5f13970c4e65a674ae92ec3c7ebb74f64be84bf1bb7c1ce6",
             "466c469c207f224b857fe3d7576fb5ce038117f94de4331245c52508dc2af6ce",
+        ],
+    ),
+    # The watcher that cuts the runs of a commit at the first failed job: the checkout pinned by hash,
+    # then the launcher that runs the base commit's copy of the script.
+    ("reusable-stop-on-failure.yml", "watch"): (
+        "c58e46bd3d54af68894abe234cf7a63bc17a7ead913b90b632645d4724e55d96",
+        [
+            "6661403ee47251dc5f13970c4e65a674ae92ec3c7ebb74f64be84bf1bb7c1ce6",
+            "09e2a4a9348de6c01c048494504ff80d10509fef4b4e35c7efaa942d2b7f4ed7",
         ],
     ),
     # The nightly audit launcher: no checkout, and `gh` only. It runs on

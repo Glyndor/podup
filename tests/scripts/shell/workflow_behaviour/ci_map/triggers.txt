@@ -99,6 +99,7 @@
 .github/workflows/reusable-rust-supply-chain.yml	supply-chain
 .github/workflows/reusable-schedule-freshness.yml	lint-shell
 .github/workflows/reusable-shell-ci.yml	lint-shell
+.github/workflows/reusable-stop-on-failure.yml	lint-shell
 .github/workflows/reusable-workflow-lint.yml	lint-shell
 .github/workflows/supply-chain.yml	supply-chain
 .github/workflows/windows-arm64.yml	windows-arm64
@@ -259,6 +260,7 @@ tests/scripts/shell/workflow_behaviour/reusable-schedule-freshness.test.sh	debia
 tests/scripts/shell/workflow_behaviour/rust-build-inputs.test.sh	debian-build,lint-shell
 tests/scripts/shell/workflow_behaviour/rust-ci-inputs.test.sh	debian-build,lint-shell
 tests/scripts/shell/workflow_behaviour/rust-gate.test.sh	debian-build,lint-shell
+tests/scripts/shell/workflow_behaviour/stop-on-failure.test.sh	debian-build,lint-shell
 tests/scripts/shell/workflow_behaviour/workflow-lint-inputs.test.sh	debian-build,lint-shell
 tests/scripts/shell/workflow_behaviour/write-token-jobs.test.sh	debian-build,lint-shell
 tests/scripts/shell/workflow_lint/*	debian-build,lint-shell

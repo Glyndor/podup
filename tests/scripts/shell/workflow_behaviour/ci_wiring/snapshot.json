@@ -135,6 +135,15 @@
      "package-check": false,
      "semver-check": false
     }
+   },
+   "stop-on-failure": {
+    "permissions": {
+     "actions": "write",
+     "checks": "read",
+     "contents": "read"
+    },
+    "steps": [],
+    "uses": "./.github/workflows/reusable-stop-on-failure.yml"
    }
   },
   "name": "CI",
@@ -1365,6 +1374,37 @@
      }
     }
    }
+  }
+ },
+ "reusable-stop-on-failure.yml": {
+  "jobs": {
+   "watch": {
+    "if": "${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}",
+    "name": "stop at the first failure",
+    "permissions": {
+     "actions": "write",
+     "checks": "read",
+     "contents": "read"
+    },
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "6661403ee47251dc",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Watch the check runs of the commit and cut the rest at the first failure",
+      "sha": "09e2a4a9348de6c0",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 125
+   }
+  },
+  "name": "Stop the runs of a commit at its first failure (reusable)",
+  "permissions": {},
+  "true": {
+   "workflow_call": null
   }
  },
  "workflow-lint.yml": {

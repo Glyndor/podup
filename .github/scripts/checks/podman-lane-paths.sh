@@ -74,6 +74,7 @@ while IFS= read -r f; do
 		.github/workflows/reusable-rust-fuzz.yml) ;;
 		.github/workflows/reusable-rust-supply-chain.yml) ;;
 		.github/workflows/reusable-schedule-freshness.yml) ;;
+		.github/workflows/reusable-stop-on-failure.yml) ;;
 		.github/workflows/reusable-shell-ci.yml) ;;
 		.github/workflows/reusable-workflow-lint.yml) ;;
 		.github/workflows/supply-chain.yml) ;;
