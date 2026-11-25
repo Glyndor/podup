@@ -507,6 +507,7 @@
    },
    "podman-vm": {
     "if": "${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}",
+    "name": "podman-vm (${{ matrix.podman }}${{ matrix.mode == 'coverage' && ', coverage' || '' }})",
     "needs": "decide",
     "runs-on": "ubuntu-24.04",
     "steps": [
@@ -526,7 +527,11 @@
      },
      {
       "if": "needs.decide.outputs.engine != 'false'",
-      "name": "Build cloud-init seed (script-file for clean RC)"
+      "name": "Build cloud-init seed"
+     },
+     {
+      "if": "needs.decide.outputs.engine != 'false'",
+      "name": "Copy the judge out of the workspace"
      },
      {
       "if": "needs.decide.outputs.engine != 'false'",
@@ -534,18 +539,34 @@
      },
      {
       "if": "needs.decide.outputs.engine != 'false'",
-      "name": "Verify podup core suite passed on the target Podman"
+      "name": "Verify the VM"
      }
     ],
     "strategy": {
      "fail-fast": false,
      "matrix": {
+      "include": [
+       {
+        "job_minutes": 100,
+        "mode": "suite",
+        "vm_seconds": 4500
+       },
+       {
+        "job_minutes": 129,
+        "mode": "coverage",
+        "vm_seconds": 6240
+       }
+      ],
+      "mode": [
+       "suite",
+       "coverage"
+      ],
       "podman": [
        "6"
       ]
      }
     },
-    "timeout-minutes": 95
+    "timeout-minutes": "${{ matrix.job_minutes }}"
    }
   },
   "name": "podman-lane",
