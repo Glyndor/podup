@@ -57,7 +57,7 @@
 #   install.sh, install.ps1     read by the release-key test
 #   deny.toml                   read by the supply-chain test
 #   fuzz/, bench/               read by the repository's own tests
-#   .github/dependabot.yml      read by the supply-chain test
+#   .github/dependabot.yml      read by the supply-chain test (and the CI-only answer when alone)
 #
 # The documentation is on the list above, and that is not an oversight:
 # `tests/repository/docs/docs_links.rs` reads every markdown file under
@@ -185,6 +185,11 @@ while IFS= read -r path; do
 		fuzz/*) answer true false "$path is read by the repository tests" ;;
 		bench/*) answer true false "$path is read by the repository tests" ;;
 		.github/dependabot.yml) ci=true ;;
+		# The configuration and the lists that only a check of the CI reads: the one of actionlint, the
+		# exceptions of the folder limit and of the banned vocabulary, and the lists of the Podman lane
+		# (the VM boots for those, see podman-lane-paths.sh; no Rust lane reads them). Left to the default
+		# they ran every lane, coverage and the other platforms included, for a line of a list.
+		.github/actionlint.yaml | .github/folder-limit-exceptions.txt | .github/vocabulary-exceptions.txt | .github/podman_lane/*) ci=true ;;
 		# What no Rust lane and no Rust test reads. These may be skipped, and
 		# they are not documents either: a document next to one of them is a
 		# mixed range and runs everything.

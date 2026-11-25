@@ -29,7 +29,8 @@ for path in tests/hostile/input/parsing/x.rs docs/commands.md README.md CONTRIBU
 	bench/run.sh fuzz/fuzz_targets/a.rs debian/rules install.sh install.ps1 \
 	.github/workflows/binary-budget.yml .github/workflows/reusable-rust-fuzz.yml \
 	.github/workflows/podman-lane.yml .github/scripts/checks/podman-lane-paths.sh \
-	.github/dependabot.yml; do
+	.github/dependabot.yml .github/actionlint.yaml .github/folder-limit-exceptions.txt .github/vocabulary-exceptions.txt \
+	.github/podman_lane/budget .github/podman_lane/known-failures-6; do
 	run_case 0 "$path"
 done
 run_case 0 $'tests/a.rs\ndocs/b.md'
@@ -40,6 +41,7 @@ for path in internal/lib.rs internal/backends/engine/observe/stats/stats_tests.r
 	.github/workflows/ci.yml .github/workflows/lint-shell.yml .github/workflows/lint-powershell.yml \
 	.github/workflows/release.yml .github/workflows/reusable-shell-ci.yml \
 	.github/workflows/a-workflow-nobody-reviewed.yml \
+	.github/actionlint.yml .github/podman_lane.txt .github/vocabulary-exceptions.txt.bak \
 	unknown.txt; do
 	run_case 1 "$path"
 	run_case 1 $'tests/a.rs\n'"$path"

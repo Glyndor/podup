@@ -26,6 +26,12 @@ while IFS= read -r f; do
 		.github/scripts/fedora_image/* | .github/scripts/podman_lane/*) no "$f" ;;
 		.github/scripts/checks/is-version-bump.sh | .github/scripts/checks/podman-lane-paths.sh) no "$f" ;;
 		.github/scripts/checks/* | .github/scripts/ci/* | .github/scripts/hygiene/* | .github/scripts/hardening/* | .github/scripts/release/*) ;;
+		# What the CI reads and the VM never does: the helpers every check imports (ci_yaml), the scripts that
+		# pack the release for the other distributions, and their tests.
+		.github/scripts/lib/* | .github/scripts/packaging/* | tests/packaging/*) ;;
+		# The configuration and the lists of the CI checks: actionlint's, and the exceptions of the folder
+		# limit and of the banned vocabulary. The lists of the lane itself (.github/podman_lane/) boot it.
+		.github/actionlint.yaml | .github/folder-limit-exceptions.txt | .github/vocabulary-exceptions.txt) ;;
 		.github/scripts/*) no "$f" ;;
 		*.md | docs/* | .github/ISSUE_TEMPLATE/* | LICENSE | .editorconfig) ;;
 		.github/dependabot.yml | .github/CODEOWNERS) ;;

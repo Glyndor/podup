@@ -41,7 +41,9 @@ for path in README.md docs/nested/page.html .github/ISSUE_TEMPLATE/bug.yml LICEN
 	.github/scripts/release/sign-requirements.txt \
 	.github/scripts/release/sign.py .github/scripts/checks/notes.md .github/scripts/checks/rust-ci-inputs.sh \
 	.github/scripts/hygiene/check-secrets.sh .github/scripts/hardening/check-hardening.sh \
-	.github/scripts/ci/no-deprecation-notices.sh .github/scripts/ci/cancel-others.sh; do
+	.github/scripts/ci/no-deprecation-notices.sh .github/scripts/ci/cancel-others.sh \
+	.github/scripts/lib/ci_yaml.py .github/scripts/packaging/stage-payload.py .github/scripts/packaging/build-rpm.sh tests/packaging/verify-rpm.sh \
+	.github/actionlint.yaml .github/folder-limit-exceptions.txt .github/vocabulary-exceptions.txt; do
 	run_case 0 "$path"
 done
 # Every existing workflow except the lane has been reviewed as an independent caller.
@@ -58,7 +60,8 @@ for path in internal/x.rs Cargo.toml Cargo.lock build.rs .cargo/config.toml \
 	.github/podman_lane/baseline-tests .github/podman_lane/baseline .github/podman_lane/notes.md \
 	.github/scripts/checks/podman-lane-paths.sh .github/scripts/checks/is-version-bump.sh \
 	.github/scripts/fedora_image/fetch-fedora-image.sh .github/scripts/podman_lane/coverage-floor.sh \
-	.github/scripts/unknown/x.sh .github/scripts/top-level.sh .github/scripts/cix/x.sh other.txt; do
+	.github/scripts/unknown/x.sh .github/scripts/top-level.sh .github/scripts/cix/x.sh other.txt \
+	.github/scripts/library/x.py .github/scripts/lib.sh .github/scripts/packaging.sh tests/packaging.sh tests/packagingx/y.sh .github/actionlint.yml .github/actionlint.yaml.bak; do
 	run_case 1 "$path"
 done
 run_case 1 $'.github/dependabot.yml\ninternal/x.rs'
