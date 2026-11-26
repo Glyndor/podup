@@ -59,8 +59,8 @@ pub(crate) fn write_quadlet(
 		return Err(std::io::Error::new(
 			std::io::ErrorKind::InvalidInput,
 			format!(
-				"quadlet: two resources map to the same unit file {dup:?}; \
-				 rename one so their names do not collide after sanitization"
+				"quadlet: two resources map to the same unit file or systemd service \
+				 ({dup:?}); rename one so their names do not collide after sanitization"
 			),
 		)
 		.into());

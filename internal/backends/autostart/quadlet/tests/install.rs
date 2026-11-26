@@ -234,3 +234,24 @@ fn reinstall_does_not_retire_a_sibling_projects_unit() {
 		);
 	});
 }
+
+/// Two services whose files differ and whose systemd service is the same would
+/// leave one of them shadowed; nothing is written and systemd is not called.
+#[test]
+fn install_refuses_two_units_that_make_one_service() {
+	with_env(|root| {
+		let sc = FakeCtl::new();
+		let err = install_quadlet(
+			&sc,
+			&parse_str("services:\n  web:\n    build: .\n  web-build:\n    image: x\n").unwrap(),
+			"proj",
+			Path::new(BASE),
+			false,
+			false,
+		)
+		.unwrap_err();
+		assert!(err.to_string().contains("systemd service"), "{err}");
+		assert!(!root.join("containers/systemd").exists());
+		assert!(sc.log().is_empty(), "{:?}", sc.log());
+	});
+}

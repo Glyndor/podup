@@ -183,7 +183,7 @@ pub fn install_quadlet<S: SystemCtl>(
 	let mut result = quadlet::generate_for_autostart(file, project, base_dir);
 	if let Some(dup) = result.duplicate_filename() {
 		return Err(ComposeError::Autostart(format!(
-			"quadlet: two resources map to the same unit file {dup:?}; \
+			"quadlet: two resources map to the same unit file or systemd service ({dup:?}); \
 			 rename one so their names do not collide after sanitization."
 		)));
 	}
