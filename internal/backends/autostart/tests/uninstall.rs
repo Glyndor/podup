@@ -39,7 +39,7 @@ fn a_lone_pod_with_an_invalid_neighbour_propagates_detection_errors() {
 		let pod = dir.join("proj.pod");
 		let body = "# podup-owner: proj\n[Pod]\nPodName=proj\n";
 		std::fs::write(&pod, body).unwrap();
-		assert!(std::process::Command::new("mkfifo")
+		assert!(std::process::Command::new("/usr/bin/mkfifo")
 			.arg(dir.join("proj-bad.build"))
 			.status()
 			.unwrap()

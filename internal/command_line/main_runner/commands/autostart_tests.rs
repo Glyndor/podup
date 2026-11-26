@@ -245,7 +245,8 @@ fn uninstall_dispatch_propagates_detection_failure_without_touching_services() {
 		let body = "# podup-owner: proj\n[Pod]\nPodName=proj\n";
 		std::fs::write(&pod, body).unwrap();
 		let fifo = units.join("proj-bad.build");
-		assert!(std::process::Command::new("mkfifo")
+		// Named by its path: other tests replace `PATH` while this one runs.
+		assert!(std::process::Command::new("/usr/bin/mkfifo")
 			.arg(&fifo)
 			.status()
 			.unwrap()
