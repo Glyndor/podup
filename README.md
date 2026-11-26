@@ -61,6 +61,14 @@ scoop bucket add glyndor https://github.com/Glyndor/scoop-bucket
 scoop install podup
 ```
 
+Without Scoop, the installer script downloads the release binary, verifies the
+signed manifest and the digest, and installs it under
+`%LOCALAPPDATA%\Programs\podup`:
+
+```powershell
+irm https://glyndor.net/podup/install/windows | iex
+```
+
 The Windows binary is not Authenticode-signed, so a host with Smart App Control
 enabled can block it. [Migrating from Compose](docs/docker-migration.md#windows)
 describes running the Linux binary inside `podman-machine-default` instead.
@@ -134,6 +142,7 @@ running them.
 | Guide | What it covers |
 |---|---|
 | [Commands](docs/commands.md) | Commands, options and environment settings |
+| [Commands, continued](docs/commands-reference.md) | Images, generate, watch, maintenance, diagnostics, jobs, environment, Podman extensions and exit status |
 | [Migrating from Compose](docs/docker-migration.md) | Supported fields, differences, platforms |
 | [Autostart](docs/autostart.md) | Starting a project at boot, Quadlet export |
 | [Security model](docs/security-model.md) and [threat model](docs/threat-model.md) | What podup protects and what it assumes |

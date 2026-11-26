@@ -59,20 +59,28 @@ CI is split by responsibility rather than gathered in one file:
 
 | file | what fails there |
 |---|---|
-| `ci.yml` | one required check, `rust / Gate`, which reads the result of every rustfmt / clippy / test / coverage / MSRV / doc suite and certifies each skip; the suites report their own checks but do not block on their own |
+| `ci.yml` | two required checks: `rust / Gate`, which reads the result of every rustfmt / clippy / test / coverage / MSRV / doc suite and certifies each skip (the suites report their own checks but do not block on their own), and `deprecations / no deprecation notices` |
 | `repository-health.yml` | the advisory audits about the repository rather than about a change: the freshness of the scheduled workflows, the health of `main` and `develop`, and whether Dependabot has spoken recently. They run on protected-branch pushes, on a daily schedule and on demand, and never on a pull request |
 | `lint-shell.yml` | shellcheck and the shell test suite |
 | `lint-powershell.yml` | PSScriptAnalyzer on `install.ps1` |
 | `debian-build.yml` | the `.deb` builds under `debian/rules`' narrower feature set, on every change that can shift it |
 | `binary-budget.yml` | the release binary fits `bench/budgets/binary-budget-mib` |
 | `asset-contract.yml` | the release asset names, install self-test, and shell/PowerShell signing fixtures |
-| `podman-lane.yml` | the integration suite against live Podman 6 in a Fedora rawhide qemu VM, with VM boot skipped for changes that cannot affect runtime behaviour (prose, templates) |
+| `podman-lane.yml` | the integration suite against live Podman 6. A pull request and the merge queue run it on the runner against the Podman that apt.glyndor.net serves, skipped for changes that cannot affect runtime behaviour (prose, templates); the schedule runs that once a day and also boots a Fedora rawhide qemu VM; a manual dispatch runs the VM |
 | `podman-lane-develop-nightly.yml` | the coverage lane against Podman 6, fired nightly from `develop` |
 | `dco.yml`, `line-limit.yml`, `workflow-lint.yml` | one rule each |
 | `main-guard.yml` | `develop-only`: only the release pull request can target `main` |
 | `release.yml` | the release checks, signed binaries and packages, GitHub Release; run by hand with `dry_run` it signs with a throwaway key, makes no attestation and publishes nothing (a tag already published is refused) |
+| `audit.yml` | `cargo audit` and `cargo deny` on pull requests, in the merge queue and daily; a scheduled run that fails opens an issue |
+| `commit-hygiene.yml` | the commit identity, the secret scan and the pinned values |
+| `supply-chain.yml` | the SBOM and the license attribution, generated when the dependencies or their configuration change |
+| `linux-hardening.yml`, `windows-arm64.yml` | the hardening properties of the Linux release binaries; the Windows arm64 release binary builds and runs |
+| `fuzz.yml` | the fuzz targets, on pull requests that touch what they cover and weekly |
+| `benchmark.yml` | a smoke of the benchmark harness on pull requests; the full benchmark monthly and on demand |
+| `pin-watch.yml`, `podman-watch.yml` | a weekly report on the pinned tool versions; a daily look for a newer packaged Podman |
+| `dependabot-security-watch.yml` | fails while a Dependabot pull request into `main` is stuck |
 
-Package and semver checks are disabled in `ci.yml`. Reusable workflows are local files under `.github/workflows/`.
+The checks behind these rules live in `.github/scripts/` (`checks/`, `hygiene/`, `release/`, `packaging/`, `podman_lane/`, `hardening/` and others). Package and semver checks are disabled in `ci.yml`. Reusable workflows are local files under `.github/workflows/`.
 
 ## Security
 
