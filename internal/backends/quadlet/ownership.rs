@@ -32,12 +32,12 @@ use super::unit::owner_marker;
 /// The name of the drop-in, in the `<service>.service.d` directory of each container service.
 pub(crate) const DROP_IN_NAME: &str = "50-podup-ownership.conf";
 
-/// The file the start writes the container ID to: the user's runtime directory, one per unit. The
-/// two specifiers are systemd's, expanded when the service runs.
-const CIDFILE: &str = "%t/%N.cid";
+/// Record the container ID in the user's runtime directory, one file per unit.
+/// The two specifiers are systemd's, expanded when the service runs.
+const CIDFILE: &str = "--cidfile=%t/%N.cid";
 
-/// The file the creation of a pod writes its ID to, one per unit.
-const POD_ID_FILE: &str = "%t/%N.pod-id";
+/// Record the pod ID in the user's runtime directory, one file per unit.
+const POD_ID_FILE: &str = "--pod-id-file=%t/%N.pod-id";
 
 /// The Podman the lines run: the path Quadlet writes into the units it generates, so the cleanup and
 /// the start talk to the same one whatever `PATH` the user manager has.
@@ -51,7 +51,7 @@ pub(super) fn emit(
 	service: &mut Section,
 ) {
 	container.add("PodmanArgs", "--replace=false".to_string());
-	container.add("PodmanArgs", format!("--cidfile={CIDFILE}"));
+	container.add("PodmanArgs", CIDFILE.to_string());
 	// A name Podman would refuse has no container to remove, and the start fails on it anyway.
 	if let Some(pattern) = name_pattern(container_name) {
 		service.add(
@@ -94,51 +94,69 @@ pub(crate) fn drop_in(project: &str, unit: &str) -> String {
 		.lines()
 		.find_map(|line| line.strip_prefix("ContainerName="))
 		.and_then(name_pattern);
-	let mut commands = vec![format!("{PODMAN} rm -v -f -i --cidfile={CIDFILE}")];
-	if let Some(pattern) = pattern {
-		commands.push(format!(
-			"{PODMAN} rm -v -f -i {}",
-			own_container(project, &pattern)
-		));
-	}
+	let by_name =
+		pattern.map(|pattern| format!("{PODMAN} rm -v -f -i {}", own_container(project, &pattern)));
 	let mut text = owner_marker(project);
 	text.push_str("[Service]\n");
 	for key in ["ExecStop", "ExecStopPost"] {
-		text.push_str(&format!("{key}=\n"));
-		for (position, command) in commands.iter().enumerate() {
-			let reported = key == "ExecStop" && position + 1 == commands.len();
-			let prefix = if reported { "" } else { "-" };
-			text.push_str(&format!("{key}={prefix}{command}\n"));
+		command(&mut text, key, "", false);
+		let ignored = key != "ExecStop";
+		command(
+			&mut text,
+			key,
+			"/usr/bin/podman rm -v -f -i --cidfile=%t/%N.cid",
+			ignored || by_name.is_some(),
+		);
+		if let Some(by_name) = &by_name {
+			command(&mut text, key, by_name, ignored);
 		}
 	}
 	text
 }
 
+/// Append one systemd command, optionally ignoring its exit status.
+fn command(text: &mut String, key: &str, value: &str, ignored: bool) {
+	text.push_str(key);
+	text.push('=');
+	if ignored {
+		text.push('-');
+	}
+	text.push_str(value);
+	text.push('\n');
+}
+
 /// The lines of an installed pod unit that stop it from replacing a pod it does not own.
 pub(super) fn emit_pod(project: &str, pod_name: &str, pod: &mut Section, service: &mut Section) {
 	pod.add("PodmanArgs", "--replace=false".to_string());
-	pod.add("PodmanArgs", format!("--pod-id-file={POD_ID_FILE}"));
+	pod.add("PodmanArgs", POD_ID_FILE.to_string());
 	if let Some(pattern) = name_pattern(pod_name) {
-		service.add(
-			"ExecStartPre",
-			format!("-{}", on_own_pod(project, &pattern, "rm --force")),
-		);
+		service.add("ExecStartPre", on_own_pod(project, &pattern, "rm --force"));
 	}
 }
 
 /// A shell that runs `podman pod <verb>` on the pod matching `pattern` only when it carries the
 /// label of `project`. `$$` reaches the shell as `$`.
 fn on_own_pod(project: &str, pattern: &str, verb: &str) -> String {
+	let guard = if verb == "rm --force" {
+		format!(
+			"members=$$({PODMAN} ps -aq --filter pod=$$id \
+			 --filter label!=podup.project={project}) || exit $$?; \
+			 if [ -n \"$$members\" ]; then echo \"podup: refusing pod cleanup: \
+			 containers without podup.project={project}\" >&2; exit 1; fi; "
+		)
+	} else {
+		String::new()
+	};
 	format!(
-		"/bin/sh -c 'ids=$$({PODMAN} pod ps -q --filter name={pattern} \
-		 --filter label=podup.project={project}); [ -z \"$$ids\" ] || {PODMAN} pod {verb} $$ids'"
+		"/bin/sh -c 'ids=$$({PODMAN} pod ps -q --no-trunc --filter name={pattern} \
+		 --filter label=podup.project={project}) || exit $$?; \
+		 for id in $$ids; do {guard}{PODMAN} pod {verb} $$id || exit $$?; done'"
 	)
 }
 
 /// The drop-in of the pod service whose unit holds `unit`: the stop and the removal Quadlet writes,
-/// by name, are emptied and replaced by those of the pod the unit created, then of the pod of that
-/// name that carries the project's label. As for a container, every line carries `-` but the last
-/// of `ExecStop=`, so a stop that really fails is reported.
+/// by name, are emptied. Removal uses the label-filtered lookup and refuses any unlabelled member,
+/// including an infra container. This check is not atomic with removal; see `docs/autostart.md`.
 pub(crate) fn pod_drop_in(project: &str, unit: &str) -> String {
 	let pattern = unit
 		.lines()
@@ -146,20 +164,22 @@ pub(crate) fn pod_drop_in(project: &str, unit: &str) -> String {
 		.and_then(name_pattern);
 	let mut text = owner_marker(project);
 	text.push_str("[Service]\n");
-	for (key, verb, own_verb) in [
-		("ExecStop", "stop --ignore --time=10", "stop --time=10"),
-		("ExecStopPost", "rm --ignore --force", "rm --force"),
-	] {
-		text.push_str(&format!("{key}=\n"));
-		let mut commands = vec![format!("{PODMAN} pod {verb} --pod-id-file={POD_ID_FILE}")];
-		if let Some(pattern) = &pattern {
-			commands.push(on_own_pod(project, pattern, own_verb));
-		}
-		for (position, command) in commands.iter().enumerate() {
-			let reported = key == "ExecStop" && position + 1 == commands.len();
-			let prefix = if reported { "" } else { "-" };
-			text.push_str(&format!("{key}={prefix}{command}\n"));
-		}
+	text.push_str(
+		"ExecStop=\nExecStop=-/usr/bin/podman pod stop --ignore --time=10 --pod-id-file=%t/%N.pod-id\n",
+	);
+	if let Some(pattern) = &pattern {
+		command(
+			&mut text,
+			"ExecStop",
+			&on_own_pod(project, pattern, "stop --time=10"),
+			false,
+		);
 	}
+	let cleanup = pattern.map_or_else(
+		|| "/bin/false".to_string(),
+		|pattern| on_own_pod(project, &pattern, "rm --force"),
+	);
+	command(&mut text, "ExecStopPost", "", false);
+	command(&mut text, "ExecStopPost", &cleanup, false);
 	text
 }

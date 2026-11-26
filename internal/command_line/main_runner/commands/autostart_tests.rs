@@ -175,3 +175,59 @@ fn the_active_profiles_select_the_container_the_start_unit_names() {
 		.expect("the project has one active service");
 	assert_eq!(container, "proj-web-1");
 }
+
+#[cfg(unix)]
+#[test]
+fn uninstall_dispatch_recognises_a_lone_owned_pod_and_leaves_foreign_pods() {
+	use std::os::unix::fs::PermissionsExt;
+	for marker in ["# podup-owner: proj\n", "# podup-owner: other\n", ""] {
+		let dir = tempfile::tempdir().unwrap();
+		let root = dir.path();
+		let units = root.join("containers/systemd");
+		std::fs::create_dir_all(&units).unwrap();
+		let pod = units.join("proj.pod");
+		let body = format!("{marker}[Pod]\nPodName=proj\n");
+		std::fs::write(&pod, &body).unwrap();
+		let systemctl = root.join("systemctl");
+		std::fs::write(
+			&systemctl,
+			"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$XDG_CONFIG_HOME/calls\"\n",
+		)
+		.unwrap();
+		std::fs::set_permissions(&systemctl, std::fs::Permissions::from_mode(0o700)).unwrap();
+		temp_env::with_vars(
+			[
+				("XDG_CONFIG_HOME", Some(root.as_os_str())),
+				("PATH", Some(root.as_os_str())),
+			],
+			|| {
+				let runtime = tokio::runtime::Builder::new_current_thread()
+					.enable_all()
+					.build()
+					.unwrap();
+				runtime
+					.block_on(dispatch(
+						&env(None),
+						&[],
+						"proj".to_string(),
+						root.to_path_buf(),
+						&compose_file(),
+						&AutostartCommands::Uninstall { purge: false },
+					))
+					.unwrap();
+			},
+		);
+		let calls = std::fs::read_to_string(root.join("calls")).unwrap();
+		if marker == "# podup-owner: proj\n" {
+			assert!(
+				!pod.exists(),
+				"the Quadlet uninstaller must remove the lone pod unit"
+			);
+			assert!(calls.contains("--user stop proj-pod.service\n"), "{calls}");
+			assert!(!calls.contains("disable"), "{calls}");
+		} else {
+			assert_eq!(std::fs::read_to_string(&pod).unwrap(), body);
+			assert!(!calls.contains("stop proj-pod.service"), "{calls}");
+		}
+	}
+}

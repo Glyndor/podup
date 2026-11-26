@@ -15,7 +15,7 @@ use super::super::paths::{config_home, unit_dir, unit_file_name};
 /// Quadlet autostart units for this project, if any exist on disk. Service mode
 /// and Quadlet mode would both try to start the same stack at boot, so an
 /// existing Quadlet install is a conflict to surface, not to silently overwrite.
-/// Looks for `<project>-*.container` under
+/// Looks for `<project>-*.container` and owned Quadlet units (including a lone `.pod`) under
 /// `${XDG_CONFIG_HOME:-~/.config}/containers/systemd/`.
 pub(in super::super) fn quadlet_units_present(project: &str) -> Vec<PathBuf> {
 	let dir = config_home().join("containers").join("systemd");
@@ -30,7 +30,9 @@ pub(in super::super) fn quadlet_units_present(project: &str) -> Vec<PathBuf> {
 			}
 		}
 	}
+	found.extend(super::super::quadlet::installed_units(project).unwrap_or_default());
 	found.sort();
+	found.dedup();
 	found
 }
 

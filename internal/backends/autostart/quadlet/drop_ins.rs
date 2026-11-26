@@ -23,6 +23,10 @@ pub(super) struct DropIn {
 }
 
 impl DropIn {
+	pub(super) fn same_service(&self, other: &Self) -> bool {
+		self.service == other.service
+	}
+
 	/// `<service>.d/<name>`, relative to the user's systemd unit directory.
 	pub(super) fn relative(&self) -> String {
 		format!("{}.d/{}", self.service, quadlet::DROP_IN_NAME)
@@ -54,16 +58,79 @@ pub(super) fn service_of(filename: &str) -> Option<String> {
 pub(super) fn plan(project: &str, units: &[QuadletUnit]) -> Vec<DropIn> {
 	units
 		.iter()
-		.filter_map(|u| Some((service_of(&u.filename)?, u)))
-		.map(|(service, u)| DropIn {
-			service,
-			contents: if u.filename.ends_with(".pod") {
-				quadlet::pod_drop_in(project, &u.contents)
-			} else {
-				quadlet::drop_in(project, &u.contents)
-			},
+		.filter_map(|u| {
+			Some(make_drop_in(
+				project,
+				&u.filename,
+				service_of(&u.filename)?,
+				&u.contents,
+			))
 		})
 		.collect()
+}
+
+fn make_drop_in(project: &str, name: &str, service: String, contents: &str) -> DropIn {
+	DropIn {
+		service,
+		contents: if name.ends_with(".pod") {
+			quadlet::pod_drop_in(project, contents)
+		} else {
+			quadlet::drop_in(project, contents)
+		},
+	}
+}
+
+/// Protect the units already on disk, including ones the next install will retire.
+pub(super) fn existing(project: &str, paths: &[PathBuf]) -> crate::Result<Vec<DropIn>> {
+	let mut drop_ins = Vec::new();
+	for path in paths {
+		let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+			continue;
+		};
+		if let Some(service) = service_of(name) {
+			let contents = if path
+				.symlink_metadata()
+				.map_err(|e| cannot("read", path, e))?
+				.len()
+				> crate::filesystem::MAX_FILE_BYTES
+			{
+				// A generated unit can exceed the input limit. Do not parse a truncated
+				// body: confirm its owner from a bounded header and use only its filename
+				// for label-filtered cleanup. The drop-in also clears Quadlet's unsafe
+				// cleanup by name and retains cleanup by the recorded runtime ID.
+				let head = crate::filesystem::read_head_capped(path, 4096)
+					.map_err(|e| cannot("read", path, e))?;
+				if !head.starts_with(format!("# podup-owner: {project}\n").as_bytes()) {
+					return Err(ComposeError::Autostart(format!(
+						"cannot protect {}: ownership marker not found in bounded header",
+						path.display()
+					)));
+				}
+				let (key, stem) = if let Some(stem) = name.strip_suffix(".container") {
+					("ContainerName", stem)
+				} else if let Some(stem) = name.strip_suffix(".pod") {
+					("PodName", stem)
+				} else {
+					continue;
+				};
+				// A filename cannot inject directives into the synthetic unit. When it
+				// is not a runtime name, keep only the ID-based protection.
+				if stem
+					.chars()
+					.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+				{
+					format!("{key}={stem}\n")
+				} else {
+					String::new()
+				}
+			} else {
+				crate::filesystem::read_to_string_capped(path)
+					.map_err(|e| cannot("read", path, e))?
+			};
+			drop_ins.push(make_drop_in(project, name, service, &contents));
+		}
+	}
+	Ok(drop_ins)
 }
 
 /// The project in the marker of the drop-in at `path`, when there is a file there.
@@ -80,7 +147,7 @@ fn owner(path: &Path) -> std::io::Result<Option<Option<String>>> {
 	})))
 }
 
-fn cannot(what: &str, path: &Path, e: std::io::Error) -> ComposeError {
+pub(super) fn cannot(what: &str, path: &Path, e: std::io::Error) -> ComposeError {
 	ComposeError::Autostart(format!("cannot {what} {}: {e}", path.display()))
 }
 

@@ -214,9 +214,18 @@ const POD: &str = "x-podman-pod: true\nservices:\n  web:\n    image: nginx\n";
 
 /// The shell command the pod lines run, as the unit writes it.
 fn on_own_pod(verb: &str) -> String {
+	let guard = if verb == "rm --force" {
+		"members=$$(/usr/bin/podman ps -aq --filter pod=$$id \
+		 --filter label!=podup.project=proj) || exit $$?; \
+		 if [ -n \"$$members\" ]; then echo \"podup: refusing pod cleanup: \
+		 containers without podup.project=proj\" >&2; exit 1; fi; "
+	} else {
+		""
+	};
 	format!(
-		"/bin/sh -c 'ids=$$(/usr/bin/podman pod ps -q --filter name=^proj$$ \
-		 --filter label=podup.project=proj); [ -z \"$$ids\" ] || /usr/bin/podman pod {verb} $$ids'"
+		"/bin/sh -c 'ids=$$(/usr/bin/podman pod ps -q --no-trunc --filter name=^proj$$ \
+		 --filter label=podup.project=proj) || exit $$?; \
+		 for id in $$ids; do {guard}/usr/bin/podman pod {verb} $$id || exit $$?; done'"
 	)
 }
 
@@ -233,7 +242,7 @@ fn an_installed_pod_never_replaces_by_name_and_records_its_id() {
 	);
 	assert_eq!(
 		lines(&out, "proj.pod", "ExecStartPre="),
-		[format!("ExecStartPre=-{}", on_own_pod("rm --force"))]
+		[format!("ExecStartPre={}", on_own_pod("rm --force"))]
 	);
 }
 
@@ -252,7 +261,7 @@ fn the_exported_pod_carries_none_of_it() {
 }
 
 #[test]
-fn the_pod_drop_in_stops_and_removes_by_id_then_by_own_name() {
+fn the_pod_drop_in_stops_by_id_and_checks_members_before_removal() {
 	assert_eq!(
 		pod_drop_in("proj", "[Pod]\nPodName=proj\n"),
 		format!(
@@ -262,8 +271,7 @@ fn the_pod_drop_in_stops_and_removes_by_id_then_by_own_name() {
 			 ExecStop=-/usr/bin/podman pod stop --ignore --time=10 --pod-id-file=%t/%N.pod-id\n\
 			 ExecStop={}\n\
 			 ExecStopPost=\n\
-			 ExecStopPost=-/usr/bin/podman pod rm --ignore --force --pod-id-file=%t/%N.pod-id\n\
-			 ExecStopPost=-{}\n",
+			 ExecStopPost={}\n",
 			on_own_pod("stop --time=10"),
 			on_own_pod("rm --force")
 		)
@@ -323,3 +331,7 @@ fn the_generator_writes_the_pod_start_the_drop_in_is_written_against() {
 		"{service}"
 	);
 }
+
+#[cfg(unix)]
+#[path = "ownership_shell_tests.rs"]
+mod shell;

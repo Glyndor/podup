@@ -15,7 +15,7 @@ use crate::autostart::conflict;
 pub enum InstalledMode {
 	/// The service-mode `podup-<project>.service` unit is present.
 	Service,
-	/// Quadlet `<project>-*.container` units are present.
+	/// Quadlet container units or owned units such as `<project>.pod` are present.
 	Quadlet,
 	/// Neither: nothing is installed.
 	None,

@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn a_lone_owned_pod_is_detected_as_quadlet() {
+	with_env(|root| {
+		let dir = root.join("containers/systemd");
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("proj.pod");
+		for (body, expected) in [
+			(
+				"# podup-owner: proj\n[Pod]\nPodName=proj\n",
+				crate::autostart::InstalledMode::Quadlet,
+			),
+			(
+				"# podup-owner: other\n[Pod]\nPodName=proj\n",
+				crate::autostart::InstalledMode::None,
+			),
+			(
+				"[Pod]\nPodName=proj\n",
+				crate::autostart::InstalledMode::None,
+			),
+		] {
+			std::fs::write(&path, body).unwrap();
+			assert_eq!(crate::autostart::installed_mode("proj"), expected, "{body}");
+			assert_eq!(std::fs::read_to_string(&path).unwrap(), body);
+		}
+	});
+}
+
+#[test]
 fn uninstall_disables_removes_and_reloads() {
 	with_env(|root| {
 		let sc = FakeCtl::new();

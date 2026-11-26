@@ -111,14 +111,15 @@ fn dry_run_plan(
 fn retire_obsolete_units<S: SystemCtl>(
 	sc: &S,
 	project: &str,
+	previous: &[PathBuf],
 	current: &[quadlet::QuadletUnit],
 ) -> crate::Result<()> {
-	let current_names: Vec<&str> = current.iter().map(|u| u.filename.as_str()).collect();
-	for path in installed_units(project)? {
+	let mut retired = false;
+	for path in previous {
 		let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
 			continue;
 		};
-		if current_names.contains(&name) {
+		if current.iter().any(|unit| unit.filename == name) {
 			continue;
 		}
 		// Stop the service while its unit still exists, so the container or the
@@ -126,13 +127,15 @@ fn retire_obsolete_units<S: SystemCtl>(
 		if let Some(service) = drop_ins::service_of(name) {
 			checked(sc.systemctl(&["stop", &service]), "stop")?;
 		}
-		std::fs::remove_file(&path).map_err(|e| {
-			ComposeError::Autostart(format!("cannot remove {}: {e}", path.display()))
-		})?;
+		std::fs::remove_file(path).map_err(|e| drop_ins::cannot("remove", path, e))?;
+		retired = true;
 		crate::ui::errln!("podup: removed the obsolete unit {}", path.display())?;
 		if let Some(service) = drop_ins::service_of(name) {
 			drop_ins::remove(project, &service)?;
 		}
+	}
+	if retired {
+		checked(sc.systemctl(&["daemon-reload"]), "daemon-reload")?;
 	}
 	Ok(())
 }
@@ -189,7 +192,7 @@ pub fn install_quadlet<S: SystemCtl>(
 	// Refuse an entry of the unit directory that is not a regular file before
 	// anything is written, so the install stops and names the path instead of
 	// writing its units and failing afterwards.
-	installed_units(project)?;
+	let installed = installed_units(project)?;
 	let services = container_services(&result.units);
 	// `podup autostart rebuild` is what restarts a `.build` unit to rebuild an
 	// image, so the install path only has to build once. List the `.build`
@@ -209,7 +212,7 @@ pub fn install_quadlet<S: SystemCtl>(
 		// keeps the two paths aligned on a single `rebuild` call shape.
 		.map(|u| format!("{}-build.service", u.filename.trim_end_matches(".build")))
 		.collect();
-	let drop_ins = drop_ins::plan(project, &result.units);
+	let mut drop_ins = drop_ins::plan(project, &result.units);
 	emit_guards(sc);
 
 	if dry_run {
@@ -226,6 +229,9 @@ pub fn install_quadlet<S: SystemCtl>(
 		}
 		return Ok(());
 	}
+	let mut old_drop_ins = drop_ins::existing(project, &installed)?;
+	old_drop_ins.retain(|old| !drop_ins.iter().any(|new| new.same_service(old)));
+	drop_ins.extend(old_drop_ins);
 
 	let unwritable = |e: std::io::Error| {
 		ComposeError::Autostart(format!(
@@ -244,13 +250,14 @@ pub fn install_quadlet<S: SystemCtl>(
 	for path in written.iter().chain(&written_drop_ins) {
 		crate::ui::errln!("podup: wrote {}", path.display())?;
 	}
+	// Load protection for existing services before any obsolete service is stopped.
+	checked(sc.systemctl(&["daemon-reload"]), "daemon-reload")?;
 
 	// The units of the services the compose file no longer has are retired
 	// here, so a re-install leaves no unit behind that would start a
 	// container the project does not have any more.
-	retire_obsolete_units(sc, project, &result.units)?;
+	retire_obsolete_units(sc, project, &installed, &result.units)?;
 
-	checked(sc.systemctl(&["daemon-reload"]), "daemon-reload")?;
 	// Build the images before the container services start. Building is not
 	// "starting the stack": `--no-start` still does it, because without it the
 	// first boot (which `--no-start` leaves to happen unattended) would fail
@@ -314,6 +321,12 @@ pub fn install_quadlet<S: SystemCtl>(
 /// running.
 pub fn uninstall_quadlet<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
 	let units = installed_units(project)?;
+	let protection = drop_ins::existing(project, &units)?;
+	drop_ins::check(project, &protection)?;
+	drop_ins::write(&protection)?;
+	if !protection.is_empty() {
+		checked(sc.systemctl(&["daemon-reload"]), "daemon-reload")?;
+	}
 	let mut first_err: Option<ComposeError> = None;
 	// Stop the container services first, then the pod's, while their units still
 	// exist: the units are sorted, and `<project>-` sorts before `<project>.`.
@@ -342,9 +355,7 @@ pub fn uninstall_quadlet<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<(
 	}
 	let mut removed = 0usize;
 	for path in &units {
-		std::fs::remove_file(path).map_err(|e| {
-			ComposeError::Autostart(format!("cannot remove {}: {e}", path.display()))
-		})?;
+		std::fs::remove_file(path).map_err(|e| drop_ins::cannot("remove", path, e))?;
 		crate::ui::errln!("podup: removed {}", path.display())?;
 		removed += 1;
 		if let Some(service) = path
