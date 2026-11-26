@@ -25,7 +25,7 @@ secrets:
 	// `up` creates a `file:` secret as `{project}_secret_{name}`, so the unit
 	// names that one, and the project's secrets unit creates it from the file.
 	assert!(
-		c.contains("Secret=p_secret_tok,mode=400\n"),
+		c.contains("Secret=p_secret_tok,target=tok,mode=400\n"),
 		"the container does not name the secret with its mode"
 	);
 	assert!(c.contains("Secret=p_secret_cred,target=/run/cred,uid=100"));

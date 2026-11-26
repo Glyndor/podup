@@ -387,12 +387,8 @@ fn a_live_manager_keeps_the_container_down_until_the_file_exists() {
 	);
 	let read = limited(
 		"podman",
-		&[
-			"exec",
-			&live.container,
-			"cat",
-			&format!("/run/secrets/{scoped}"),
-		],
+		// The compose name, not the Podman name: where `up` mounts it.
+		&["exec", &live.container, "cat", "/run/secrets/token"],
 		60,
 	);
 	assert_eq!(

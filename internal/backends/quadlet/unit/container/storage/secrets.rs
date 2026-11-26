@@ -134,10 +134,11 @@ fn render_config(
 /// The mode a mounted file-sourced secret or config gets when the service gives
 /// none: what `up` gives it, the permission bits of the host file (measured on
 /// Podman 6.2.0: a 0600 file is 0600 in the container under `up`, and 0444 when
-/// `Secret=` says nothing). Never more open than that.
+/// `Secret=` says nothing). Never more open than that, whoever creates the secret:
+/// the units `autostart --mode quadlet` installs mount one that `up` made.
 fn derived_mode(source: &Source, written: bool, explicit: Option<u32>) -> Option<u32> {
 	match source {
-		Source::File { mode, .. } if written && explicit.is_none() => Some(*mode),
+		Source::File { mode, .. } if explicit.is_none() => Some(*mode),
 		// A name that was refused is mounted as tight as can be, and the unit that
 		// the container requires fails for it, so it does not start.
 		Source::Refused { .. } if written && explicit.is_none() => Some(0o400),
