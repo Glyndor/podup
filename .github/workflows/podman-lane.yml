@@ -3,10 +3,12 @@ name: podman-lane
 # Support policy: podup requires Podman 6.2.0 or newer and sets no upper bound, so
 # the lane runs the Podman users install and the newest one there is. A pull
 # request and the merge queue run the engine suite on the runner, against the
-# Podman 6.2.0 of apt.glyndor.net (`podman-native`). The schedule and a dispatch
-# run it inside a Fedora qemu VM booted in the runner (nested-virt: the
-# ubuntu-24.04 runner exposes /dev/kvm) with full systemd, as a rootless user,
-# which carries the newest Podman there is (Podman 6 = Fedora rawhide).
+# Podman that apt.glyndor.net serves, the last one Glyndor published
+# (`podman-native`). The schedule runs that same job once a day, so a Podman that
+# apt starts serving between two pull requests is seen the next morning, and boots
+# the VM besides (first slot, and a dispatch): a Fedora qemu VM booted in the runner
+# (nested-virt: the ubuntu-24.04 runner exposes /dev/kvm) with full systemd, as a
+# rootless user, which carries the newest Podman there is (Podman 6 = Fedora rawhide).
 
 # Three triggers, three questions:
 # workflow_dispatch: starts the lane on demand.
@@ -19,7 +21,15 @@ on:
   # Nightly safety net on the default branch: catches a runtime regression that
   # slipped past PR review within 24h (a scheduled run reports on the default branch).
   schedule:
+    # The first slot boots the VM and runs the native lane. The other two run the
+    # native lane only, and only when no scheduled run passed it in the last 18
+    # hours (`slot` below): they exist so that one cron GitHub does not fire does
+    # not leave the day with no look at the Podman of apt, and cost nothing when
+    # the first one did fire. `podman-vm` and `slot` read the first slot by this
+    # string, so the three of them change together.
     - cron: "0 9 * * *"
+    - cron: "20 13 * * *"
+    - cron: "20 17 * * *"
   # Runs on EVERY pull request (no path filter) so it can be a required status
   # check that always reports. Runtime behaviour is podup's whole point, so it
   # gates the merge. The internal suite distinguishes nested-virt flakes from real
@@ -155,6 +165,33 @@ jobs:
             echo "nothing in this range can reach the VM; the legs below run and boot nothing"
           fi
 
+  # Whether the native lane has to run on this scheduled slot: not when a scheduled run
+  # of this workflow passed it in the last 18 hours. Whatever it cannot read says yes.
+  # A pull request, the merge queue and a dispatch do not ask: the job is skipped.
+  slot:
+    name: Decide whether the native lane is due on this slot
+    if: ${{ github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    # Two calls of the API and a few more for the runs of the last day: seconds. The usual
+    # ten minutes is the ceiling.
+    timeout-minutes: 10
+    outputs:
+      due: ${{ steps.due.outputs.due }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Ask whether a scheduled run passed the native lane lately
+        id: due
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: bash .github/scripts/podman_lane/native-due.sh
+
   # The VM, on the schedule and on a dispatch only: it is the lane that follows the
   # newest Podman there is (Fedora rawhide) with full systemd and SELinux, which a
   # pull request does not need to repeat on every push.
@@ -166,7 +203,7 @@ jobs:
     # `false`, so a plan that never answered boots the VM instead of leaving
     # this job skipped, which is the one skip `Supported Podman majors` would
     # have to tell from a decision.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' && (github.event_name != 'schedule' || github.event.schedule == '0 9 * * *') }}
     runs-on: ubuntu-24.04
     # Two machines, two budgets. The gating suite (the leak scan and the Quadlet generator
     # tests with it) and the instrumented run that measures the coverage used to share one boot
@@ -323,12 +360,13 @@ jobs:
   # install. Same path filter as the VM: the `decide` job says whether the change
   # can reach the engine.
   # The lane of a pull request and of the merge queue: the engine suite on the runner,
-  # against the Podman 6.2.0 that apt.glyndor.net serves, which is the one a Debian or
-  # Ubuntu user installs. It reads the repository and writes nothing: `contents: read`
-  # and no secret, while it builds and runs the code of the change.
+  # against the Podman that apt.glyndor.net serves, which is the one a Debian or Ubuntu
+  # user installs, and the same suite once a day on the schedule when `slot` says it is
+  # due. It reads the repository and writes nothing: `contents: read` and no secret,
+  # while it builds and runs the code of the change.
   podman-native:
-    needs: decide
-    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.decide.outputs.engine != 'false' }}
+    needs: [decide, slot]
+    if: ${{ !cancelled() && ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.decide.outputs.engine != 'false' || github.event_name == 'schedule' && needs.slot.outputs.due != 'false') }}
     runs-on: ubuntu-24.04
     # Install a few minutes, build ~10, suite one thread (the VM's one-thread
     # suite is the long pole); 60 leaves room for a first run and stays far below
@@ -506,7 +544,7 @@ jobs:
     # emitted while a ruleset could still require it, so the pull request that carries
     # the change would block itself. This name does not move, and it keeps its
     # wording from when the lane ran two majors. See #1552.
-    needs: [decide, podman-vm, podman-native]
+    needs: [decide, slot, podman-vm, podman-native]
     # `needs` on its own SKIPS this job when the matrix fails, and a skipped required
     # check does not block a merge, the exact failure this job exists to prevent.
     if: always()
@@ -521,6 +559,9 @@ jobs:
           ENGINE: ${{ needs.decide.outputs.engine }}
           VM: ${{ needs.podman-vm.result }}
           NATIVE: ${{ needs.podman-native.result }}
+          SLOT: ${{ needs.slot.result }}
+          DUE: ${{ needs.slot.outputs.due }}
+          SCHEDULE: ${{ github.event.schedule }}
           EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
@@ -528,17 +569,30 @@ jobs:
           [ "$PLAN" = success ] || fail "the plan did not succeed (result: $PLAN)"
           echo "plan: engine='$ENGINE', event $EVENT; native: $NATIVE, vm: $VM"
           # A pull request and the merge queue use the native lane and never the VM; the
-          # schedule and a dispatch use the VM and never the native lane. The lane that
-          # is not theirs is skipped, and only the plan's explicit `false` excuses the
-          # one that is.
+          # schedule uses both, the VM on its first slot only, and a dispatch uses the VM
+          # and never the native lane. The lane that is not theirs is skipped, and only
+          # an explicit `false` of the plan (or of the slot) excuses the one that is.
           case "$EVENT" in
             pull_request | merge_group)
+              [ "$SLOT" = skipped ] || fail "the slot was asked for a $EVENT (result: $SLOT)"
               [ "$VM" = skipped ] || fail "the VM ran for a $EVENT (result: $VM)"
               case "$NATIVE" in
                 success) ;;
                 skipped) [ "$ENGINE" = false ] || fail "the native lane was skipped and the plan did not say so" ;;
                 *) fail "the native lane did not pass (result: $NATIVE)" ;;
               esac ;;
+            schedule)
+              [ "$SLOT" = success ] || fail "the slot did not answer (result: $SLOT)"
+              case "$NATIVE" in
+                success) ;;
+                skipped) [ "$DUE" = false ] || fail "the native lane was skipped on a slot that did not excuse it" ;;
+                *) fail "the native lane did not pass (result: $NATIVE)" ;;
+              esac
+              if [ "$SCHEDULE" = "0 9 * * *" ]; then
+                [ "$VM" = success ] || fail "the VM did not pass (result: $VM)"
+              else
+                [ "$VM" = skipped ] || fail "the VM ran on a slot that is not the first (result: $VM)"
+              fi ;;
             *)
               [ "$NATIVE" = skipped ] || fail "the native lane ran for a $EVENT (result: $NATIVE)"
               [ "$VM" = success ] || fail "the VM did not pass (result: $VM)" ;;
@@ -555,3 +609,48 @@ jobs:
       contents: read
       actions: write
     uses: ./.github/workflows/reusable-cancel-others.yml
+
+  # A scheduled run that is not green opens an issue, or adds a comment to the one that is
+  # open, like the other watchers do: nobody reads a red run on a schedule. `issues: write`
+  # is granted to this job alone; it checks out nothing, runs no tool of the repository, and
+  # every value reaches the script through env.
+  report:
+    name: Open an issue when the scheduled Podman lane fails
+    needs: [slot, podman-vm, podman-native, podman-majors]
+    if: ${{ always() && github.event_name == 'schedule' && needs.podman-majors.result != 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    # Seconds in practice; the usual ten minutes is the ceiling.
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SLOT_RESULT: ${{ needs.slot.result }}
+      VM_RESULT: ${{ needs.podman-vm.result }}
+      NATIVE_RESULT: ${{ needs.podman-native.result }}
+      AGGREGATE_RESULT: ${{ needs.podman-majors.result }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      ISSUE_TITLE: Scheduled Podman lane failed
+    steps:
+      - name: Open a single tracking issue and update it on each failure
+        run: |
+          set -euo pipefail
+          NUMBER=$(gh issue list --state open --search "in:title \"$ISSUE_TITLE\"" --json number,title \
+            --jq 'map(select(.title == env.ISSUE_TITLE)) | .[0].number // empty')
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          WHAT="slot: ${SLOT_RESULT}, native lane: ${NATIVE_RESULT}, VM: ${VM_RESULT}, verdict: ${AGGREGATE_RESULT}"
+          if [ -n "$NUMBER" ]; then
+            gh issue comment "$NUMBER" --body "Failed again on ${DATE} (${WHAT}). Run: ${RUN_URL}"
+            echo "Commented on #${NUMBER}."
+            exit 0
+          fi
+          gh issue create \
+            --title "$ISSUE_TITLE" \
+            --label "type:test" --label "prio:P2" --label "area:ci" --label "status:triage" \
+            --body "The scheduled Podman lane did not pass on ${DATE} (${WHAT}).
+
+          Run: ${RUN_URL}
+
+          Close this once the scheduled lane is green. While this stays open, each new failure adds a comment here instead of opening another issue."
+          echo "Opened new issue."
