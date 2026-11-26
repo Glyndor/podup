@@ -127,6 +127,10 @@ fi
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+# 200 MB, the most any downloaded file may weigh. Set here, never taken from
+# the environment.
+MAX_DOWNLOAD_BYTES=209715200
+
 download() {
 	# download <url> <dest>
 	#
@@ -137,17 +141,25 @@ download() {
 	# without --proto-redir. The pin stays as a second lock, because the bare
 	# form --proto https adds rather than restricts, and under that spelling
 	# --proto-redir is the only thing holding the redirect to https.
-	# --max-filesize caps the response at 200 MB, but only on curl that honours
-	# it: it aborts mid-stream on curl >= 8.4.0, or on any curl version when the
-	# server sends Content-Length. It does NOT bound the size on an older curl
-	# (still the default on several supported distros) talking to a server that
-	# omits Content-Length - that combination is not covered by this flag.
-	# --max-time is the version-independent backstop: it caps the whole request
-	# at 300s regardless of curl version or response headers, so a stalled or
-	# never-ending response cannot hang the installer.
+	# The ceiling is enforced while the response is read: curl writes to head,
+	# which keeps one byte more than the ceiling and then closes the pipe, so no
+	# file ever grows past that whatever curl and the server say about the
+	# length. --max-filesize refuses early where curl can tell the size (a
+	# declared Content-Length, or curl 8.4.0 and later while reading).
+	# --max-time caps the whole request at 300s, so a stalled or never-ending
+	# response cannot hang the installer.
+	local max="${MAX_DOWNLOAD_BYTES:-209715200}" status=0
 	curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
-		--max-filesize 209715200 --max-time 300 \
-		-fsSL -o "$2" "$1" || fail "Download failed: $1"
+		--max-filesize "$max" --max-time 300 \
+		-fsSL "$1" | head -c "$((max + 1))" > "$2" || status=$?
+	if (($(wc -c < "$2") > max)); then
+		rm -f -- "$2"
+		fail "Download too large (over 200 MB): $1"
+	fi
+	if [[ "$status" -ne 0 ]]; then
+		rm -f -- "$2"
+		fail "Download failed: $1"
+	fi
 }
 
 # Baked-in base64 (unpadded) raw Ed25519 public keys (32 bytes each) matching the
