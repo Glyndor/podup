@@ -58,6 +58,23 @@ jobs:
           persist-credentials: false
           ref: refs/tags/${{ inputs.tag }}
 
+      # The first thing this job does with the tag, before a line of the tag is run: a commit that is not
+      # on `main` is not reviewed, and every script below (`check-tag.sh`, the key slots, the check of the
+      # published releases) is a file of that commit, so one that could put a `git` of its own first on the
+      # path would answer this question itself. The question is asked here, in commands of this workflow,
+      # of the git of the runner, with the name of the branch spelled out.
+      - name: Tag must be on main
+        # Releases are cut only from `main` (develop → main merge, then tag).
+        # Refuse a tag pushed to any other branch so an unreviewed commit can
+        # never be published.
+        run: |
+          git fetch --unshallow --no-tags origin "+refs/heads/main:refs/remotes/origin/main" 2>/dev/null \
+            || git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          if ! git merge-base --is-ancestor HEAD refs/remotes/origin/main; then
+            echo "::error::Tagged commit is not reachable from origin/main; releases must be cut from main."
+            exit 1
+          fi
+
       - name: Take the release scripts from the commit that started the rehearsal
         if: ${{ inputs.dry_run }}
         run: |
@@ -154,18 +171,6 @@ jobs:
             exit 1
           fi
           echo "Cargo.lock version ${LOCK_VERSION} matches."
-
-      - name: Tag must be on main
-        # Releases are cut only from `main` (develop → main merge, then tag).
-        # Refuse a tag pushed to any other branch so an unreviewed commit can
-        # never be published.
-        run: |
-          git fetch --unshallow --no-tags origin main 2>/dev/null \
-            || git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor HEAD origin/main; then
-            echo "::error::Tagged commit is not reachable from origin/main; releases must be cut from main."
-            exit 1
-          fi
 
       # Before anything is installed: `cargo install` below runs build scripts of other people's
       # crates in this workspace, and the commit has to be read before they can touch it.
