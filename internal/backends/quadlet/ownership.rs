@@ -141,8 +141,8 @@ fn on_own_pod(project: &str, pattern: &str, verb: &str) -> String {
 		format!(
 			"members=$$({PODMAN} ps -aq --filter pod=$$id \
 			 --filter label!=podup.project={project}) || exit $$?; \
-			 if [ -n \"$$members\" ]; then echo \"podup: refusing pod cleanup: \
-			 containers without podup.project={project}\" >&2; exit 1; fi; "
+			 if [ -n \"$$members\" ]; then echo \"podup: refusing pod cleanup for $$id: \
+			 containers without podup.project={project}: $$members\" >&2; exit 1; fi; "
 		)
 	} else {
 		String::new()

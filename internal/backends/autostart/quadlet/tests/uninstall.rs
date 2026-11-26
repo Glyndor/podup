@@ -91,9 +91,14 @@ fn uninstall_reports_a_stop_failure_and_retains_the_unit() {
 			calls,
 			[
 				vec!["daemon-reload".to_string()],
+				vec![
+					"show".to_string(),
+					"--property=ActiveState,Result".to_string(),
+					"proj-web.service".to_string()
+				],
 				vec!["stop".to_string(), "proj-web.service".to_string()]
 			],
-			"only the protective reload and stop should run: {calls:?}"
+			"only the protective reload, state query and stop should run: {calls:?}"
 		);
 	});
 }

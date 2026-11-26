@@ -191,7 +191,7 @@ fn uninstall_dispatch_recognises_a_lone_owned_pod_and_leaves_foreign_pods() {
 		let systemctl = root.join("systemctl");
 		std::fs::write(
 			&systemctl,
-			"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$XDG_CONFIG_HOME/calls\"\ncase \"$*\" in *--property=Result*) echo success;; esac\n",
+			"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$XDG_CONFIG_HOME/calls\"\ncase \"$*\" in *--property=ActiveState,Result*) printf 'ActiveState=inactive\\nResult=success\\n';; *--property=Result*) echo success;; esac\n",
 		)
 		.unwrap();
 		std::fs::set_permissions(&systemctl, std::fs::Permissions::from_mode(0o700)).unwrap();

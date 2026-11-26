@@ -20,6 +20,10 @@ pub trait SystemCtl {
 	fn systemctl(&self, args: &[&str]) -> io::Result<Output>;
 	/// Run `loginctl <args>`.
 	fn loginctl(&self, args: &[&str]) -> io::Result<Output>;
+	/// Retry an internally generated, label-protected cleanup without starting a service.
+	fn cleanup(&self, command: &str) -> io::Result<Output> {
+		Command::new("/bin/sh").args(["-c", command]).output()
+	}
 }
 
 /// The production [`SystemCtl`]: invokes the real `systemctl --user` and

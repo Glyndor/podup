@@ -358,16 +358,17 @@ fn legacy_units_are_protected_and_loaded_before_retirement_or_uninstall() {
 			migrate(&sc, uninstall).unwrap();
 			let calls = sc.log();
 			assert_eq!(calls[0], ["daemon-reload"]);
-			assert_eq!(calls[1], ["stop", "proj-old.service"]);
-			assert_eq!(
-				calls[2],
-				["show", "--property=Result", "--value", "proj-old.service"]
-			);
-			assert_eq!(calls[3], ["stop", "proj-pod.service"]);
-			assert_eq!(
-				calls[4],
-				["show", "--property=Result", "--value", "proj-pod.service"]
-			);
+			for (offset, service) in [(1, "proj-old.service"), (4, "proj-pod.service")] {
+				assert_eq!(
+					calls[offset],
+					["show", "--property=ActiveState,Result", service]
+				);
+				assert_eq!(calls[offset + 1], ["stop", service]);
+				assert_eq!(
+					calls[offset + 2],
+					["show", "--property=Result", "--value", service]
+				);
+			}
 		});
 	}
 }

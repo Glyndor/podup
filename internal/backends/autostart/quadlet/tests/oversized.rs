@@ -111,7 +111,11 @@ fn oversized_units_get_real_identity_protection_loaded_before_uninstall_stops() 
 			uninstall_quadlet(&sc, "proj").unwrap();
 			assert!(!unit.exists());
 			assert_eq!(sc.log()[0], ["daemon-reload"]);
-			assert_eq!(sc.log()[1], ["stop", service]);
+			assert_eq!(
+				sc.log()[1],
+				["show", "--property=ActiveState,Result", service]
+			);
+			assert_eq!(sc.log()[2], ["stop", service]);
 		});
 	}
 }

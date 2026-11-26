@@ -16,6 +16,7 @@ use crate::{quadlet, ComposeError};
 
 mod drop_ins;
 mod installed;
+mod stop;
 pub(in super::super) use installed::installed_units;
 
 use super::guards::emit_guards;
@@ -36,24 +37,6 @@ fn container_services(units: &[quadlet::QuadletUnit]) -> Vec<String> {
 		.filter_map(|u| u.filename.strip_suffix(".container"))
 		.map(|stem| format!("{stem}.service"))
 		.collect()
-}
-
-/// A completed stop job can still leave a failed ExecStop or ExecStopPost.
-fn stop_service<S: SystemCtl>(sc: &S, service: &str) -> crate::Result<()> {
-	checked(sc.systemctl(&["stop", service]), &format!("stop {service}"))?;
-	let out = sc
-		.systemctl(&["show", "--property=Result", "--value", service])
-		.map_err(|e| ComposeError::Autostart(format!("cannot query Result for {service}: {e}")))?;
-	let result = String::from_utf8_lossy(&out.stdout);
-	if !out.status.success() || result.trim() != "success" {
-		return Err(ComposeError::Autostart(format!(
-			"stop {service}: Result={:?}, query status {}; {}",
-			result.trim(),
-			out.status,
-			String::from_utf8_lossy(&out.stderr).trim()
-		)));
-	}
-	Ok(())
 }
 
 /// Build the lines `--dry-run` prints: every unit file (as `# <filename>` plus
@@ -131,6 +114,7 @@ fn retire_obsolete_units<S: SystemCtl>(
 	project: &str,
 	previous: &[PathBuf],
 	current: &[quadlet::QuadletUnit],
+	protection: &[drop_ins::DropIn],
 ) -> crate::Result<()> {
 	let mut retired = false;
 	for path in previous {
@@ -143,7 +127,7 @@ fn retire_obsolete_units<S: SystemCtl>(
 		// Stop the service while its unit still exists, so the container or the
 		// pod it runs does not stay up with nothing left to manage it.
 		if let Some(service) = drop_ins::service_of(name) {
-			stop_service(sc, &service)?;
+			stop::service(sc, &service, protection)?;
 		}
 		std::fs::remove_file(path).map_err(|e| drop_ins::cannot("remove", path, e))?;
 		retired = true;
@@ -274,7 +258,7 @@ pub fn install_quadlet<S: SystemCtl>(
 	// The units of the services the compose file no longer has are retired
 	// here, so a re-install leaves no unit behind that would start a
 	// container the project does not have any more.
-	retire_obsolete_units(sc, project, &installed, &result.units)?;
+	retire_obsolete_units(sc, project, &installed, &result.units, &drop_ins)?;
 
 	// Build the images before the container services start. Building is not
 	// "starting the stack": `--no-start` still does it, because without it the
@@ -348,20 +332,7 @@ pub fn uninstall_quadlet<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<(
 	for path in &units {
 		if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
 			if let Some(service) = drop_ins::service_of(name) {
-				// Stop unconditionally. There is no state here worth probing for
-				// first: measured against real systemd, `stop` on a unit whose
-				// fragment is on disk exits 0 whether it is running, inactive, or
-				// was never started at all, and every unit in this loop has its
-				// fragment on disk, because that is what `installed_units` found.
-				// (`stop` only fails with "not loaded" when no fragment exists,
-				// which cannot happen here.)
-				//
-				// Gating on `is-active` would be worse than redundant: a service
-				// that is still coming up reports `activating`, which `is-active`
-				// calls a failure, so a stack caught mid-start, or one sitting in
-				// `activating (auto-restart)`, would be skipped and left running
-				// while uninstall deleted its units and reported success.
-				if let Err(e) = stop_service(sc, &service) {
+				if let Err(e) = stop::service(sc, &service, &protection) {
 					tracing::warn!("{e}");
 					first_err.get_or_insert(e);
 				}

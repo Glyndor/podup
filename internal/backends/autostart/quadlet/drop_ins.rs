@@ -17,12 +17,29 @@ use crate::ComposeError;
 /// One drop-in to publish.
 pub(super) struct DropIn {
 	/// The service it belongs to, such as `proj-web.service`.
-	service: String,
+	pub(super) service: String,
 	/// What the file holds.
 	pub(super) contents: String,
 }
 
 impl DropIn {
+	/// Reuse only a freshly generated, non-ignored cleanup with a project-label filter.
+	/// Recorded IDs alone cannot authorise this independent retry.
+	pub(super) fn cleanup_command(&self) -> Option<String> {
+		self.contents
+			.lines()
+			.rev()
+			.filter_map(|line| {
+				line.strip_prefix("ExecStopPost=")
+					.or_else(|| line.strip_prefix("ExecStop="))
+			})
+			.find(|command| {
+				!command.starts_with('-') && command.contains("--filter label=podup.project=")
+			})
+			// These generated commands have no runtime specifiers; undo systemd's dollar escape.
+			.map(|command| command.replace("$$", "$"))
+	}
+
 	pub(super) fn same_service(&self, other: &Self) -> bool {
 		self.service == other.service
 	}

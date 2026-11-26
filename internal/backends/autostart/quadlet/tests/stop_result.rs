@@ -34,7 +34,7 @@ fn retirement_and_uninstall_check_result_after_a_successful_stop() {
 					std::fs::write(&unit, &body).unwrap();
 					// No start call: also covers a never-started unit with Result=success.
 					let mut sc = ScriptedCtl::new(move |args| {
-						if args.first() == Some(&"show") {
+						if args.starts_with(&["show", "--property=Result"]) {
 							code
 						} else {
 							0

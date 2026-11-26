@@ -217,8 +217,8 @@ fn on_own_pod(verb: &str) -> String {
 	let guard = if verb == "rm --force" {
 		"members=$$(/usr/bin/podman ps -aq --filter pod=$$id \
 		 --filter label!=podup.project=proj) || exit $$?; \
-		 if [ -n \"$$members\" ]; then echo \"podup: refusing pod cleanup: \
-		 containers without podup.project=proj\" >&2; exit 1; fi; "
+		 if [ -n \"$$members\" ]; then echo \"podup: refusing pod cleanup for $$id: \
+		 containers without podup.project=proj: $$members\" >&2; exit 1; fi; "
 	} else {
 		""
 	};
