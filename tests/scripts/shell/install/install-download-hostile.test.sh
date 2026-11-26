@@ -4,6 +4,12 @@
 # install at the download, before anything is verified or staged, and the
 # podup that was already installed must survive untouched.
 #
+# The ceiling holds while the response is read, also when the response says
+# nothing about its length and curl does not check it, which is what a curl
+# older than 8.4.0 does. Those cases run with a stand-in that drops
+# --max-filesize, a ceiling of a few kilobytes and a chunked response, and
+# call the production `download` for the exact boundary.
+#
 # The other install tests redefine `download`, and proto-redir-test.sh only
 # drives the redirect, so the real curl call never met either case. Here the
 # production `download` and `install_binary` run against a local https origin
@@ -93,11 +99,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
 	def do_GET(self):
 		try:
 			mode, _, name = self.path.lstrip('/').partition('/')
+			if mode == 'size':
+				self.send_chunked(b'x' * int(name))
+				return
 			if name not in NAMES:
 				self.send_error(404)
 				return
 			with open(os.path.join(ROOT, name), 'rb') as f:
 				data = f.read()
+			if mode == 'unbounded' and name == 'podup-linux-x86_64':
+				self.send_chunked(data + b'#' * 100000)
+				return
 			declared, body = len(data), data
 			if mode == 'oversize':
 				declared = CEILING + 1
@@ -110,6 +122,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
 			self.wfile.write(body)
 		except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
 			pass
+
+	def send_chunked(self, body):
+		self.protocol_version = 'HTTP/1.1'
+		self.send_response(200)
+		self.send_header('Content-Type', 'application/octet-stream')
+		self.send_header('Transfer-Encoding', 'chunked')
+		self.send_header('Connection', 'close')
+		self.end_headers()
+		for start in range(0, len(body), 1024):
+			piece = body[start:start + 1024]
+			self.wfile.write(b'%x\r\n%s\r\n' % (len(piece), piece))
+		self.wfile.write(b'0\r\n\r\n')
 
 	def log_message(self, *a, **k):
 		pass
@@ -140,6 +164,40 @@ if [[ ! -f "$WORK/srv.ready" ]]; then
 fi
 export CURL_CA_BUNDLE="$WORK/cert.pem"
 
+# A curl that ignores --max-filesize, as one older than 8.4.0 does for a response
+# of unknown length.
+old_curl() {
+	local args=() skip=0 arg
+	for arg in "$@"; do
+		if [[ "$skip" -eq 1 ]]; then
+			skip=0
+		elif [[ "$arg" == --max-filesize ]]; then
+			skip=1
+		else
+			args+=("$arg")
+		fi
+	done
+	builtin command curl "${args[@]}"
+}
+
+# The exact boundary, on the production `download`: <name> <bytes> <ceiling> <exit> <bytes on disk>
+boundary() {
+	local name="$1" bytes="$2" ceiling="$3" expected="$4" kept="$5" rc=0
+	local dest="$WORK/boundary-$name"
+	(
+		set -euo pipefail
+		MAX_DOWNLOAD_BYTES="$ceiling"
+		fail() { printf '%s\n' "$*" >&2; exit 1; }
+		curl() { old_curl "$@"; }
+		download "https://127.0.0.1:$PORT/size/$bytes" "$dest"
+	) > "$WORK/boundary-$name.out" 2>&1 || rc=$?
+	check "$name exit status" "$expected" "$rc"
+	check "$name bytes kept" "$kept" "$(if [[ -e "$dest" ]]; then wc -c < "$dest" | tr -d ' '; else echo none; fi)"
+	if [[ "$expected" == 1 ]]; then
+		check "$name says why" 1 "$(grep -c 'Download too large' "$WORK/boundary-$name.out")"
+	fi
+}
+
 # flow <mode> <exit> <pattern the output must match>
 flow() {
 	local mode="$1" expected="$2" pattern="$3"
@@ -166,6 +224,10 @@ flow() {
 			builtin command "$@"
 		}
 		ed25519_verify() { return 0; }
+		if [[ "$mode" == unbounded ]]; then
+			MAX_DOWNLOAD_BYTES=4096
+			curl() { old_curl "$@"; }
+		fi
 		install_binary
 	) > "$dir/output" 2>&1 || rc=$?
 	check "$mode exit status" "$expected" "$rc"
@@ -174,7 +236,7 @@ flow() {
 		after="$(cksum < "$dir/bin/podup") $(stat -c %i "$dir/bin/podup")"
 		check "$mode preserves bytes and inode" "$before" "$after"
 		check "$mode leaves no staging" 0 "$(find "$dir/bin" -name '.podup.install-*' | wc -l | tr -d ' ')"
-		check "$mode stops at the download" 1 "$(grep -q 'Download failed' "$dir/output" && echo 1 || echo 0)"
+		check "$mode stops at the download" 1 "$(grep -Eq 'Download (failed|too large)' "$dir/output" && echo 1 || echo 0)"
 	else
 		check "$mode installs the release" "$(cksum < "$WORK/root/ok/$ARTIFACT_NAME")" "$(cksum < "$dir/bin/podup")"
 	fi
@@ -184,5 +246,10 @@ flow ok 0 'podup 1.2.3'
 flow oversize 1 'Maximum file size exceeded'
 flow truncated 1 'curl: \((18|56)\)'
 flow truncated-sums 1 'curl: \((18|56)\)'
+flow unbounded 1 'Download too large'
+
+boundary at-the-ceiling 4096 4096 0 4096
+boundary one-over 4097 4096 1 none
+boundary far-over 500000 4096 1 none
 
 finish
