@@ -121,6 +121,36 @@ def python_without_isolation(steps, where):
     return out
 
 
+DEBIAN_RULES = os.environ.get("PODUP_DEBIAN_RULES", f"{REPO}/debian/rules")
+
+
+def deb_sbom_problems(sbom_run, rules):
+    """The `gen_sbom` call of each .deb against the target and the features that `debian/rules` builds with.
+
+    One line per problem. The rules map each Debian architecture to its Rust target (`RUST_TARGET_<arch> = <triple>`)
+    and name the features once (`CARGO_FEATURES = --no-default-features --features ...`)."""
+    out = []
+    targets = dict(re.findall(r"^RUST_TARGET_(\w+)\s*[:?]?=\s*(\S+)\s*$", rules, re.M))
+    features = re.findall(r"^CARGO_FEATURES\s*[:?]?=\s*(.+?)\s*$", rules, re.M)
+    if not targets or len(features) != 1:
+        return ["debian/rules: no RUST_TARGET_<arch> per architecture and a single CARGO_FEATURES to compare the SBOMs with"]
+    calls = {}
+    for m in re.finditer(r'^\s*gen_sbom\s+"podup_\$\{VERSION\}_(\w+)\.deb"\s+(\S+)[ \t]*(.*?)\s*$', sbom_run, re.M):
+        calls[m.group(1)] = (m.group(2), m.group(3))
+    for arch, target in sorted(targets.items()):
+        if arch not in calls:
+            out.append(f"the SBOM of the {arch} .deb is not made, and debian/rules builds it for {target}")
+            continue
+        got_target, got_features = calls[arch]
+        if got_target != target:
+            out.append(f"the SBOM of the {arch} .deb is made for {got_target} and debian/rules builds it for {target}")
+        if got_features.split() != features[0].split():
+            out.append(f"the SBOM of the {arch} .deb is made with `{got_features}` and debian/rules builds it with `{features[0]}`")
+    for arch in sorted(set(calls) - set(targets)):
+        out.append(f"the SBOM of the {arch} .deb is made and debian/rules maps no target for that architecture")
+    return out
+
+
 def problems(path):
     spec = yaml.safe_load(open(path))
     jobs = spec["jobs"]
@@ -448,6 +478,10 @@ def problems(path):
         bad("`sbom` does not check that it changed no file of the source and wrote exactly the SBOMs")
     if any(uses(s, "download-artifact") and not (s.get("with") or {}).get("name") == "sbom-tools" for s in sbom["steps"]):
         bad("`sbom` downloads something other than its tools, into a workspace that holds the source")
+    # 8b. The SBOM of each .deb is made for the target and the features `debian/rules` builds that package with:
+    # the target decides which dependencies the resolution keeps, so a certificate for another target describes
+    # something that was not built.
+    out += deb_sbom_problems("\n".join(str(s.get("run", "")) for s in sbom["steps"]), open(DEBIAN_RULES).read())
 
     # 9. Python is started with -I wherever the tag's own scripts run, and nothing is piped into a shell.
     for label, group in (("release.yml", jobs), ("the reusable", rjobs)):
