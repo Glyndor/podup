@@ -238,6 +238,25 @@ def problems(path):
         if script is not None and script < on_main:
             bad("the verification runs a script of the tag before it shows that the tag is on main")
 
+    # 2c. A real release is refused before the checkout when the ref of the run is not the tag it was given
+    # (a dispatch from `main` is built to the end and refused by the signer, which asks for the tag): the
+    # step comes first, only a rehearsal escapes it, it cannot fail and go on, and it compares the ref of
+    # the run with `refs/tags/<tag>`, both read from the workflow's own context and not from the checkout.
+    from_tag = next((i for i, st in enumerate(vsteps) if st.get("name") == "A real release runs from its tag"), None)
+    if from_tag is None:
+        bad("the verification does not refuse a real release that does not run from its tag")
+    else:
+        step_tag = vsteps[from_tag]
+        if from_tag > co:
+            bad("a real release is refused for the ref it runs from only after the checkout")
+        if step_tag.get("if") != "${{ !inputs.dry_run }}" or step_tag.get("continue-on-error"):
+            bad("the check that a real release runs from its tag is not exactly for a real release, or may fail")
+        env_tag = step_tag.get("env") or {}
+        if env_tag.get("TAG") != "${{ inputs.tag }}" or env_tag.get("REF") != "${{ github.ref }}":
+            bad("the check that a real release runs from its tag does not read the tag and the ref of the run")
+        if '[ "$REF" != "refs/tags/$TAG" ]' not in str(step_tag.get("run", "")) or ".github/scripts" in str(step_tag.get("run", "")):
+            bad("the check that a real release runs from its tag does not compare the ref with refs/tags/<tag>, or runs a file")
+
     # 3b. Every job that holds the key, mints a token or writes the release looks the tag up again before it
     # runs a script of the checkout, and compares what it finds with the commit that was verified.
     for name in KEY_JOBS + ("attest", "release"):

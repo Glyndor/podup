@@ -202,20 +202,25 @@ echo "== the tag is on main before a line of it runs"
 # The steps of `verify` as the runner runs them: in order, each with its env (the few expressions of
 # this job read from what the case says), a path that grows by what a step writes to GITHUB_PATH, and
 # the stop at the first step that fails (a step that may fail does not stop it). The checkout is the fixture's.
-emulate() { # <workflow file> <work dir> <tag>
+emulate() { # <workflow file> <work dir> <tag> [ref of the run, default the tag] [rehearsal|release, default release]
 	python3 -I - "$@" <<'EOF'
 import os, re, subprocess, sys
 sys.path.insert(0, os.environ["LIB"])
 import ci_yaml  # noqa: E402
 
 path, work, tag = sys.argv[1:4]
+ref = sys.argv[4] if len(sys.argv) > 4 else "refs/tags/" + tag
+rehearsal = len(sys.argv) > 5 and sys.argv[5] == "rehearsal"
 spec = ci_yaml.load(path)
 steps = spec["jobs"]["verify"]["steps"]
 path_file, out_file = os.path.join(work, "gh_path"), os.path.join(work, "gh_out")
 for f in (path_file, out_file):
     open(f, "w").close()
 extra = []
-SUBST = {"inputs.tag": tag, "github.token": "token", "github.repository": "o/r", "inputs.dry_run && 'rehearsal' || 'release'": "release"}
+# `inputs.dry_run` stays empty on purpose: the step it turns on fetches from GitHub and is not what is run here.
+SUBST = {"inputs.tag": tag, "github.token": "token", "github.repository": "o/r", "github.ref": ref,
+         "!inputs.dry_run": "" if rehearsal else "true",
+         "inputs.dry_run && 'rehearsal' || 'release'": "rehearsal" if rehearsal else "release"}
 
 def expand(v):
     return re.sub(r"\$\{\{\s*(.*?)\s*\}\}", lambda m: SUBST.get(m.group(1), ""), str(v))
@@ -232,6 +237,7 @@ for st in steps:
     done = subprocess.run(["bash", "-e", "-c", st["run"]], cwd=os.path.join(work, "checkout"), env=env, capture_output=True, text=True)
     extra = [l.strip() for l in open(path_file) if l.strip()][::-1]
     if done.returncode != 0 and not st.get("continue-on-error"):
+        print(done.stdout + done.stderr, end="")
         print(f"stopped at: {st.get('name')}")
         sys.exit(1)
 print("ran every step")
@@ -298,6 +304,48 @@ plantv "the question not asked" "(lambda b: s.replace(b, ''))(s[s.index('      #
 plantv "the question that may fail" "s.replace('      - name: Tag must be on main\n', '      - name: Tag must be on main\n        continue-on-error: true\n', 1)" "went-on|script-ran"
 plantv "the question asked only in a rehearsal" "s.replace('      - name: Tag must be on main\n', '      - name: Tag must be on main\n        if: \${{ inputs.dry_run }}\n', 1)" "went-on|script-ran"
 plantv "the question of a script of the tag" "s.replace('          git fetch --unshallow --no-tags origin \"+refs/heads/main:refs/remotes/origin/main\" 2>/dev/null \\\\\n            || git fetch --no-tags origin \"+refs/heads/main:refs/remotes/origin/main\"\n          if ! git merge-base --is-ancestor HEAD refs/remotes/origin/main; then', '          if ! bash .github/scripts/release/check-tag.sh v9.9.9; then', 1)" "went-on|script-ran"
+
+echo "== a real release runs from its tag"
+# The ref that started the run has to be the tag it was given, or the signer refuses the provenance after every
+# build has run (the attestation names the ref of the run). A real run is refused here, before the checkout; a
+# rehearsal makes no attestation and may start from `main`.
+REFUSED="stopped at: A real release runs from its tag"
+refused() { # <workflow> <case name> <ref> <rehearsal|release> -> "refused" or "went-on"; what the run printed is in $WORK/<case>/said
+	local w out
+	w="$(fixture "$2" on-main)"
+	out="$(emulate "$1" "$w" v9.9.9 "$3" "$4" 2>&1)"
+	printf '%s\n' "$out" >"$w/said"
+	if [ "$(printf '%s\n' "$out" | tail -1)" = "$REFUSED" ]; then echo refused; else echo went-on; fi
+}
+check "a real run from the tag goes on" went-on "$(refused "$VWF" r1 refs/tags/v9.9.9 release)"
+check "a real run from main is refused" refused "$(refused "$VWF" r2 refs/heads/main release)"
+check "...and says which tag and which ref" 1 "$(grep -c 'v9.9.9 is not the tag this run started from (refs/heads/main)' "$WORK/r2/said")"
+check "a real run from another tag is refused" refused "$(refused "$VWF" r3 refs/tags/v9.9.8 release)"
+check "a real run from a branch named like the tag is refused" refused "$(refused "$VWF" r4 refs/heads/v9.9.9 release)"
+check "a rehearsal from main goes on" went-on "$(refused "$VWF" r5 refs/heads/main rehearsal)"
+check "a rehearsal from the tag goes on" went-on "$(refused "$VWF" r6 refs/tags/v9.9.9 rehearsal)"
+
+plantr() { # <description> <python expression on the text s>
+	local f="$WORK/plantr-$RANDOM.yml"
+	cp "$VWF" "$f"
+	if python3 - "$f" "$2" <<'EOF'
+import sys
+p, expr = sys.argv[1], sys.argv[2]
+s = open(p).read()
+t = eval(expr)
+open(p, "w").write(t)
+sys.exit(0 if t != s else 3)
+EOF
+	then
+		check "plant: $1" went-on "$(refused "$f" "q$RANDOM" refs/heads/main release)"
+	else
+		check "the plant applies: $1" applied not-applied
+	fi
+}
+plantr "the step removed" "(lambda b: s.replace(b, ''))(s[s.index('      # A real release'):s.index('      - uses: actions/checkout')])"
+plantr "the step only in a rehearsal" "s.replace('      - name: A real release runs from its tag\n        if: \${{ !inputs.dry_run }}\n', '      - name: A real release runs from its tag\n        if: \${{ inputs.dry_run }}\n', 1)"
+plantr "the step may fail" "s.replace('      - name: A real release runs from its tag\n', '      - name: A real release runs from its tag\n        continue-on-error: true\n', 1)"
+plantr "the step compares with a branch" "s.replace('\"refs/tags/\$TAG\"', '\"refs/heads/main\"', 1)"
 
 echo
 echo "passed: $pass  failed: $fail"
