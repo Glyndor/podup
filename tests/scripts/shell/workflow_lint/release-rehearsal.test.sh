@@ -14,6 +14,12 @@
 #                          `release` in a rehearsal as in a release: a rehearsal is started from
 #                          `main`, which the environment admits, and nothing weakens that.
 #
+# The tag is also authorized before it runs: the verification asks whether the tagged commit is on
+# `main` in commands of its own workflow, before it runs one line of a file of that commit (which, if it
+# is not on `main`, is nobody's code that was reviewed). That is held by running the steps of the
+# verification in order on a commit that is not on `main`, whose `check-tag.sh` plants a `git` that
+# answers yes to the question, and seeing that the question is asked first and that script never runs.
+#
 # Each plant breaks one of those in a copy of the workflows and expects the judge to say so.
 #
 # Requires: python3 with PyYAML.
@@ -111,7 +117,7 @@ for path, spec, skip in (("reusable-release-verify.yml", ver, ()), ("reusable-re
         runs = " ".join(str(s.get("run", "")) for s in steps if s.get("name") != OVERLAY)
         needs = any(f in runs for f in FOLDERS)
         # A container job trusts its workspace first, so that git works at all; the scripts follow.
-        after = [x for x in steps[checkout + 1:] if x.get("name") != "Trust the workspace"]
+        after = [x for x in steps[checkout + 1:] if x.get("name") not in ("Trust the workspace", "Tag must be on main")]
         nxt = after[0] if after else {}
         if needs and nxt.get("name") != OVERLAY:
             print(f"{path}: job `{job}` runs a script of the release and does not take the scripts of a rehearsal right after its checkout")
@@ -191,6 +197,107 @@ plant "a key job without its environment in a rehearsal" $R "s.replace('    envi
 plant "a key job in another environment" $R "s.replace('    environment: release\n', '    environment: elsewhere\n', 1)" "is not in the environment"
 plant "the publishing job given an environment" $R "s.replace('  release:\n    name:', '  release:\n    environment: release\n    name:', 1)" "job \`release\` has an environment"
 plant "the audit stopping a rehearsal" $V "s.replace('continue-on-error: \${{ inputs.dry_run }}', 'continue-on-error: false')" "does not stop a release and go past"
+
+echo "== the tag is on main before a line of it runs"
+# The steps of `verify` as the runner runs them: in order, each with its env (the few expressions of
+# this job read from what the case says), a path that grows by what a step writes to GITHUB_PATH, and
+# the stop at the first step that fails (a step that may fail does not stop it). The checkout is the fixture's.
+emulate() { # <workflow file> <work dir> <tag>
+	python3 -I - "$@" <<'EOF'
+import os, re, subprocess, sys
+sys.path.insert(0, os.environ["LIB"])
+import ci_yaml  # noqa: E402
+
+path, work, tag = sys.argv[1:4]
+spec = ci_yaml.load(path)
+steps = spec["jobs"]["verify"]["steps"]
+path_file, out_file = os.path.join(work, "gh_path"), os.path.join(work, "gh_out")
+for f in (path_file, out_file):
+    open(f, "w").close()
+extra = []
+SUBST = {"inputs.tag": tag, "github.token": "token", "github.repository": "o/r", "inputs.dry_run && 'rehearsal' || 'release'": "release"}
+
+def expand(v):
+    return re.sub(r"\$\{\{\s*(.*?)\s*\}\}", lambda m: SUBST.get(m.group(1), ""), str(v))
+
+for st in steps:
+    if "run" not in st:
+        continue
+    cond = st.get("if")
+    if cond is not None and expand(cond) != "true":
+        continue
+    env = dict(os.environ, GITHUB_PATH=path_file, GITHUB_OUTPUT=out_file, PODUP_PUBLISHED_TAGS=os.path.join(work, "published"))
+    env["PATH"] = ":".join(extra + [env["PATH"]])
+    env.update({k: expand(v) for k, v in (st.get("env") or {}).items()})
+    done = subprocess.run(["bash", "-e", "-c", st["run"]], cwd=os.path.join(work, "checkout"), env=env, capture_output=True, text=True)
+    extra = [l.strip() for l in open(path_file) if l.strip()][::-1]
+    if done.returncode != 0 and not st.get("continue-on-error"):
+        print(f"stopped at: {st.get('name')}")
+        sys.exit(1)
+print("ran every step")
+EOF
+}
+
+# A repository with `main`, and a tag that is on it or is not. The tag that is not carries a
+# `check-tag.sh` that leaves a mark when it runs and puts a `git` of its own on the path, one that
+# answers yes to `merge-base --is-ancestor` and is the real git for everything else.
+fixture() { # <name> <on-main|off-main> -> the work directory
+	local w="$WORK/$1" origin="$WORK/$1/origin" g="git -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false -c tag.gpgsign=false"
+	mkdir -p "$w" && git init -q -b main "$origin"
+	( cd "$origin" && mkdir -p .github/scripts/release && echo main > f && $g add -A && $g commit -q -m main
+	  if [ "$2" = off-main ]; then
+		git checkout -q -b elsewhere
+		cat > .github/scripts/release/check-tag.sh <<SH
+#!/usr/bin/env bash
+echo ran > "$w/mark"
+mkdir -p "$w/fake" && printf '#!/usr/bin/env bash\n[ "\$1 \$2" = "merge-base --is-ancestor" ] && exit 0\nexec $(command -v git) "\$@"\n' > "$w/fake/git" && chmod +x "$w/fake/git"
+echo "$w/fake" >> "\$GITHUB_PATH"
+SH
+		echo 'pass' > .github/scripts/release/check-key-slots.py
+		echo ':' > .github/scripts/release/check-unpublished.sh
+		echo x >> f
+		$g add -A && $g commit -q -m other
+	  fi
+	  $g tag -a v9.9.9 -m v9.9.9 )
+	printf 'v1.0.0\n' > "$w/published"
+	git init -q "$w/checkout"
+	( cd "$w/checkout" && git remote add origin "file://$origin" && git fetch -q --depth 1 origin "+refs/tags/v9.9.9:refs/tags/v9.9.9" && git checkout -q --detach refs/tags/v9.9.9 )
+	echo "$w"
+}
+export LIB="$HERE/.github/scripts/lib"
+VWF="$HERE/.github/workflows/reusable-release-verify.yml"
+ran() { # <workflow> <case name> <on-main|off-main> -> "<did the question stop the run>|<did a script of the tag run>"
+	local w out
+	w="$(fixture "$2" "$3")"
+	out="$(emulate "$1" "$w" v9.9.9 2>&1 | tail -1)"
+	echo "$([ "$out" = "stopped at: Tag must be on main" ] && echo stopped || echo went-on)|$([ -e "$w/mark" ] && echo script-ran || echo script-did-not-run)"
+}
+check "a tag on main goes through the question" "went-on|script-did-not-run" "$(ran "$VWF" a on-main)"
+check "a tag that is not on main is stopped by the question, and its script never runs" "stopped|script-did-not-run" "$(ran "$VWF" b off-main)"
+
+plantv() { # <description> <python expression on the text s> <what the off-main case then shows>
+	local f="$WORK/plantv-$RANDOM.yml"
+	cp "$VWF" "$f"
+	if python3 - "$f" "$2" <<'EOF'
+import sys
+p, expr = sys.argv[1], sys.argv[2]
+s = open(p).read()
+t = eval(expr)
+open(p, "w").write(t)
+sys.exit(0 if t != s else 3)
+EOF
+	then
+		check "plant: $1" "$3" "$(ran "$f" "p$RANDOM" off-main)"
+	else
+		check "the plant applies: $1" applied not-applied
+	fi
+}
+# the question after the scripts of the tag, as it was
+plantv "the question asked after the scripts of the tag" "(lambda b: s.replace(b, '').replace('      # Before anything is installed:', b + '      # Before anything is installed:', 1))(s[s.index('      # The first thing this job does with the tag'):s.index('      - name: Take the release scripts')])" "went-on|script-ran"
+plantv "the question not asked" "(lambda b: s.replace(b, ''))(s[s.index('      # The first thing this job does with the tag'):s.index('      - name: Take the release scripts')])" "went-on|script-ran"
+plantv "the question that may fail" "s.replace('      - name: Tag must be on main\n', '      - name: Tag must be on main\n        continue-on-error: true\n', 1)" "went-on|script-ran"
+plantv "the question asked only in a rehearsal" "s.replace('      - name: Tag must be on main\n', '      - name: Tag must be on main\n        if: \${{ inputs.dry_run }}\n', 1)" "went-on|script-ran"
+plantv "the question of a script of the tag" "s.replace('          git fetch --unshallow --no-tags origin \"+refs/heads/main:refs/remotes/origin/main\" 2>/dev/null \\\\\n            || git fetch --no-tags origin \"+refs/heads/main:refs/remotes/origin/main\"\n          if ! git merge-base --is-ancestor HEAD refs/remotes/origin/main; then', '          if ! bash .github/scripts/release/check-tag.sh v9.9.9; then', 1)" "went-on|script-ran"
 
 echo
 echo "passed: $pass  failed: $fail"

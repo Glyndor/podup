@@ -215,6 +215,28 @@ def problems(path):
         bad("a published tag stops a real release and not a rehearsal: by the script, with the mode taken from dry_run, and no condition")
     if "refs/tags/${{ inputs.tag }}" != next(st for st in vjobs["verify"]["steps"] if uses(st, "actions/checkout"))["with"]["ref"]:
         bad("the verification does not check out the tag it was given")
+    # 2b. The tag is shown to be on `main` before a line of the tag runs: right after the checkout, inline (a script
+    # of the tag could answer the question itself, with a `git` of its own put first on the path), with no condition,
+    # no way to fail and go on, and the branch spelled out in the fetch and in the comparison.
+    vsteps = vjobs["verify"]["steps"]
+    on_main = next((i for i, st in enumerate(vsteps) if st.get("name") == "Tag must be on main"), None)
+    co = next(i for i, st in enumerate(vsteps) if uses(st, "actions/checkout"))
+    if on_main is None:
+        bad("the verification does not ask whether the tag is on main")
+    else:
+        step_main = vsteps[on_main]
+        text = str(step_main.get("run", ""))
+        if on_main != co + 1:
+            bad("the tag is not shown to be on main right after the checkout, before anything else")
+        if "if" in step_main or step_main.get("continue-on-error"):
+            bad("the check that the tag is on main is conditional or may fail")
+        if ".github/scripts" in text or re.search(r"\bbash\s+\S|\bsource\b|\.\s+\S+\.sh", text):
+            bad("the check that the tag is on main runs a file of the tag")
+        if '"+refs/heads/main:refs/remotes/origin/main"' not in text or "git merge-base --is-ancestor HEAD refs/remotes/origin/main" not in text:
+            bad("the check that the tag is on main does not name the branch in the fetch and in the comparison")
+        script = first_script(vsteps)
+        if script is not None and script < on_main:
+            bad("the verification runs a script of the tag before it shows that the tag is on main")
 
     # 3b. Every job that holds the key, mints a token or writes the release looks the tag up again before it
     # runs a script of the checkout, and compares what it finds with the commit that was verified.
