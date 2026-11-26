@@ -38,7 +38,7 @@ fn stub_manager(dir: &Path) {
 	let bin = dir.join("bin");
 	fs::create_dir_all(&bin).unwrap();
 	for (name, body) in [
-		("systemctl", "echo \"$*\" >> \"$(dirname \"$0\")/calls\"\ncase \"$*\" in *is-enabled*) echo enabled;; *is-active*) echo active;; *--property=Result*) echo success;; *LoadState*) echo LoadState=not-found;; esac\nexit 0\n"),
+		("systemctl", "echo \"$*\" >> \"$(dirname \"$0\")/calls\"\ncase \"$*\" in *is-enabled*) echo enabled;; *is-active*) echo active;; *--property=ActiveState,Result*) echo ActiveState=inactive; echo Result=success;; *--property=Result*) echo success;; *LoadState*) echo LoadState=not-found;; esac\nexit 0\n"),
 		("loginctl", "echo Linger=yes\nexit 0\n"),
 	] {
 		let path = bin.join(name);

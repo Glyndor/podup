@@ -35,6 +35,15 @@ fn compose_file() -> ComposeFile {
 	podup::parse_str("services:\n  web:\n    image: nginx\n").expect("the file parses")
 }
 
+#[cfg(unix)]
+fn path_with_fake_binaries_first(root: &std::path::Path) -> std::ffi::OsString {
+	let mut paths = vec![root.to_path_buf()];
+	if let Some(path) = std::env::var_os("PATH") {
+		paths.extend(std::env::split_paths(&path));
+	}
+	std::env::join_paths(paths).expect("the test PATH joins")
+}
+
 /// The socket the operator selected must reach the generated unit: the
 /// unit runs with no environment of the operator's, so without it the boot
 /// path would talk to the default instance instead of the selected one.
@@ -195,10 +204,11 @@ fn uninstall_dispatch_recognises_a_lone_owned_pod_and_leaves_foreign_pods() {
 		)
 		.unwrap();
 		std::fs::set_permissions(&systemctl, std::fs::Permissions::from_mode(0o700)).unwrap();
+		let path = path_with_fake_binaries_first(root);
 		temp_env::with_vars(
 			[
 				("XDG_CONFIG_HOME", Some(root.as_os_str())),
-				("PATH", Some(root.as_os_str())),
+				("PATH", Some(path.as_os_str())),
 			],
 			|| {
 				let runtime = tokio::runtime::Builder::new_current_thread()
@@ -245,7 +255,7 @@ fn uninstall_dispatch_propagates_detection_failure_without_touching_services() {
 		let body = "# podup-owner: proj\n[Pod]\nPodName=proj\n";
 		std::fs::write(&pod, body).unwrap();
 		let fifo = units.join("proj-bad.build");
-		// Named by its path: other tests replace `PATH` while this one runs.
+		// Named by its path because the fake `PATH` puts its own binaries first.
 		assert!(std::process::Command::new("/usr/bin/mkfifo")
 			.arg(&fifo)
 			.status()
@@ -258,10 +268,11 @@ fn uninstall_dispatch_propagates_detection_failure_without_touching_services() {
 		)
 		.unwrap();
 		std::fs::set_permissions(&ctl, std::fs::Permissions::from_mode(0o700)).unwrap();
+		let path = path_with_fake_binaries_first(root);
 		temp_env::with_vars(
 			[
 				("XDG_CONFIG_HOME", Some(root.as_os_str())),
-				("PATH", Some(root.as_os_str())),
+				("PATH", Some(path.as_os_str())),
 			],
 			|| {
 				let runtime = tokio::runtime::Builder::new_current_thread()
