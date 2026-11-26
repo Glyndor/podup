@@ -16,6 +16,7 @@
 # being the string that `podman-vm` and the verdict compare with.
 #
 # Requires: python3 with PyYAML.
+# shellcheck disable=SC2016 # the plants hold literal script text
 set -u
 export LC_ALL=C
 

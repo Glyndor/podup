@@ -16,6 +16,7 @@
 # in a copy of the script, and must then come out `true`.
 #
 # Requires: jq (the fake `gh` runs the real filter of the script over JSON like the API's).
+# shellcheck disable=SC2016 # the plants hold literal script text
 set -u
 export LC_ALL=C
 
@@ -88,8 +89,8 @@ jobs() { # <run id> <conclusion of podman-native, or - for no such job>
 	fi
 }
 decide() { # <script> -> due=...
-	local out rc
-	out="$(FIX="$F" PATH="$WORK/bin:$PATH" GH_REPO=o/r RUN_ID=999 NOW="$NOW" GITHUB_OUTPUT="$F/out" bash "$1" 2> /dev/null)"
+	local rc
+	FIX="$F" PATH="$WORK/bin:$PATH" GH_REPO=o/r RUN_ID=999 NOW="$NOW" GITHUB_OUTPUT="$F/out" bash "$1" > /dev/null 2>&1
 	rc=$?
 	[ "$rc" -eq 0 ] || { echo "exit $rc"; return; }
 	tail -1 "$F/out" 2> /dev/null
