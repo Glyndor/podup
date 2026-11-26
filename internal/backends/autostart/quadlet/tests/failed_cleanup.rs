@@ -83,17 +83,98 @@ fn failure_from_current_stop_retains_units_and_protection() {
 	for pod in [false, true] {
 		with_env(|root| {
 			let (unit, protection, service) = fixture(root, pod);
+			let original = std::fs::read(&unit).unwrap();
 			let sc = FakeCtl::new();
 			sc.states
 				.borrow_mut()
 				.insert(service.to_string(), ("active", "success"));
 			sc.stop_result.set("exit-code");
+			sc.cleanup_status.set(42);
+			sc.resources.set(true);
 			let error = uninstall_quadlet(&sc, "proj").unwrap_err().to_string();
 			assert!(
-				error.contains(service) && error.contains("exit-code"),
+				error.contains(service) && error.contains("remaining own-resource"),
 				"{error}"
 			);
-			assert!(unit.is_file() && protection.is_file());
+			assert_eq!(std::fs::read(&unit).unwrap(), original);
+			assert!(protection.is_file() && sc.resources.get());
+			assert_eq!(sc.states.borrow()[service], ("failed", "exit-code"));
+			let calls = sc.log();
+			assert_eq!(calls[3], ["show", "--property=ActiveState,Result", service]);
+			assert_eq!(calls[4][0], "cleanup");
+			assert!(calls[4][1].contains("--filter label=podup.project=proj"));
+			assert!(!calls.iter().any(|c| c[0] == "reset-failed"));
+		});
+	}
+}
+
+#[test]
+fn failure_from_current_stop_is_cleaned_reset_and_retired() {
+	for uninstall in [false, true] {
+		for pod in [false, true] {
+			with_env(|root| {
+				let (unit, protection, service) = fixture(root, pod);
+				let sc = FakeCtl::new();
+				sc.states
+					.borrow_mut()
+					.insert(service.to_string(), ("active", "success"));
+				sc.stop_result.set("exit-code");
+				sc.resources.set(true);
+				if uninstall {
+					uninstall_quadlet(&sc, "proj").unwrap();
+				} else {
+					install_quadlet(
+						&sc,
+						&parse_str(IMG).unwrap(),
+						"proj",
+						Path::new(BASE),
+						true,
+						false,
+					)
+					.unwrap();
+				}
+				assert!(!unit.exists() && !protection.exists() && !sc.resources.get());
+				assert_eq!(sc.states.borrow()[service], ("inactive", "success"));
+				let calls = sc.log();
+				assert_eq!(calls[1], ["show", "--property=ActiveState,Result", service]);
+				assert_eq!(calls[2], ["stop", service]);
+				assert_eq!(calls[3], ["show", "--property=ActiveState,Result", service]);
+				assert_eq!(calls[4][0], "cleanup");
+				assert!(calls[4][1].contains("--filter label=podup.project=proj"));
+				assert_eq!(calls[5], ["reset-failed", service]);
+			});
+		}
+	}
+}
+
+#[test]
+fn failed_stop_without_authorised_cleanup_retains_units_and_protection() {
+	for pod in [false, true] {
+		with_env(|root| {
+			let (unit, protection, service) = fixture(root, pod);
+			let original = std::fs::read(&unit).unwrap();
+			let drop_ins = [super::super::drop_ins::DropIn {
+				service: service.to_string(),
+				contents: "# podup-owner: proj\n[Service]\nExecStopPost=\n".to_string(),
+			}];
+			super::super::drop_ins::write(&drop_ins).unwrap();
+			let sc = FakeCtl::new();
+			sc.states
+				.borrow_mut()
+				.insert(service.to_string(), ("active", "success"));
+			sc.stop_result.set("exit-code");
+			let error = super::super::stop::service(&sc, service, &drop_ins)
+				.unwrap_err()
+				.to_string();
+			assert!(
+				error.contains("no authorised project-label cleanup"),
+				"{error}"
+			);
+			assert_eq!(std::fs::read(&unit).unwrap(), original);
+			assert_eq!(
+				std::fs::read_to_string(&protection).unwrap(),
+				drop_ins[0].contents
+			);
 			assert!(!sc
 				.log()
 				.iter()

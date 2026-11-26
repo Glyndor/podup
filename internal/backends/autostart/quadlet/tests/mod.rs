@@ -100,7 +100,7 @@ struct ScriptedCtl {
 	calls: RefCell<Vec<Vec<String>>>,
 	/// Exit code for a given arg vector; 0 means success.
 	code: ExitCodeFor,
-	/// None simulates a query launch failure.
+	/// Post-stop ActiveState/Result response; None simulates a query launch failure.
 	result: Option<&'static [u8]>,
 }
 
@@ -111,7 +111,7 @@ impl ScriptedCtl {
 		ScriptedCtl {
 			calls: RefCell::new(Vec::new()),
 			code: Box::new(code),
-			result: Some(b"success\n"),
+			result: Some(b"ActiveState=inactive\nResult=success\n"),
 		}
 	}
 	fn log(&self) -> Vec<Vec<String>> {
@@ -123,12 +123,19 @@ impl SystemCtl for ScriptedCtl {
 		self.calls
 			.borrow_mut()
 			.push(args.iter().map(|s| s.to_string()).collect());
-		let stdout = if args.starts_with(&["show", "--property=Result", "--value"]) {
-			self.result
-				.ok_or_else(|| std::io::Error::other("query unavailable"))?
-				.to_vec()
-		} else if args.starts_with(&["show", "--property=ActiveState,Result"]) {
-			b"ActiveState=inactive\nResult=success\n".to_vec()
+		let stdout = if args.starts_with(&["show", "--property=ActiveState,Result"]) {
+			let stopped = self
+				.calls
+				.borrow()
+				.iter()
+				.any(|call| call == &["stop", args[2]]);
+			if stopped {
+				self.result
+					.ok_or_else(|| std::io::Error::other("query unavailable"))?
+					.to_vec()
+			} else {
+				b"ActiveState=inactive\nResult=success\n".to_vec()
+			}
 		} else {
 			Vec::new()
 		};
@@ -136,6 +143,16 @@ impl SystemCtl for ScriptedCtl {
 			status: ExitStatus::from_raw((self.code)(args) << 8),
 			stdout,
 			stderr: b"scripted failure".to_vec(),
+		})
+	}
+	fn cleanup(&self, command: &str) -> std::io::Result<Output> {
+		self.calls
+			.borrow_mut()
+			.push(vec!["cleanup".to_string(), command.to_string()]);
+		Ok(Output {
+			status: ExitStatus::from_raw((self.code)(&["cleanup", command]) << 8),
+			stdout: Vec::new(),
+			stderr: b"scripted cleanup failure".to_vec(),
 		})
 	}
 	fn loginctl(&self, _args: &[&str]) -> std::io::Result<Output> {

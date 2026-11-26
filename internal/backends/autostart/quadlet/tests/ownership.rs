@@ -366,7 +366,7 @@ fn legacy_units_are_protected_and_loaded_before_retirement_or_uninstall() {
 				assert_eq!(calls[offset + 1], ["stop", service]);
 				assert_eq!(
 					calls[offset + 2],
-					["show", "--property=Result", "--value", service]
+					["show", "--property=ActiveState,Result", service]
 				);
 			}
 		});
