@@ -234,7 +234,16 @@ fn uninstall_goes_on_past_a_drop_in_it_cannot_prove_is_its_own() {
 				std::fs::write(&path, "[Service]\n").unwrap();
 			}
 			let sc = FakeCtl::new();
-			uninstall_quadlet(&sc, "proj").unwrap();
+			let log = warnings_of(|| uninstall_quadlet(&sc, "proj").unwrap());
+			let why = if case == "link" {
+				"symbolic link"
+			} else {
+				"no podup ownership marker"
+			};
+			assert!(
+				log.contains("proj-db.service.d") && log.contains(why),
+				"{case}: {log}"
+			);
 			assert!(path.symlink_metadata().is_ok(), "{case}: it was removed");
 			for unit in ["proj-web.container", "proj-db.container"] {
 				assert!(
@@ -250,4 +259,45 @@ fn uninstall_goes_on_past_a_drop_in_it_cannot_prove_is_its_own() {
 			);
 		});
 	}
+}
+
+/// What `run` logs.
+fn warnings_of(run: impl FnOnce()) -> String {
+	let bytes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+	let writer = bytes.clone();
+	let subscriber = tracing_subscriber::fmt()
+		.without_time()
+		.with_ansi(false)
+		.with_writer(move || Sink(writer.clone()))
+		.finish();
+	tracing::subscriber::with_default(subscriber, run);
+	let text = bytes.lock().unwrap().clone();
+	String::from_utf8(text).unwrap()
+}
+
+struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Sink {
+	fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+		self.0.lock().unwrap().extend_from_slice(bytes);
+		Ok(bytes.len())
+	}
+	fn flush(&mut self) -> std::io::Result<()> {
+		Ok(())
+	}
+}
+
+#[test]
+fn a_drop_in_directory_others_can_write_is_refused_before_anything_is_written() {
+	use std::os::unix::fs::PermissionsExt;
+	super::with_env(|root| {
+		let path = drop_in(root, "proj-web.service");
+		let dir = path.parent().unwrap();
+		std::fs::create_dir_all(dir).unwrap();
+		std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+		let err = install(IMG, "proj", false).err().unwrap();
+		assert!(err.to_string().contains("writable by others"), "{err}");
+		assert!(!path.exists(), "a drop-in was written");
+		assert!(!root.join("containers/systemd/proj-web.container").exists());
+	});
 }

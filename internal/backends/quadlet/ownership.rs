@@ -76,8 +76,9 @@ fn own_container(project: &str, pattern: &str) -> String {
 
 /// The drop-in of the container service whose unit holds `unit`: the cleanup Quadlet writes, by
 /// name, is emptied and replaced by a cleanup of the container the unit started, then of the
-/// container of that name that carries the project's label. Neither line may stop the next, so both
-/// carry `-`.
+/// container of that name that carries the project's label. Every line carries `-`, so none stops
+/// the next, except the last of `ExecStop=`: a removal that really fails there fails the stop
+/// instead of passing for one that worked. Neither removal fails when there is nothing to remove.
 pub(crate) fn drop_in(project: &str, unit: &str) -> String {
 	// The one `ContainerName=` line is the one this module's units are written with; a value of
 	// the compose file cannot add a line.
@@ -85,10 +86,10 @@ pub(crate) fn drop_in(project: &str, unit: &str) -> String {
 		.lines()
 		.find_map(|line| line.strip_prefix("ContainerName="))
 		.and_then(name_pattern);
-	let mut commands = vec![format!("-{PODMAN} rm -v -f -i --cidfile={CIDFILE}")];
+	let mut commands = vec![format!("{PODMAN} rm -v -f -i --cidfile={CIDFILE}")];
 	if let Some(pattern) = pattern {
 		commands.push(format!(
-			"-{PODMAN} rm -v -f -i {}",
+			"{PODMAN} rm -v -f -i {}",
 			own_container(project, &pattern)
 		));
 	}
@@ -96,8 +97,10 @@ pub(crate) fn drop_in(project: &str, unit: &str) -> String {
 	text.push_str("[Service]\n");
 	for key in ["ExecStop", "ExecStopPost"] {
 		text.push_str(&format!("{key}=\n"));
-		for command in &commands {
-			text.push_str(&format!("{key}={command}\n"));
+		for (position, command) in commands.iter().enumerate() {
+			let reported = key == "ExecStop" && position + 1 == commands.len();
+			let prefix = if reported { "" } else { "-" };
+			text.push_str(&format!("{key}={prefix}{command}\n"));
 		}
 	}
 	text

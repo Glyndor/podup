@@ -121,7 +121,7 @@ fn the_drop_in_empties_both_cleanup_lists_then_removes_by_id_and_by_own_name() {
 		 [Service]\n\
 		 ExecStop=\n\
 		 ExecStop=-/usr/bin/podman rm -v -f -i --cidfile=%t/%N.cid\n\
-		 ExecStop=-/usr/bin/podman rm -v -f -i --filter name=^a\\\\.b$$ --filter label=podup.project=proj\n\
+		 ExecStop=/usr/bin/podman rm -v -f -i --filter name=^a\\\\.b$$ --filter label=podup.project=proj\n\
 		 ExecStopPost=\n\
 		 ExecStopPost=-/usr/bin/podman rm -v -f -i --cidfile=%t/%N.cid\n\
 		 ExecStopPost=-/usr/bin/podman rm -v -f -i --filter name=^a\\\\.b$$ --filter label=podup.project=proj\n"
@@ -132,7 +132,15 @@ fn the_drop_in_empties_both_cleanup_lists_then_removes_by_id_and_by_own_name() {
 fn the_drop_in_of_a_unit_without_a_usable_name_removes_by_id_alone() {
 	for unit in ["[Container]\nImage=x\n", "[Container]\nContainerName=a b\n"] {
 		let text = drop_in("proj", unit);
-		assert!(text.contains("--cidfile="), "{text}");
+		// The one command is the last one, so its failure is reported.
+		assert!(
+			text.contains("ExecStop=\nExecStop=/usr/bin/podman rm -v -f -i --cidfile="),
+			"{text}"
+		);
+		assert!(
+			text.contains("ExecStopPost=\nExecStopPost=-/usr/bin/podman rm -v -f -i --cidfile="),
+			"{text}"
+		);
 		assert!(!text.contains("--filter"), "{text}");
 	}
 }
