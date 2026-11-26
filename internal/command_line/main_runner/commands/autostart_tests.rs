@@ -191,7 +191,7 @@ fn uninstall_dispatch_recognises_a_lone_owned_pod_and_leaves_foreign_pods() {
 		let systemctl = root.join("systemctl");
 		std::fs::write(
 			&systemctl,
-			"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$XDG_CONFIG_HOME/calls\"\n",
+			"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$XDG_CONFIG_HOME/calls\"\ncase \"$*\" in *--property=Result*) echo success;; esac\n",
 		)
 		.unwrap();
 		std::fs::set_permissions(&systemctl, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -229,5 +229,62 @@ fn uninstall_dispatch_recognises_a_lone_owned_pod_and_leaves_foreign_pods() {
 			assert_eq!(std::fs::read_to_string(&pod).unwrap(), body);
 			assert!(!calls.contains("stop proj-pod.service"), "{calls}");
 		}
+	}
+}
+
+#[cfg(unix)]
+#[test]
+fn uninstall_dispatch_propagates_detection_failure_without_touching_services() {
+	use std::os::unix::fs::PermissionsExt;
+	for purge in [false, true] {
+		let dir = tempfile::tempdir().unwrap();
+		let root = dir.path();
+		let units = root.join("containers/systemd");
+		std::fs::create_dir_all(&units).unwrap();
+		let pod = units.join("proj.pod");
+		let body = "# podup-owner: proj\n[Pod]\nPodName=proj\n";
+		std::fs::write(&pod, body).unwrap();
+		let fifo = units.join("proj-bad.build");
+		assert!(std::process::Command::new("mkfifo")
+			.arg(&fifo)
+			.status()
+			.unwrap()
+			.success());
+		let ctl = root.join("systemctl");
+		std::fs::write(
+			&ctl,
+			"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$XDG_CONFIG_HOME/calls\"\n",
+		)
+		.unwrap();
+		std::fs::set_permissions(&ctl, std::fs::Permissions::from_mode(0o700)).unwrap();
+		temp_env::with_vars(
+			[
+				("XDG_CONFIG_HOME", Some(root.as_os_str())),
+				("PATH", Some(root.as_os_str())),
+			],
+			|| {
+				let runtime = tokio::runtime::Builder::new_current_thread()
+					.enable_all()
+					.build()
+					.unwrap();
+				let error = runtime
+					.block_on(dispatch(
+						&env(None),
+						&[],
+						"proj".to_string(),
+						root.to_path_buf(),
+						&compose_file(),
+						&AutostartCommands::Uninstall { purge },
+					))
+					.unwrap_err();
+				assert!(error.to_string().contains("proj-bad.build"), "{error}");
+			},
+		);
+		assert!(
+			!root.join("calls").exists(),
+			"neither uninstaller should run"
+		);
+		assert_eq!(std::fs::read_to_string(&pod).unwrap(), body);
+		assert!(std::fs::symlink_metadata(fifo).is_ok());
 	}
 }

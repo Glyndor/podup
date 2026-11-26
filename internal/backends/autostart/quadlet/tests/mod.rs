@@ -27,7 +27,11 @@ impl SystemCtl for FakeCtl {
 			.push(args.iter().map(|s| s.to_string()).collect());
 		Ok(Output {
 			status: ExitStatus::from_raw(0),
-			stdout: Vec::new(),
+			stdout: if args.starts_with(&["show", "--property=Result", "--value"]) {
+				b"success\n".to_vec()
+			} else {
+				Vec::new()
+			},
 			stderr: Vec::new(),
 		})
 	}
@@ -48,6 +52,8 @@ struct ScriptedCtl {
 	calls: RefCell<Vec<Vec<String>>>,
 	/// Exit code for a given arg vector; 0 means success.
 	code: ExitCodeFor,
+	/// None simulates a query launch failure.
+	result: Option<&'static [u8]>,
 }
 
 /// Decides a scripted `systemctl` call's exit code from its arguments.
@@ -57,6 +63,7 @@ impl ScriptedCtl {
 		ScriptedCtl {
 			calls: RefCell::new(Vec::new()),
 			code: Box::new(code),
+			result: Some(b"success\n"),
 		}
 	}
 	fn log(&self) -> Vec<Vec<String>> {
@@ -68,9 +75,16 @@ impl SystemCtl for ScriptedCtl {
 		self.calls
 			.borrow_mut()
 			.push(args.iter().map(|s| s.to_string()).collect());
+		let stdout = if args.starts_with(&["show", "--property=Result", "--value"]) {
+			self.result
+				.ok_or_else(|| std::io::Error::other("query unavailable"))?
+				.to_vec()
+		} else {
+			Vec::new()
+		};
 		Ok(Output {
 			status: ExitStatus::from_raw((self.code)(args) << 8),
-			stdout: Vec::new(),
+			stdout,
 			stderr: b"scripted failure".to_vec(),
 		})
 	}
@@ -105,8 +119,10 @@ const IMG_MULTI: &str =
 const BASE: &str = "/srv/app";
 
 mod install;
+mod oversized;
 mod ownership;
 mod rebuild;
+mod stop_result;
 mod uninstall;
 // #1970: prebuilt-shape install + rebuild behaviour. Split into its own
 // module so the per-file code-line cap stays under 500.

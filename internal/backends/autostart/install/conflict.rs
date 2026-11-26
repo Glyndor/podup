@@ -17,29 +17,38 @@ use super::super::paths::{config_home, unit_dir, unit_file_name};
 /// existing Quadlet install is a conflict to surface, not to silently overwrite.
 /// Looks for `<project>-*.container` and owned Quadlet units (including a lone `.pod`) under
 /// `${XDG_CONFIG_HOME:-~/.config}/containers/systemd/`.
-pub(in super::super) fn quadlet_units_present(project: &str) -> Vec<PathBuf> {
+pub(in super::super) fn quadlet_units_present(project: &str) -> crate::Result<Vec<PathBuf>> {
 	let dir = config_home().join("containers").join("systemd");
 	let prefix = format!("{project}-");
-	let mut found = Vec::new();
-	if let Ok(entries) = std::fs::read_dir(&dir) {
-		for entry in entries.flatten() {
-			let name = entry.file_name();
-			let name = name.to_string_lossy();
-			if name.starts_with(&prefix) && name.ends_with(".container") {
-				found.push(entry.path());
-			}
+	let mut found = super::super::quadlet::installed_units(project)?;
+	let cannot = |e| {
+		ComposeError::Autostart(format!(
+			"cannot enumerate quadlet units in {}: {e}",
+			dir.display()
+		))
+	};
+	let entries = match std::fs::read_dir(&dir) {
+		Ok(entries) => entries,
+		Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(found),
+		Err(e) => return Err(cannot(e)),
+	};
+	for entry in entries {
+		let entry = entry.map_err(cannot)?;
+		let name = entry.file_name();
+		let name = name.to_string_lossy();
+		if name.starts_with(&prefix) && name.ends_with(".container") {
+			found.push(entry.path());
 		}
 	}
-	found.extend(super::super::quadlet::installed_units(project).unwrap_or_default());
 	found.sort();
 	found.dedup();
-	found
+	Ok(found)
 }
 
 /// Refuse to stack a single-unit mode on top of an existing Quadlet autostart
 /// install for the same project: both would start the stack at boot.
 pub(in super::super) fn refuse_if_quadlet_present(project: &str) -> crate::Result<()> {
-	let quadlet = quadlet_units_present(project);
+	let quadlet = quadlet_units_present(project)?;
 	if quadlet.is_empty() {
 		return Ok(());
 	}

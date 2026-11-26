@@ -22,12 +22,12 @@ pub enum InstalledMode {
 }
 
 /// Detect the installed autostart mode for `project` from what is on disk.
-pub fn installed_mode(project: &str) -> InstalledMode {
-	if unit_path(project).exists() {
+pub fn installed_mode(project: &str) -> crate::Result<InstalledMode> {
+	Ok(if unit_path(project).exists() {
 		InstalledMode::Service
-	} else if !conflict::quadlet_units_present(project).is_empty() {
+	} else if !conflict::quadlet_units_present(project)?.is_empty() {
 		InstalledMode::Quadlet
 	} else {
 		InstalledMode::None
-	}
+	})
 }

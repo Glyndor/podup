@@ -95,54 +95,64 @@ pub(in super::super::super) fn installed_units(project: &str) -> crate::Result<V
 	// carry the prefix the other units do.
 	let pod = format!("{project}.pod");
 	let mut found = Vec::new();
-	if let Ok(entries) = std::fs::read_dir(&dir) {
-		for entry in entries.flatten() {
-			let path = entry.path();
-			let name = entry.file_name().to_string_lossy().into_owned();
-			if !(name.starts_with(&prefix) || name == pod) || !has_unit_suffix(&name) {
+	let cannot = |e| {
+		ComposeError::Autostart(format!(
+			"cannot enumerate quadlet units in {}: {e}",
+			dir.display()
+		))
+	};
+	let entries = match std::fs::read_dir(&dir) {
+		Ok(entries) => entries,
+		Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(found),
+		Err(e) => return Err(cannot(e)),
+	};
+	for entry in entries {
+		let entry = entry.map_err(cannot)?;
+		let path = entry.path();
+		let name = entry.file_name().to_string_lossy().into_owned();
+		if !(name.starts_with(&prefix) || name == pod) || !has_unit_suffix(&name) {
+			continue;
+		}
+		// `DirEntry::file_type` does not follow a link.
+		match entry.file_type() {
+			Ok(ty) if ty.is_file() => {}
+			Ok(ty) if ty.is_dir() || ty.is_symlink() => {
+				tracing::warn!(
+					"{} is a {}, not a unit file podup wrote; leaving it alone",
+					path.display(),
+					if ty.is_dir() { "directory" } else { "link" }
+				);
 				continue;
 			}
-			// `DirEntry::file_type` does not follow a link.
-			match entry.file_type() {
-				Ok(ty) if ty.is_file() => {}
-				Ok(ty) if ty.is_dir() || ty.is_symlink() => {
-					tracing::warn!(
-						"{} is a {}, not a unit file podup wrote; leaving it alone",
-						path.display(),
-						if ty.is_dir() { "directory" } else { "link" }
-					);
-					continue;
-				}
-				_ => {
-					return Err(ComposeError::Autostart(format!(
-						"cannot read the quadlet unit {}: it is not a regular file (a pipe, \
+			_ => {
+				return Err(ComposeError::Autostart(format!(
+					"cannot read the quadlet unit {}: it is not a regular file (a pipe, \
 						 device or socket); remove it by hand",
-						path.display()
-					)));
-				}
+					path.display()
+				)));
 			}
-			match unit_owner(&path) {
-				Ok(Some(owner)) if owner == project => found.push(path),
-				// A sibling project's unit that happens to share this filename
-				// prefix (e.g. `app-extra-web.container` when `project` is `app`);
-				// the marker proves it is not ours, so it is left untouched.
-				Ok(Some(_)) => {}
-				Ok(None) => {
-					tracing::warn!(
-						"quadlet unit {} has no podup-owner ownership marker and cannot be \
+		}
+		match unit_owner(&path) {
+			Ok(Some(owner)) if owner == project => found.push(path),
+			// A sibling project's unit that happens to share this filename
+			// prefix (e.g. `app-extra-web.container` when `project` is `app`);
+			// the marker proves it is not ours, so it is left untouched.
+			Ok(Some(_)) => {}
+			Ok(None) => {
+				tracing::warn!(
+					"quadlet unit {} has no podup-owner ownership marker and cannot be \
 						 proven to belong to '{project}'; skipping it rather than risking a \
 						 sibling project's unit; re-run `podup autostart install --mode quadlet` \
 						 to re-mark it, or remove it by hand if it is stale",
-						path.display()
-					);
-				}
-				Err(e) => {
-					tracing::warn!(
-						"cannot read the quadlet unit {}: {e}; it cannot be proven to belong to \
+					path.display()
+				);
+			}
+			Err(e) => {
+				tracing::warn!(
+					"cannot read the quadlet unit {}: {e}; it cannot be proven to belong to \
 						 '{project}', so it is left alone",
-						path.display()
-					);
-				}
+					path.display()
+				);
 			}
 		}
 	}

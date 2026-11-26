@@ -38,6 +38,24 @@ fn container_services(units: &[quadlet::QuadletUnit]) -> Vec<String> {
 		.collect()
 }
 
+/// A completed stop job can still leave a failed ExecStop or ExecStopPost.
+fn stop_service<S: SystemCtl>(sc: &S, service: &str) -> crate::Result<()> {
+	checked(sc.systemctl(&["stop", service]), &format!("stop {service}"))?;
+	let out = sc
+		.systemctl(&["show", "--property=Result", "--value", service])
+		.map_err(|e| ComposeError::Autostart(format!("cannot query Result for {service}: {e}")))?;
+	let result = String::from_utf8_lossy(&out.stdout);
+	if !out.status.success() || result.trim() != "success" {
+		return Err(ComposeError::Autostart(format!(
+			"stop {service}: Result={:?}, query status {}; {}",
+			result.trim(),
+			out.status,
+			String::from_utf8_lossy(&out.stderr).trim()
+		)));
+	}
+	Ok(())
+}
+
 /// Build the lines `--dry-run` prints: every unit file (as `# <filename>` plus
 /// its verbatim body), then a blank line, then the meta lines that describe
 /// what the install would otherwise have invoked on the user manager. Split
@@ -125,7 +143,7 @@ fn retire_obsolete_units<S: SystemCtl>(
 		// Stop the service while its unit still exists, so the container or the
 		// pod it runs does not stay up with nothing left to manage it.
 		if let Some(service) = drop_ins::service_of(name) {
-			checked(sc.systemctl(&["stop", &service]), "stop")?;
+			stop_service(sc, &service)?;
 		}
 		std::fs::remove_file(path).map_err(|e| drop_ins::cannot("remove", path, e))?;
 		retired = true;
@@ -315,10 +333,7 @@ pub fn install_quadlet<S: SystemCtl>(
 /// its `<project>-*` unit files, and reload the user manager. Idempotent: a
 /// service that was never started, or a file already gone, is not an error.
 ///
-/// A service that *is* running and refuses to stop is a different matter: the
-/// unit files are still removed and the manager still reloaded, but the failure
-/// is returned, so uninstall cannot report success while a container keeps
-/// running.
+/// A failed stop or cleanup retains the units and their protection for retry.
 pub fn uninstall_quadlet<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
 	let units = installed_units(project)?;
 	let protection = drop_ins::existing(project, &units)?;
@@ -346,12 +361,15 @@ pub fn uninstall_quadlet<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<(
 				// calls a failure, so a stack caught mid-start, or one sitting in
 				// `activating (auto-restart)`, would be skipped and left running
 				// while uninstall deleted its units and reported success.
-				if let Err(e) = checked(sc.systemctl(&["stop", &service]), "stop") {
+				if let Err(e) = stop_service(sc, &service) {
 					tracing::warn!("{e}");
 					first_err.get_or_insert(e);
 				}
 			}
 		}
+	}
+	if let Some(e) = first_err {
+		return Err(e);
 	}
 	let mut removed = 0usize;
 	for path in &units {
@@ -370,7 +388,7 @@ pub fn uninstall_quadlet<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<(
 		crate::ui::errln!("podup: no quadlet autostart units for '{project}' (already removed)")?;
 	}
 	checked(sc.systemctl(&["daemon-reload"]), "daemon-reload")?;
-	first_err.map_or(Ok(()), Err)
+	Ok(())
 }
 
 /// Rebuild one or all built images of a quadlet-mode install. A `.build` unit is

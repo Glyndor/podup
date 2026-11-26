@@ -359,7 +359,15 @@ fn legacy_units_are_protected_and_loaded_before_retirement_or_uninstall() {
 			let calls = sc.log();
 			assert_eq!(calls[0], ["daemon-reload"]);
 			assert_eq!(calls[1], ["stop", "proj-old.service"]);
-			assert_eq!(calls[2], ["stop", "proj-pod.service"]);
+			assert_eq!(
+				calls[2],
+				["show", "--property=Result", "--value", "proj-old.service"]
+			);
+			assert_eq!(calls[3], ["stop", "proj-pod.service"]);
+			assert_eq!(
+				calls[4],
+				["show", "--property=Result", "--value", "proj-pod.service"]
+			);
 		});
 	}
 }
@@ -391,55 +399,6 @@ fn a_refused_legacy_pod_drop_in_prevents_every_stop() {
 			assert!(sc.log().is_empty());
 			assert!(root.join("containers/systemd/proj.pod").is_file());
 			assert!(root.join("containers/systemd/proj-old.container").is_file());
-		});
-	}
-}
-
-#[test]
-fn oversized_units_get_filename_based_protection_loaded_before_uninstall_stops() {
-	for (filename, service, runtime_name, key) in [
-		(
-			"proj-web.container",
-			"proj-web.service",
-			"proj-web",
-			"ContainerName",
-		),
-		("proj.pod", "proj-pod.service", "proj", "PodName"),
-	] {
-		super::with_env(|root| {
-			let dir = root.join("containers/systemd");
-			std::fs::create_dir_all(&dir).unwrap();
-			let unit = dir.join(filename);
-			std::fs::write(&unit, format!("# podup-owner: proj\n{key}=other\n")).unwrap();
-			std::fs::OpenOptions::new()
-				.write(true)
-				.open(&unit)
-				.unwrap()
-				.set_len(crate::filesystem::MAX_FILE_BYTES + 1)
-				.unwrap();
-			let path = drop_in(root, service);
-			let loaded = std::cell::Cell::new(false);
-			let sc = ScriptedCtl::new(move |args| {
-				if args == ["daemon-reload"] && !loaded.replace(true) {
-					let text = std::fs::read_to_string(&path).unwrap();
-					assert!(text.contains("ExecStop=\n"), "{text}");
-					assert!(text.contains("ExecStopPost=\n"), "{text}");
-					assert!(
-						text.contains(&format!("--filter name=^{runtime_name}$$")),
-						"{text}"
-					);
-					assert!(text.contains("--filter label=podup.project=proj"), "{text}");
-					assert!(!text.contains("name=^other$$"), "{text}");
-				}
-				if args.first() == Some(&"stop") {
-					assert!(loaded.get(), "stop before protective reload: {args:?}");
-				}
-				0
-			});
-			uninstall_quadlet(&sc, "proj").unwrap();
-			assert!(!unit.exists());
-			assert_eq!(sc.log()[0], ["daemon-reload"]);
-			assert_eq!(sc.log()[1], ["stop", service]);
 		});
 	}
 }

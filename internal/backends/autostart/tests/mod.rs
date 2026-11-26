@@ -75,6 +75,7 @@ impl SystemCtl for FakeCtl {
 		let stdout = match args.first().copied() {
 			Some("is-active") => self.is_active.as_str(),
 			Some("is-enabled") => self.is_enabled.as_str(),
+			Some("show") if args.get(1) == Some(&"--property=Result") => "success\n",
 			Some("show") => self.show_load_state.as_str(),
 			_ => "",
 		};

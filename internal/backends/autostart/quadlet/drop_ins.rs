@@ -94,10 +94,7 @@ pub(super) fn existing(project: &str, paths: &[PathBuf]) -> crate::Result<Vec<Dr
 				.len()
 				> crate::filesystem::MAX_FILE_BYTES
 			{
-				// A generated unit can exceed the input limit. Do not parse a truncated
-				// body: confirm its owner from a bounded header and use only its filename
-				// for label-filtered cleanup. The drop-in also clears Quadlet's unsafe
-				// cleanup by name and retains cleanup by the recorded runtime ID.
+				// Only complete lines of the bounded header can supply a legacy runtime name.
 				let head = crate::filesystem::read_head_capped(path, 4096)
 					.map_err(|e| cannot("read", path, e))?;
 				if !head.starts_with(format!("# podup-owner: {project}\n").as_bytes()) {
@@ -106,23 +103,32 @@ pub(super) fn existing(project: &str, paths: &[PathBuf]) -> crate::Result<Vec<Dr
 						path.display()
 					)));
 				}
-				let (key, stem) = if let Some(stem) = name.strip_suffix(".container") {
-					("ContainerName", stem)
-				} else if let Some(stem) = name.strip_suffix(".pod") {
-					("PodName", stem)
+				let key = if name.ends_with(".container") {
+					"ContainerName="
 				} else {
-					continue;
+					"PodName="
 				};
-				// A filename cannot inject directives into the synthetic unit. When it
-				// is not a runtime name, keep only the ID-based protection.
-				if stem
-					.chars()
-					.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
-				{
-					format!("{key}={stem}\n")
-				} else {
-					String::new()
-				}
+				let head = String::from_utf8_lossy(&head);
+				let identity = head
+					.split_inclusive('\n')
+					.filter(|line| line.ends_with('\n'))
+					.find_map(|line| line.trim_end_matches(['\r', '\n']).strip_prefix(key))
+					.filter(|value| {
+						value
+							.as_bytes()
+							.first()
+							.is_some_and(u8::is_ascii_alphanumeric)
+							&& value.bytes().all(|c| {
+								c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'-')
+							})
+					})
+					.ok_or_else(|| {
+						ComposeError::Autostart(format!(
+							"cannot protect {}: no usable {key} in complete bounded header lines",
+							path.display()
+						))
+					})?;
+				format!("{key}{identity}\n")
 			} else {
 				crate::filesystem::read_to_string_capped(path)
 					.map_err(|e| cannot("read", path, e))?
