@@ -105,6 +105,7 @@ const IMG_MULTI: &str =
 const BASE: &str = "/srv/app";
 
 mod install;
+mod ownership;
 mod rebuild;
 mod uninstall;
 // #1970: prebuilt-shape install + rebuild behaviour. Split into its own

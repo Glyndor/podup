@@ -16,6 +16,21 @@ pub(super) fn create(dir: &Path) -> io::Result<()> {
 }
 
 pub(super) fn require_private(dir: &Path) -> io::Result<()> {
+	check_private(dir)?;
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::MetadataExt;
+		if std::fs::metadata(dir)?.mode() & 0o020 != 0 {
+			let shown = crate::ui::sanitize_cell(&dir.display().to_string());
+			crate::ui::errln!("podup: warning: unit directory {shown} is writable by its group; members of the group can replace the units")?;
+		}
+	}
+	Ok(())
+}
+
+/// Create `dir` if it is missing and refuse one that is not safe to write units into, without the
+/// group warning: for a caller that checks several directories before it writes into any of them.
+pub(super) fn check_private(dir: &Path) -> io::Result<()> {
 	create(dir)?;
 	#[cfg(unix)]
 	{
@@ -44,10 +59,6 @@ pub(super) fn require_private(dir: &Path) -> io::Result<()> {
 					crate::ui::sanitize_cell(&dir.display().to_string())
 				),
 			));
-		}
-		if meta.mode() & 0o020 != 0 {
-			let shown = crate::ui::sanitize_cell(&dir.display().to_string());
-			crate::ui::errln!("podup: warning: unit directory {shown} is writable by its group; members of the group can replace the units")?;
 		}
 	}
 	Ok(())

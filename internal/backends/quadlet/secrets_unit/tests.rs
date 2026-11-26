@@ -229,16 +229,17 @@ fn a_service_with_the_units_name_keeps_its_own_unit() {
 		.any(|u| u.filename == "proj-podup-secrets.container"));
 }
 
-// --- what `autostart --mode quadlet` installs does not change ------------------
+// --- what `autostart --mode quadlet` installs ----------------------------------
 
 /// A stack that starts under `autostart --mode quadlet` today must keep
 /// starting. Its units are generated in the prebuilt shape, which has no secrets
 /// unit yet (nothing there would install it), so the secrets unit, the
 /// `Requires=` on it and the mounted configs stay out of it. The golden text is
 /// what `podup autostart install --mode quadlet --dry-run` printed on `develop`
-/// at 67ae1b9b for the same file (units, then warnings, in order), taken before
-/// this change. A secret with a file source, an inline one, an external one and
-/// two configs are all in it.
+/// at 67ae1b9b for the same file (units, then warnings, in order), plus the lines
+/// that keep an installed container unit off a container it does not own. A secret
+/// with a file source, an inline one, an external one and two configs are all in
+/// it.
 #[test]
 fn the_units_autostart_installs_are_the_ones_it_installed_before() {
 	// Parsed the way the command parses it, which adds the project's default
@@ -337,6 +338,11 @@ LogOpt=max-size=10485760
 Secret=proj_secret_filesec
 Secret=proj_secret_inl,target=inline.txt,mode=400
 Secret=extsec
+PodmanArgs=--replace=false
+PodmanArgs=--cidfile=%t/%N.cid
+
+[Service]
+ExecStartPre=-/usr/bin/podman rm --force --ignore --filter name=^proj-web$$ --filter label=podup.project=proj
 
 [Install]
 WantedBy=default.target
@@ -354,6 +360,11 @@ Label=podup.service=worker
 LogDriver=k8s-file
 LogOpt=max-size=10485760
 Secret=proj_secret_filesec
+PodmanArgs=--replace=false
+PodmanArgs=--cidfile=%t/%N.cid
+
+[Service]
+ExecStartPre=-/usr/bin/podman rm --force --ignore --filter name=^proj-worker$$ --filter label=podup.project=proj
 
 [Install]
 WantedBy=default.target

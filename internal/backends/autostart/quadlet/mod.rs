@@ -14,11 +14,12 @@ use std::path::{Path, PathBuf};
 use crate::compose::types::ComposeFile;
 use crate::{quadlet, ComposeError};
 
+mod drop_ins;
 mod installed;
 pub(in super::super) use installed::installed_units;
 
 use super::guards::emit_guards;
-use super::paths::{config_home, unit_path};
+use super::paths::{config_home, unit_dir, unit_path};
 use super::systemctl::{checked, SystemCtl};
 
 /// `${XDG_CONFIG_HOME:-~/.config}/containers/systemd/`, where Quadlet reads a
@@ -43,8 +44,9 @@ fn container_services(units: &[quadlet::QuadletUnit]) -> Vec<String> {
 /// out of [`install_quadlet`] so a regression in the wording (the exact
 /// `# would run: systemctl --user restart ...` line in particular) can be
 /// pinned in a unit test that does not have to capture stdout.
-pub(super) fn dry_run_plan(
+fn dry_run_plan(
 	units: &[quadlet::QuadletUnit],
+	drop_ins: &[drop_ins::DropIn],
 	dir: &Path,
 	services: &[String],
 	build_services: &[String],
@@ -57,12 +59,25 @@ pub(super) fn dry_run_plan(
 			lines.push(body.to_string());
 		}
 	}
+	for drop_in in drop_ins {
+		lines.push(format!("# {}", drop_in.relative()));
+		for body in drop_in.contents.lines() {
+			lines.push(body.to_string());
+		}
+	}
 	lines.push(String::new());
 	lines.push(format!(
 		"# would write {} unit(s) to {}",
 		units.len(),
 		dir.display()
 	));
+	if !drop_ins.is_empty() {
+		lines.push(format!(
+			"# would write {} drop-in(s) under {}",
+			drop_ins.len(),
+			unit_dir().display()
+		));
+	}
 	lines.push("# would run: systemctl --user daemon-reload".to_string());
 	// The build run is its own step: the container start depends on the
 	// local image existing, and `--dry-run` must show both lines so an
@@ -116,6 +131,9 @@ fn retire_obsolete_units<S: SystemCtl>(
 			ComposeError::Autostart(format!("cannot remove {}: {e}", path.display()))
 		})?;
 		crate::ui::errln!("podup: removed the obsolete unit {}", path.display())?;
+		if let Some(stem) = name.strip_suffix(".container") {
+			drop_ins::remove(project, &format!("{stem}.service"))?;
+		}
 	}
 	Ok(())
 }
@@ -192,23 +210,39 @@ pub fn install_quadlet<S: SystemCtl>(
 		// keeps the two paths aligned on a single `rebuild` call shape.
 		.map(|u| format!("{}-build.service", u.filename.trim_end_matches(".build")))
 		.collect();
+	let drop_ins = drop_ins::plan(project, &result.units);
 	emit_guards(sc);
 
 	if dry_run {
-		let plan = dry_run_plan(&result.units, &dir, &services, &build_services, no_start);
+		let plan = dry_run_plan(
+			&result.units,
+			&drop_ins,
+			&dir,
+			&services,
+			&build_services,
+			no_start,
+		);
 		for line in &plan {
 			crate::ui::outln!("{line}")?;
 		}
 		return Ok(());
 	}
 
-	let written = quadlet::write_autostart_units(&dir, &result.units).map_err(|e| {
+	let unwritable = |e: std::io::Error| {
 		ComposeError::Autostart(format!(
 			"cannot write quadlet units to {}: {e}",
 			dir.display()
 		))
-	})?;
-	for path in &written {
+	};
+	// Both destinations, directories included, are checked before either is written, so a refusal
+	// leaves nothing behind. The drop-ins go first: a unit that says `--replace=false` without its
+	// drop-in still cleans up by name.
+	crate::backends::unit_directory::check_private(&dir).map_err(unwritable)?;
+	quadlet::check_unit_owners(&dir, &result.units).map_err(unwritable)?;
+	drop_ins::check(project, &drop_ins)?;
+	let written_drop_ins = drop_ins::write(&drop_ins)?;
+	let written = quadlet::write_autostart_units(&dir, &result.units).map_err(unwritable)?;
+	for path in written.iter().chain(&written_drop_ins) {
 		crate::ui::errln!("podup: wrote {}", path.display())?;
 	}
 
@@ -314,6 +348,13 @@ pub fn uninstall_quadlet<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<(
 		})?;
 		crate::ui::errln!("podup: removed {}", path.display())?;
 		removed += 1;
+		if let Some(stem) = path
+			.file_name()
+			.and_then(|n| n.to_str())
+			.and_then(|n| n.strip_suffix(".container"))
+		{
+			drop_ins::remove(project, &format!("{stem}.service"))?;
+		}
 	}
 	if removed == 0 {
 		crate::ui::errln!("podup: no quadlet autostart units for '{project}' (already removed)")?;
