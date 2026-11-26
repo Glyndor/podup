@@ -106,7 +106,7 @@ podup is not a sandbox. The points below are documented limits an operator or au
 
 ## What the live integration lane validates
 
-The `podman-lane` workflow boots a Fedora rawhide qemu VM in the runner with full systemd; rawhide carries the newest Podman. The VM runs the integration suite as a rootless user. The lane is a **required status check** on every pull request; runtime-irrelevant PRs skip VM boot. The `.github/podman_lane/known-failures-<major>` file for the Podman major the VM booted classifies the failures the lane still sees; any test that fails without appearing on that list is reported as an unexpected regression.
+The `podman-lane` workflow runs the integration suite as a rootless user in two places. A pull request and the merge queue run it on the runner against the Podman that apt.glyndor.net serves, and skip it for changes that cannot affect runtime behaviour. The schedule and a manual dispatch boot a Fedora rawhide qemu VM in the runner with full systemd, which carries the newest Podman; the schedule also runs the runner leg once a day. The lane's `Supported Podman majors` check is **required**. The `.github/podman_lane/known-failures-<major>` file for the Podman major the VM booted classifies the failures the lane still sees; any test that fails without appearing on that list is reported as an unexpected regression.
 
 Unit/mocked tests cannot establish every libpod behavior; live tests and fuzzing add evidence, not exhaustive coverage.
 

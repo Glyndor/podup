@@ -86,7 +86,7 @@ PY
 
 This checks only `podup-linux-x86_64` and fails if its manifest row or local file is missing, or its digest differs. On macOS, replace `sha256sum --check --strict` with `shasum -a 256 -c`.
 
-Each artifact has a signed CycloneDX SBOM; `NOTICES.html` is also signed. Debian package SBOMs currently use GNU targets although the packaged binaries use musl, so their target-specific dependency lists do not match.
+Each artifact has a signed CycloneDX SBOM; `NOTICES.html` is also signed. The SBOM of each Debian package is made for the musl target and the features that `debian/rules` builds it with; releases published before that changed carry Debian SBOMs made for GNU targets.
 
 ## Air-gapped installation
 
