@@ -13,17 +13,19 @@
 
 mod exported_names;
 mod jobs;
+mod ownership;
 /// Entry point for the fuzz harness, compiled only under `test-helpers`.
 #[cfg(feature = "test-helpers")]
 pub(crate) use jobs::fuzz_hook;
 pub use jobs::stale_timers;
+pub(crate) use ownership::{drop_in, DROP_IN_NAME};
 #[cfg(test)]
 mod floor;
 #[cfg(test)]
 pub(crate) use floor::min_podman;
 mod publishing;
-pub(crate) use publishing::write_autostart_units;
 pub use publishing::write_units;
+pub(crate) use publishing::{check_unit_owners, write_autostart_units};
 mod render;
 mod secrets_unit;
 mod unit;
@@ -529,6 +531,10 @@ fn generate_with_mode(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "ownership_tests.rs"]
+mod ownership_tests;
 
 #[cfg(test)]
 #[path = "exported_names_tests.rs"]
