@@ -50,6 +50,22 @@ jobs:
       version: ${{ steps.pin.outputs.version }}
       tag: ${{ steps.pin.outputs.tag }}
     steps:
+      # A real release is started by the push of its tag or by a dispatch from that tag. A dispatch from `main`
+      # with the tag typed in checks out the right commit, so every check below passes, but the attestation of
+      # what it builds names `refs/heads/main` and the signer, which asks for the tag, refuses the provenance
+      # after every build has run. It is refused here, before the checkout, from the ref of the run alone. A
+      # rehearsal makes no attestation and may start from `main`.
+      - name: A real release runs from its tag
+        if: ${{ !inputs.dry_run }}
+        env:
+          TAG: ${{ inputs.tag }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/tags/$TAG" ]; then
+            echo "::error::${TAG} is not the tag this run started from (${REF}); start a real release from its tag."
+            exit 1
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         # No credential is left in the checkout, and the fetches this job makes
         # (the tag, `main`) are of a public repository and need none. It installs
