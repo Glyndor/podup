@@ -252,6 +252,15 @@ MUTANTS["the-container-job-trusts-the-workspace-too-late"] = bld(lambda m: m["jo
     m["jobs"]["build-deb"]["steps"].pop(m["jobs"]["build-deb"]["steps"].index(step(m, "build-deb", "Trust the workspace")))))
 
 # --- no shared cache ------------------------------------------------------------------------------
+def sbom_call(m, old, new):
+    s = step(m, "sbom", "gen_sbom")
+    assert old in s["run"]
+    s["run"] = s["run"].replace(old, new, 1)
+
+
+MUTANTS["the-deb-sbom-is-made-for-gnu"] = bld(lambda m: sbom_call(m, 'amd64.deb" x86_64-unknown-linux-musl', 'amd64.deb" x86_64-unknown-linux-gnu'))
+MUTANTS["the-deb-sbom-loses-the-features"] = bld(lambda m: sbom_call(m, "--features watch,completions", "--features watch"))
+MUTANTS["the-deb-sbom-of-arm64-is-not-made"] = bld(lambda m: sbom_call(m, 'gen_sbom "podup_${VERSION}_arm64.deb"', ': "podup_${VERSION}_arm64.deb"'))
 CACHE = {"name": "cache", "uses": "actions/cache@0000000000000000000000000000000000000000", "with": {"path": "target", "key": "k"}}
 for _j in ("build", "build-deb", "build-rpm", "build-pacman", "sbom"):
     MUTANTS[f"reusable-{_j}-restores-a-cache"] = bld((lambda j: lambda m: m["jobs"][j]["steps"].insert(1, dict(CACHE)))(_j))
