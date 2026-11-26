@@ -342,7 +342,7 @@ PodmanArgs=--replace=false
 PodmanArgs=--cidfile=%t/%N.cid
 
 [Service]
-ExecStartPre=-podman rm --force --ignore --filter name=^proj-web$$ --filter label=podup.project=proj
+ExecStartPre=-/usr/bin/podman rm --force --ignore --filter name=^proj-web$$ --filter label=podup.project=proj
 
 [Install]
 WantedBy=default.target
@@ -364,7 +364,7 @@ PodmanArgs=--replace=false
 PodmanArgs=--cidfile=%t/%N.cid
 
 [Service]
-ExecStartPre=-podman rm --force --ignore --filter name=^proj-worker$$ --filter label=podup.project=proj
+ExecStartPre=-/usr/bin/podman rm --force --ignore --filter name=^proj-worker$$ --filter label=podup.project=proj
 
 [Install]
 WantedBy=default.target

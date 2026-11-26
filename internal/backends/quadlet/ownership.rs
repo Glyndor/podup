@@ -10,9 +10,13 @@
 //! * before the start, the leftover of this project's own container is removed, by name and by the
 //!   `podup.project` label together, which leaves a container of anyone else where it is;
 //! * a drop-in for the generated service replaces the cleanup by name with a cleanup of the ID the
-//!   start wrote to `--cidfile`, in the user's runtime directory. A drop-in is the only place that
-//!   works: Quadlet writes its own `ExecStop=` lines after the ones of the unit's `[Service]`
-//!   section, and systemd reads the drop-ins of a service after the unit.
+//!   start wrote to `--cidfile`, in the user's runtime directory, followed by a cleanup by name that
+//!   takes only a container carrying this project's label. The second is what stops, with its stop
+//!   signal and timeout, a container that has no recorded ID: one an older podup started and the
+//!   reinstall left running, or the one of a unit without the lines above that the drop-in outlives.
+//!   A drop-in is the only place that works: Quadlet writes its own `ExecStop=` lines after the
+//!   ones of the unit's `[Service]` section, and systemd reads the drop-ins of a service after the
+//!   unit.
 //!
 //! `generate quadlet` writes the units as Quadlet reads them and carries none of this: its output is
 //! files in a directory of the user's choosing, with no place for a drop-in.
@@ -26,6 +30,10 @@ pub(crate) const DROP_IN_NAME: &str = "50-podup-ownership.conf";
 /// The file the start writes the container ID to: the user's runtime directory, one per unit. The
 /// two specifiers are systemd's, expanded when the service runs.
 const CIDFILE: &str = "%t/%N.cid";
+
+/// The Podman the lines run: the path Quadlet writes into the units it generates, so the cleanup and
+/// the start talk to the same one whatever `PATH` the user manager has.
+const PODMAN: &str = "/usr/bin/podman";
 
 /// The lines of an installed container unit that stop it from replacing a container it does not own.
 pub(super) fn emit(
@@ -41,8 +49,8 @@ pub(super) fn emit(
 		service.add(
 			"ExecStartPre",
 			format!(
-				"-podman rm --force --ignore --filter name={pattern} \
-				 --filter label=podup.project={project}"
+				"-{PODMAN} rm --force --ignore {}",
+				own_container(project, &pattern)
 			),
 		);
 	}
@@ -61,16 +69,36 @@ fn name_pattern(name: &str) -> Option<String> {
 	Some(format!("^{}$$", name.replace('.', "\\\\.")))
 }
 
-/// The drop-in of one container service of `project`: the cleanup Quadlet writes, by name, is
-/// emptied and replaced by a cleanup of the container this unit started.
-pub(crate) fn drop_in(project: &str) -> String {
+/// The filters that name the container matching `pattern` only when it is `project`'s.
+fn own_container(project: &str, pattern: &str) -> String {
+	format!("--filter name={pattern} --filter label=podup.project={project}")
+}
+
+/// The drop-in of the container service whose unit holds `unit`: the cleanup Quadlet writes, by
+/// name, is emptied and replaced by a cleanup of the container the unit started, then of the
+/// container of that name that carries the project's label. Neither line may stop the next, so both
+/// carry `-`.
+pub(crate) fn drop_in(project: &str, unit: &str) -> String {
+	// The one `ContainerName=` line is the one this module's units are written with; a value of
+	// the compose file cannot add a line.
+	let pattern = unit
+		.lines()
+		.find_map(|line| line.strip_prefix("ContainerName="))
+		.and_then(name_pattern);
+	let mut commands = vec![format!("-{PODMAN} rm -v -f -i --cidfile={CIDFILE}")];
+	if let Some(pattern) = pattern {
+		commands.push(format!(
+			"-{PODMAN} rm -v -f -i {}",
+			own_container(project, &pattern)
+		));
+	}
 	let mut text = owner_marker(project);
-	text.push_str(&format!(
-		"[Service]\n\
-		 ExecStop=\n\
-		 ExecStop=podman rm -v -f -i --cidfile={CIDFILE}\n\
-		 ExecStopPost=\n\
-		 ExecStopPost=-podman rm -v -f -i --cidfile={CIDFILE}\n"
-	));
+	text.push_str("[Service]\n");
+	for key in ["ExecStop", "ExecStopPost"] {
+		text.push_str(&format!("{key}=\n"));
+		for command in &commands {
+			text.push_str(&format!("{key}={command}\n"));
+		}
+	}
 	text
 }

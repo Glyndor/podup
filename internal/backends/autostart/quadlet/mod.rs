@@ -234,9 +234,10 @@ pub fn install_quadlet<S: SystemCtl>(
 			dir.display()
 		))
 	};
-	// Both destinations are checked before either is written, so a refusal leaves nothing behind.
-	// The drop-ins go first: a unit that says `--replace=false` without its drop-in still cleans up
-	// by name.
+	// Both destinations, directories included, are checked before either is written, so a refusal
+	// leaves nothing behind. The drop-ins go first: a unit that says `--replace=false` without its
+	// drop-in still cleans up by name.
+	crate::backends::unit_directory::check_private(&dir).map_err(unwritable)?;
 	quadlet::check_unit_owners(&dir, &result.units).map_err(unwritable)?;
 	drop_ins::check(project, &drop_ins)?;
 	let written_drop_ins = drop_ins::write(&drop_ins)?;

@@ -3,8 +3,8 @@
 //! cleanup of the container the unit started; see [`crate::quadlet::drop_in`] for what it holds.
 //!
 //! A drop-in is podup's only when its first line is the ownership marker of the project, the same
-//! mark the units carry. One that is someone else's, or not a regular file, is refused before
-//! anything is written, and left alone when units are removed.
+//! mark the units carry. One that is someone else's, carries no marker, or is not a regular file, is
+//! refused before anything is written, and left alone, with a warning, when units are removed.
 
 use std::path::{Path, PathBuf};
 
@@ -42,10 +42,10 @@ fn path_for(service: &str) -> PathBuf {
 pub(super) fn plan(project: &str, units: &[QuadletUnit]) -> Vec<DropIn> {
 	units
 		.iter()
-		.filter_map(|u| u.filename.strip_suffix(".container"))
-		.map(|stem| DropIn {
+		.filter_map(|u| Some((u.filename.strip_suffix(".container")?, u)))
+		.map(|(stem, u)| DropIn {
 			service: format!("{stem}.service"),
-			contents: quadlet::drop_in(project),
+			contents: quadlet::drop_in(project, &u.contents),
 		})
 		.collect()
 }
@@ -68,17 +68,35 @@ fn cannot(what: &str, path: &Path, e: std::io::Error) -> ComposeError {
 	ComposeError::Autostart(format!("cannot {what} {}: {e}", path.display()))
 }
 
-/// Refuse, before anything is written, a destination that holds another project's drop-in or is not
-/// a regular file.
+/// Refuse, before anything is written, a drop-in directory that is not safe to write into, and a
+/// destination that holds a drop-in that is not this project's or is not a regular file.
 pub(super) fn check(project: &str, drop_ins: &[DropIn]) -> crate::Result<()> {
+	if drop_ins.is_empty() {
+		return Ok(());
+	}
+	let safe = |dir: &Path| {
+		crate::backends::unit_directory::check_private(dir).map_err(|e| cannot("use", dir, e))
+	};
+	safe(&unit_dir())?;
 	for drop_in in drop_ins {
 		let path = drop_in.path();
+		if let Some(dir) = path.parent().filter(|d| d.symlink_metadata().is_ok()) {
+			safe(dir)?;
+		}
+		let refuse = |why: String| {
+			Err(ComposeError::Autostart(format!(
+				"refusing to overwrite {}: {why}",
+				path.display()
+			)))
+		};
 		match owner(&path).map_err(|e| cannot("read", &path, e))? {
 			Some(Some(other)) if other != project => {
-				return Err(ComposeError::Autostart(format!(
-					"refusing to overwrite {}: it belongs to project '{other}', not '{project}'",
-					path.display()
-				)));
+				return refuse(format!("it belongs to project '{other}', not '{project}'"));
+			}
+			Some(None) => {
+				return refuse(
+					"it carries no podup ownership marker; move it out of the way".to_string(),
+				);
 			}
 			_ => {}
 		}
@@ -100,12 +118,25 @@ pub(super) fn write(drop_ins: &[DropIn]) -> crate::Result<Vec<PathBuf>> {
 }
 
 /// Remove the drop-in of `service` when it is this project's, and its directory when nothing else is
-/// in it. A drop-in that is not there is nothing to remove.
+/// in it. A drop-in that is not there is nothing to remove. One that cannot be proven to be this
+/// project's (a link, a file that cannot be read, one without a marker) is left where it is with a
+/// warning: stopping there would leave the rest of the units behind.
 pub(super) fn remove(project: &str, service: &str) -> crate::Result<()> {
 	let path = path_for(service);
-	let found = owner(&path).map_err(|e| cannot("read", &path, e))?;
-	if found.flatten().as_deref() != Some(project) {
-		return Ok(());
+	match owner(&path) {
+		Ok(Some(Some(found))) if found == project => {}
+		Ok(None) | Ok(Some(Some(_))) => return Ok(()),
+		Ok(Some(None)) => {
+			tracing::warn!(
+				"leaving {} where it is: it carries no podup ownership marker",
+				path.display()
+			);
+			return Ok(());
+		}
+		Err(e) => {
+			tracing::warn!("leaving {} where it is: {e}", path.display());
+			return Ok(());
+		}
 	}
 	std::fs::remove_file(&path).map_err(|e| cannot("remove", &path, e))?;
 	crate::ui::errln!("podup: removed {}", path.display())?;

@@ -1,7 +1,7 @@
 //! The drop-in that goes with each installed container service: written with the units, refused when
 //! it is someone else's, and removed with its unit.
 
-use super::{install_quadlet, uninstall_quadlet, FakeCtl, IMG};
+use super::{install_quadlet, uninstall_quadlet, FakeCtl, ScriptedCtl, IMG};
 use crate::parse_str;
 use std::path::{Path, PathBuf};
 
@@ -155,4 +155,99 @@ fn a_service_removed_from_the_file_loses_its_drop_in() {
 		assert!(drop_in(root, "proj-web.service").is_file());
 		assert!(!drop_in(root, "proj-db.service").exists());
 	});
+}
+
+#[test]
+fn the_drop_in_is_in_place_before_systemd_reloads() {
+	super::with_env(|root| {
+		let path = drop_in(root, "proj-web.service");
+		let unit = root.join("containers/systemd/proj-web.container");
+		let sc = ScriptedCtl::new(move |args| {
+			i32::from(args == ["daemon-reload"] && !(path.is_file() && unit.is_file()))
+		});
+		install_quadlet(
+			&sc,
+			&parse_str(IMG).unwrap(),
+			"proj",
+			Path::new(BASE),
+			true,
+			false,
+		)
+		.unwrap();
+		assert_eq!(sc.log(), vec![vec!["daemon-reload".to_string()]]);
+	});
+}
+
+#[test]
+fn an_unmarked_file_at_the_drop_in_is_not_overwritten_and_nothing_is_written() {
+	super::with_env(|root| {
+		let path = drop_in(root, "proj-web.service");
+		std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+		std::fs::write(&path, "[Service]\n").unwrap();
+		let err = install(IMG, "proj", false).err().unwrap();
+		assert!(err.to_string().contains("ownership marker"), "{err}");
+		assert_eq!(std::fs::read_to_string(&path).unwrap(), "[Service]\n");
+		assert!(!root.join("containers/systemd/proj-web.container").exists());
+	});
+}
+
+#[test]
+fn a_directory_others_can_write_is_refused_before_anything_is_written() {
+	use std::os::unix::fs::PermissionsExt;
+	for which in ["systemd/user", "containers/systemd"] {
+		super::with_env(|root| {
+			let dir = root.join(which);
+			std::fs::create_dir_all(&dir).unwrap();
+			std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+			let err = install(IMG, "proj", false).err().unwrap();
+			assert!(
+				err.to_string().contains("writable by others"),
+				"{which}: {err}"
+			);
+			assert!(
+				!drop_in(root, "proj-web.service").exists(),
+				"{which}: a drop-in was written"
+			);
+			assert!(
+				!root.join("containers/systemd/proj-web.container").exists(),
+				"{which}: a unit was written"
+			);
+		});
+	}
+}
+
+#[test]
+fn uninstall_goes_on_past_a_drop_in_it_cannot_prove_is_its_own() {
+	for case in ["link", "unmarked"] {
+		super::with_env(|root| {
+			install(
+				"services:\n  web:\n    image: nginx\n  db:\n    image: postgres\n",
+				"proj",
+				false,
+			)
+			.unwrap();
+			let path = drop_in(root, "proj-db.service");
+			std::fs::remove_file(&path).unwrap();
+			if case == "link" {
+				std::os::unix::fs::symlink(root.join("elsewhere"), &path).unwrap();
+			} else {
+				std::fs::write(&path, "[Service]\n").unwrap();
+			}
+			let sc = FakeCtl::new();
+			uninstall_quadlet(&sc, "proj").unwrap();
+			assert!(path.symlink_metadata().is_ok(), "{case}: it was removed");
+			for unit in ["proj-web.container", "proj-db.container"] {
+				assert!(
+					!root.join("containers/systemd").join(unit).exists(),
+					"{case}: {unit} stayed"
+				);
+			}
+			assert!(!drop_in(root, "proj-web.service").exists(), "{case}");
+			assert!(
+				sc.log().contains(&vec!["daemon-reload".to_string()]),
+				"{case}: {:?}",
+				sc.log()
+			);
+		});
+	}
 }

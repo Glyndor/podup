@@ -36,7 +36,7 @@ fn an_installed_container_never_replaces_by_name_and_records_its_id() {
 	assert_eq!(
 		lines(&out, "proj-web.container", "ExecStartPre="),
 		vec![
-			"ExecStartPre=-podman rm --force --ignore --filter name=^proj-web$$ \
+			"ExecStartPre=-/usr/bin/podman rm --force --ignore --filter name=^proj-web$$ \
 			 --filter label=podup.project=proj"
 		]
 	);
@@ -62,7 +62,7 @@ fn the_leftover_filter_is_exact_for_a_name_with_dots() {
 	assert_eq!(
 		lines(&out, "proj-web.container", "ExecStartPre="),
 		vec![
-			"ExecStartPre=-podman rm --force --ignore --filter name=^a\\\\.b-c_d$$ \
+			"ExecStartPre=-/usr/bin/podman rm --force --ignore --filter name=^a\\\\.b-c_d$$ \
 			 --filter label=podup.project=proj"
 		]
 	);
@@ -76,7 +76,7 @@ fn two_projects_that_name_the_same_container_filter_by_their_own_label() {
 		assert_eq!(
 			lines(out, "app-x-web.container", "ExecStartPre="),
 			vec![format!(
-				"ExecStartPre=-podman rm --force --ignore --filter name=^app-x-web$$ \
+				"ExecStartPre=-/usr/bin/podman rm --force --ignore --filter name=^app-x-web$$ \
 				 --filter label=podup.project={project}"
 			)]
 		);
@@ -114,14 +114,90 @@ fn the_exported_units_carry_none_of_it() {
 }
 
 #[test]
-fn the_drop_in_empties_both_cleanup_lists_and_removes_by_the_recorded_id() {
+fn the_drop_in_empties_both_cleanup_lists_then_removes_by_id_and_by_own_name() {
 	assert_eq!(
-		drop_in("proj"),
+		drop_in("proj", "[Container]\nContainerName=a.b\n"),
 		"# podup-owner: proj\n\
 		 [Service]\n\
 		 ExecStop=\n\
-		 ExecStop=podman rm -v -f -i --cidfile=%t/%N.cid\n\
+		 ExecStop=-/usr/bin/podman rm -v -f -i --cidfile=%t/%N.cid\n\
+		 ExecStop=-/usr/bin/podman rm -v -f -i --filter name=^a\\\\.b$$ --filter label=podup.project=proj\n\
 		 ExecStopPost=\n\
-		 ExecStopPost=-podman rm -v -f -i --cidfile=%t/%N.cid\n"
+		 ExecStopPost=-/usr/bin/podman rm -v -f -i --cidfile=%t/%N.cid\n\
+		 ExecStopPost=-/usr/bin/podman rm -v -f -i --filter name=^a\\\\.b$$ --filter label=podup.project=proj\n"
 	);
+}
+
+#[test]
+fn the_drop_in_of_a_unit_without_a_usable_name_removes_by_id_alone() {
+	for unit in ["[Container]\nImage=x\n", "[Container]\nContainerName=a b\n"] {
+		let text = drop_in("proj", unit);
+		assert!(text.contains("--cidfile="), "{text}");
+		assert!(!text.contains("--filter"), "{text}");
+	}
+}
+
+/// What the real Quadlet generator makes of an installed unit: the start ends in the
+/// flags that stop it replacing by name and record the ID, the removal of this project's
+/// leftover comes first, and the cleanup the drop-in replaces is the one by name, run by
+/// the Podman the drop-in names.
+#[cfg(unix)]
+#[test]
+fn the_generator_writes_the_start_the_drop_in_is_written_against() {
+	use crate::backends::quadlet::tests::generator::generator;
+	let Some(generator) = generator() else {
+		return;
+	};
+	let out = installed("services:\n  web:\n    image: nginx\n", "proj");
+	let dir = tempfile::tempdir().unwrap();
+	crate::quadlet::write_units(dir.path(), &out.units).unwrap();
+	let run = std::process::Command::new(&generator)
+		.args(["-dryrun", "-user"])
+		.env("QUADLET_UNIT_DIRS", dir.path())
+		.env_remove("PODMAN")
+		.output()
+		.unwrap();
+	let text = String::from_utf8_lossy(&run.stdout).into_owned();
+	let service = text
+		.split("---proj-web.service---")
+		.nth(1)
+		.unwrap_or_else(|| panic!("no proj-web.service in {text}"))
+		.split("\n---")
+		.next()
+		.unwrap();
+	let line = |key: &str| {
+		service
+			.lines()
+			.filter(|l| l.starts_with(key))
+			.collect::<Vec<_>>()
+	};
+	let start = line("ExecStart=");
+	assert_eq!(start.len(), 1, "{service}");
+	let replaces: Vec<&str> = start[0]
+		.split(' ')
+		.filter(|w| w.starts_with("--replace"))
+		.collect();
+	assert_eq!(replaces, ["--replace", "--replace=false"], "{}", start[0]);
+	assert!(start[0].contains(" --cidfile=%t/%N.cid "), "{}", start[0]);
+	assert_eq!(
+		line("ExecStartPre="),
+		[
+			"ExecStartPre=-/usr/bin/podman rm --force --ignore --filter name=^proj-web$$ \
+			 --filter label=podup.project=proj"
+		]
+	);
+	for (key, quadlet) in [
+		("ExecStop=", "ExecStop=/usr/bin/podman rm -v -f -i proj-web"),
+		(
+			"ExecStopPost=",
+			"ExecStopPost=-/usr/bin/podman rm -v -f -i proj-web",
+		),
+	] {
+		assert_eq!(line(key), [quadlet], "{service}");
+		let own = drop_in("proj", &out.units.last().unwrap().contents);
+		assert!(
+			own.contains(&format!("{key}\n{key}-/usr/bin/podman rm ")),
+			"{own}"
+		);
+	}
 }

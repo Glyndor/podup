@@ -244,7 +244,7 @@ fn install_no_build_units_byte_identical_to_generate_at() {
 			PodmanArgs=--cidfile=%t/%N.cid\n\
 			\n\
 			[Service]\n\
-			ExecStartPre=-podman rm --force --ignore --filter name=^proj-web$$ \
+			ExecStartPre=-/usr/bin/podman rm --force --ignore --filter name=^proj-web$$ \
 			--filter label=podup.project=proj\n";
 		let installed = String::from_utf8(installed).unwrap();
 		assert!(installed.contains(ownership), "{installed}");
