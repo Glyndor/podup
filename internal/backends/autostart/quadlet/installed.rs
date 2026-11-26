@@ -61,7 +61,7 @@ fn has_unit_suffix(name: &str) -> bool {
 /// This project's installed quadlet unit files, sorted. Drives uninstall
 /// (remove) and rebuild (find `.build` units).
 ///
-/// A file name starting with `<project>-` is only a candidate: project names
+/// A file name starting with `<project>-`, or named `<project>.pod`, is only a candidate: project names
 /// may themselves contain `-`, so `app-extra-web.container` also starts with
 /// `app-`. Matching on that prefix alone (the old behaviour) meant
 /// `uninstall -p app` matched (and `uninstall_quadlet` then stopped and
@@ -91,12 +91,15 @@ fn has_unit_suffix(name: &str) -> bool {
 pub(in super::super::super) fn installed_units(project: &str) -> crate::Result<Vec<PathBuf>> {
 	let dir = quadlet_dir();
 	let prefix = format!("{project}-");
+	// The pod of a pod project is named after the project alone, so it does not
+	// carry the prefix the other units do.
+	let pod = format!("{project}.pod");
 	let mut found = Vec::new();
 	if let Ok(entries) = std::fs::read_dir(&dir) {
 		for entry in entries.flatten() {
 			let path = entry.path();
 			let name = entry.file_name().to_string_lossy().into_owned();
-			if !name.starts_with(&prefix) || !has_unit_suffix(&name) {
+			if !(name.starts_with(&prefix) || name == pod) || !has_unit_suffix(&name) {
 				continue;
 			}
 			// `DirEntry::file_type` does not follow a link.

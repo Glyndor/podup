@@ -18,6 +18,11 @@
 //!   ones of the unit's `[Service]` section, and systemd reads the drop-ins of a service after the
 //!   unit.
 //!
+//! The `.pod` unit of a pod project gets the same three things: its creation says
+//! `--replace=false` and records the pod ID, the leftover pod of this project is removed before it,
+//! and a drop-in replaces the stop and the removal by name. `podman pod rm` takes no filter, so the
+//! commands that act on the project's own pod ask `podman pod ps` for it in a shell.
+//!
 //! `generate quadlet` writes the units as Quadlet reads them and carries none of this: its output is
 //! files in a directory of the user's choosing, with no place for a drop-in.
 
@@ -30,6 +35,9 @@ pub(crate) const DROP_IN_NAME: &str = "50-podup-ownership.conf";
 /// The file the start writes the container ID to: the user's runtime directory, one per unit. The
 /// two specifiers are systemd's, expanded when the service runs.
 const CIDFILE: &str = "%t/%N.cid";
+
+/// The file the creation of a pod writes its ID to, one per unit.
+const POD_ID_FILE: &str = "%t/%N.pod-id";
 
 /// The Podman the lines run: the path Quadlet writes into the units it generates, so the cleanup and
 /// the start talk to the same one whatever `PATH` the user manager has.
@@ -97,6 +105,56 @@ pub(crate) fn drop_in(project: &str, unit: &str) -> String {
 	text.push_str("[Service]\n");
 	for key in ["ExecStop", "ExecStopPost"] {
 		text.push_str(&format!("{key}=\n"));
+		for (position, command) in commands.iter().enumerate() {
+			let reported = key == "ExecStop" && position + 1 == commands.len();
+			let prefix = if reported { "" } else { "-" };
+			text.push_str(&format!("{key}={prefix}{command}\n"));
+		}
+	}
+	text
+}
+
+/// The lines of an installed pod unit that stop it from replacing a pod it does not own.
+pub(super) fn emit_pod(project: &str, pod_name: &str, pod: &mut Section, service: &mut Section) {
+	pod.add("PodmanArgs", "--replace=false".to_string());
+	pod.add("PodmanArgs", format!("--pod-id-file={POD_ID_FILE}"));
+	if let Some(pattern) = name_pattern(pod_name) {
+		service.add(
+			"ExecStartPre",
+			format!("-{}", on_own_pod(project, &pattern, "rm --force")),
+		);
+	}
+}
+
+/// A shell that runs `podman pod <verb>` on the pod matching `pattern` only when it carries the
+/// label of `project`. `$$` reaches the shell as `$`.
+fn on_own_pod(project: &str, pattern: &str, verb: &str) -> String {
+	format!(
+		"/bin/sh -c 'ids=$$({PODMAN} pod ps -q --filter name={pattern} \
+		 --filter label=podup.project={project}); [ -z \"$$ids\" ] || {PODMAN} pod {verb} $$ids'"
+	)
+}
+
+/// The drop-in of the pod service whose unit holds `unit`: the stop and the removal Quadlet writes,
+/// by name, are emptied and replaced by those of the pod the unit created, then of the pod of that
+/// name that carries the project's label. As for a container, every line carries `-` but the last
+/// of `ExecStop=`, so a stop that really fails is reported.
+pub(crate) fn pod_drop_in(project: &str, unit: &str) -> String {
+	let pattern = unit
+		.lines()
+		.find_map(|line| line.strip_prefix("PodName="))
+		.and_then(name_pattern);
+	let mut text = owner_marker(project);
+	text.push_str("[Service]\n");
+	for (key, verb, own_verb) in [
+		("ExecStop", "stop --ignore --time=10", "stop --time=10"),
+		("ExecStopPost", "rm --ignore --force", "rm --force"),
+	] {
+		text.push_str(&format!("{key}=\n"));
+		let mut commands = vec![format!("{PODMAN} pod {verb} --pod-id-file={POD_ID_FILE}")];
+		if let Some(pattern) = &pattern {
+			commands.push(on_own_pod(project, pattern, own_verb));
+		}
 		for (position, command) in commands.iter().enumerate() {
 			let reported = key == "ExecStop" && position + 1 == commands.len();
 			let prefix = if reported { "" } else { "-" };

@@ -301,3 +301,52 @@ fn a_drop_in_directory_others_can_write_is_refused_before_anything_is_written() 
 		assert!(!root.join("containers/systemd/proj-web.container").exists());
 	});
 }
+
+const POD: &str = "x-podman-pod: true\nservices:\n  web:\n    image: nginx\n";
+
+#[test]
+fn a_pod_project_gets_a_drop_in_for_its_pod_and_uninstall_removes_both() {
+	super::with_env(|root| {
+		install(POD, "proj", false).unwrap();
+		let pod = drop_in(root, "proj-pod.service");
+		let web = drop_in(root, "proj-web.service");
+		let text = std::fs::read_to_string(&pod).unwrap();
+		assert!(text.starts_with("# podup-owner: proj\n"), "{text}");
+		assert!(text.contains("pod rm"), "{text}");
+		assert!(web.is_file());
+		let sc = FakeCtl::new();
+		uninstall_quadlet(&sc, "proj").unwrap();
+		assert!(!pod.exists() && !web.exists());
+		assert!(!root.join("containers/systemd/proj.pod").exists());
+		let stops: Vec<_> = sc.log().into_iter().filter(|c| c[0] == "stop").collect();
+		assert_eq!(
+			stops,
+			[["stop", "proj-web.service"], ["stop", "proj-pod.service"]],
+		);
+	});
+}
+
+#[test]
+fn a_project_that_leaves_pod_mode_loses_the_pod_drop_in() {
+	super::with_env(|root| {
+		install(POD, "proj", false).unwrap();
+		let sc = install(IMG, "proj", false).unwrap();
+		assert!(sc
+			.log()
+			.contains(&vec!["stop".to_string(), "proj-pod.service".to_string()]));
+		assert!(!root.join("containers/systemd/proj.pod").exists());
+		assert!(!drop_in(root, "proj-pod.service").exists());
+		assert!(drop_in(root, "proj-web.service").is_file());
+	});
+}
+
+/// Another project's pod unit is left alone, whatever its name shares.
+#[test]
+fn uninstall_leaves_the_pod_of_another_project() {
+	super::with_env(|root| {
+		install(POD, "app-x", false).unwrap();
+		uninstall_quadlet(&FakeCtl::new(), "app").unwrap();
+		assert!(root.join("containers/systemd/app-x.pod").is_file());
+		assert!(drop_in(root, "app-x-pod.service").is_file());
+	});
+}

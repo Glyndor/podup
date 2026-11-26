@@ -121,18 +121,17 @@ fn retire_obsolete_units<S: SystemCtl>(
 		if current_names.contains(&name) {
 			continue;
 		}
-		// Stop the service while its unit still exists, so the container it
-		// runs does not stay up with nothing left to manage it.
-		if let Some(stem) = name.strip_suffix(".container") {
-			let service = format!("{stem}.service");
+		// Stop the service while its unit still exists, so the container or the
+		// pod it runs does not stay up with nothing left to manage it.
+		if let Some(service) = drop_ins::service_of(name) {
 			checked(sc.systemctl(&["stop", &service]), "stop")?;
 		}
 		std::fs::remove_file(&path).map_err(|e| {
 			ComposeError::Autostart(format!("cannot remove {}: {e}", path.display()))
 		})?;
 		crate::ui::errln!("podup: removed the obsolete unit {}", path.display())?;
-		if let Some(stem) = name.strip_suffix(".container") {
-			drop_ins::remove(project, &format!("{stem}.service"))?;
+		if let Some(service) = drop_ins::service_of(name) {
+			drop_ins::remove(project, &service)?;
 		}
 	}
 	Ok(())
@@ -316,11 +315,11 @@ pub fn install_quadlet<S: SystemCtl>(
 pub fn uninstall_quadlet<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
 	let units = installed_units(project)?;
 	let mut first_err: Option<ComposeError> = None;
-	// Stop the container services first, while their units still exist.
+	// Stop the container services first, then the pod's, while their units still
+	// exist: the units are sorted, and `<project>-` sorts before `<project>.`.
 	for path in &units {
 		if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-			if let Some(stem) = name.strip_suffix(".container") {
-				let service = format!("{stem}.service");
+			if let Some(service) = drop_ins::service_of(name) {
 				// Stop unconditionally. There is no state here worth probing for
 				// first: measured against real systemd, `stop` on a unit whose
 				// fragment is on disk exits 0 whether it is running, inactive, or
@@ -348,12 +347,12 @@ pub fn uninstall_quadlet<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<(
 		})?;
 		crate::ui::errln!("podup: removed {}", path.display())?;
 		removed += 1;
-		if let Some(stem) = path
+		if let Some(service) = path
 			.file_name()
 			.and_then(|n| n.to_str())
-			.and_then(|n| n.strip_suffix(".container"))
+			.and_then(drop_ins::service_of)
 		{
-			drop_ins::remove(project, &format!("{stem}.service"))?;
+			drop_ins::remove(project, &service)?;
 		}
 	}
 	if removed == 0 {

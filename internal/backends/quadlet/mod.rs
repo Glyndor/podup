@@ -18,7 +18,7 @@ mod ownership;
 #[cfg(feature = "test-helpers")]
 pub(crate) use jobs::fuzz_hook;
 pub use jobs::stale_timers;
-pub(crate) use ownership::{drop_in, DROP_IN_NAME};
+pub(crate) use ownership::{drop_in, pod_drop_in, DROP_IN_NAME};
 #[cfg(test)]
 mod floor;
 #[cfg(test)]
@@ -407,7 +407,8 @@ fn generate_with_mode(
 	if file.podman_pod().unwrap_or(false) {
 		out.warnings.extend(pod_fields.warnings());
 	}
-	if let Some(pod) = crate::quadlet::unit::pod_unit(project, file, &pod_fields) {
+	let installed = mode == ContainerUnitMode::Prebuilt;
+	if let Some(pod) = crate::quadlet::unit::pod_unit(project, file, &pod_fields, installed) {
 		out.units.push(pod);
 	}
 	let declared_networks: Vec<&str> = file

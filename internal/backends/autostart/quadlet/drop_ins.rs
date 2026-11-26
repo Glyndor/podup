@@ -1,6 +1,7 @@
-//! The drop-in each installed container service carries, in
+//! The drop-in each installed container and pod service carries, in
 //! `~/.config/systemd/user/<service>.d/`. It replaces the cleanup by name that Quadlet writes with a
-//! cleanup of the container the unit started; see [`crate::quadlet::drop_in`] for what it holds.
+//! cleanup of what the unit started; see [`crate::quadlet::drop_in`] and
+//! [`crate::quadlet::pod_drop_in`] for what they hold.
 //!
 //! A drop-in is podup's only when its first line is the ownership marker of the project, the same
 //! mark the units carry. One that is someone else's, carries no marker, or is not a regular file, is
@@ -38,14 +39,29 @@ fn path_for(service: &str) -> PathBuf {
 		.join(quadlet::DROP_IN_NAME)
 }
 
-/// The drop-ins of the `.container` units among `units`, one per service.
+/// The service of a unit file that carries a drop-in: `<stem>.service` for a container,
+/// `<stem>-pod.service` for a pod; `None` for the others.
+pub(super) fn service_of(filename: &str) -> Option<String> {
+	if let Some(stem) = filename.strip_suffix(".container") {
+		return Some(format!("{stem}.service"));
+	}
+	filename
+		.strip_suffix(".pod")
+		.map(|stem| format!("{stem}-pod.service"))
+}
+
+/// The drop-ins of the container and pod units among `units`, one per service.
 pub(super) fn plan(project: &str, units: &[QuadletUnit]) -> Vec<DropIn> {
 	units
 		.iter()
-		.filter_map(|u| Some((u.filename.strip_suffix(".container")?, u)))
-		.map(|(stem, u)| DropIn {
-			service: format!("{stem}.service"),
-			contents: quadlet::drop_in(project, &u.contents),
+		.filter_map(|u| Some((service_of(&u.filename)?, u)))
+		.map(|(service, u)| DropIn {
+			service,
+			contents: if u.filename.ends_with(".pod") {
+				quadlet::pod_drop_in(project, &u.contents)
+			} else {
+				quadlet::drop_in(project, &u.contents)
+			},
 		})
 		.collect()
 }
