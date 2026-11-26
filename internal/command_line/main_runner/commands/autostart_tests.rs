@@ -35,6 +35,15 @@ fn compose_file() -> ComposeFile {
 	podup::parse_str("services:\n  web:\n    image: nginx\n").expect("the file parses")
 }
 
+#[cfg(unix)]
+fn path_with_fake_binaries_first(root: &std::path::Path) -> std::ffi::OsString {
+	let mut paths = vec![root.to_path_buf()];
+	if let Some(path) = std::env::var_os("PATH") {
+		paths.extend(std::env::split_paths(&path));
+	}
+	std::env::join_paths(paths).expect("the test PATH joins")
+}
+
 /// The socket the operator selected must reach the generated unit: the
 /// unit runs with no environment of the operator's, so without it the boot
 /// path would talk to the default instance instead of the selected one.
@@ -174,4 +183,120 @@ fn the_active_profiles_select_the_container_the_start_unit_names() {
 	let container = podup::autostart::sole_container(&selected, "proj")
 		.expect("the project has one active service");
 	assert_eq!(container, "proj-web-1");
+}
+
+#[cfg(unix)]
+#[test]
+fn uninstall_dispatch_recognises_a_lone_owned_pod_and_leaves_foreign_pods() {
+	use std::os::unix::fs::PermissionsExt;
+	for marker in ["# podup-owner: proj\n", "# podup-owner: other\n", ""] {
+		let dir = tempfile::tempdir().unwrap();
+		let root = dir.path();
+		let units = root.join("containers/systemd");
+		std::fs::create_dir_all(&units).unwrap();
+		let pod = units.join("proj.pod");
+		let body = format!("{marker}[Pod]\nPodName=proj\n");
+		std::fs::write(&pod, &body).unwrap();
+		let systemctl = root.join("systemctl");
+		std::fs::write(
+			&systemctl,
+			"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$XDG_CONFIG_HOME/calls\"\ncase \"$*\" in *--property=ActiveState,Result*) printf 'ActiveState=inactive\\nResult=success\\n';; *--property=Result*) echo success;; esac\n",
+		)
+		.unwrap();
+		std::fs::set_permissions(&systemctl, std::fs::Permissions::from_mode(0o700)).unwrap();
+		let path = path_with_fake_binaries_first(root);
+		temp_env::with_vars(
+			[
+				("XDG_CONFIG_HOME", Some(root.as_os_str())),
+				("PATH", Some(path.as_os_str())),
+			],
+			|| {
+				let runtime = tokio::runtime::Builder::new_current_thread()
+					.enable_all()
+					.build()
+					.unwrap();
+				runtime
+					.block_on(dispatch(
+						&env(None),
+						&[],
+						"proj".to_string(),
+						root.to_path_buf(),
+						&compose_file(),
+						&AutostartCommands::Uninstall { purge: false },
+					))
+					.unwrap();
+			},
+		);
+		let calls = std::fs::read_to_string(root.join("calls")).unwrap();
+		if marker == "# podup-owner: proj\n" {
+			assert!(
+				!pod.exists(),
+				"the Quadlet uninstaller must remove the lone pod unit"
+			);
+			assert!(calls.contains("--user stop proj-pod.service\n"), "{calls}");
+			assert!(!calls.contains("disable"), "{calls}");
+		} else {
+			assert_eq!(std::fs::read_to_string(&pod).unwrap(), body);
+			assert!(!calls.contains("stop proj-pod.service"), "{calls}");
+		}
+	}
+}
+
+#[cfg(unix)]
+#[test]
+fn uninstall_dispatch_propagates_detection_failure_without_touching_services() {
+	use std::os::unix::fs::PermissionsExt;
+	for purge in [false, true] {
+		let dir = tempfile::tempdir().unwrap();
+		let root = dir.path();
+		let units = root.join("containers/systemd");
+		std::fs::create_dir_all(&units).unwrap();
+		let pod = units.join("proj.pod");
+		let body = "# podup-owner: proj\n[Pod]\nPodName=proj\n";
+		std::fs::write(&pod, body).unwrap();
+		let fifo = units.join("proj-bad.build");
+		// Named by its path because the fake `PATH` puts its own binaries first.
+		assert!(std::process::Command::new("/usr/bin/mkfifo")
+			.arg(&fifo)
+			.status()
+			.unwrap()
+			.success());
+		let ctl = root.join("systemctl");
+		std::fs::write(
+			&ctl,
+			"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$XDG_CONFIG_HOME/calls\"\n",
+		)
+		.unwrap();
+		std::fs::set_permissions(&ctl, std::fs::Permissions::from_mode(0o700)).unwrap();
+		let path = path_with_fake_binaries_first(root);
+		temp_env::with_vars(
+			[
+				("XDG_CONFIG_HOME", Some(root.as_os_str())),
+				("PATH", Some(path.as_os_str())),
+			],
+			|| {
+				let runtime = tokio::runtime::Builder::new_current_thread()
+					.enable_all()
+					.build()
+					.unwrap();
+				let error = runtime
+					.block_on(dispatch(
+						&env(None),
+						&[],
+						"proj".to_string(),
+						root.to_path_buf(),
+						&compose_file(),
+						&AutostartCommands::Uninstall { purge },
+					))
+					.unwrap_err();
+				assert!(error.to_string().contains("proj-bad.build"), "{error}");
+			},
+		);
+		assert!(
+			!root.join("calls").exists(),
+			"neither uninstaller should run"
+		);
+		assert_eq!(std::fs::read_to_string(&pod).unwrap(), body);
+		assert!(std::fs::symlink_metadata(fifo).is_ok());
+	}
 }

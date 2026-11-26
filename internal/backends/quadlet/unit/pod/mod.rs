@@ -20,6 +20,7 @@ mod fields;
 pub(super) use fields::PodField;
 pub(crate) use fields::PodFields;
 
+use super::super::ownership;
 use super::{owner_marker, render_publish_port, safe_unit_stem, unit_stem, QuadletUnit, Section};
 
 /// Build the `.pod` unit for one project. The contents are a single
@@ -29,12 +30,16 @@ use super::{owner_marker, render_publish_port, safe_unit_stem, unit_stem, Quadle
 /// per service. Each `.container` unit references this pod by `Pod=<stem>.pod`;
 /// see [`super::container::container_unit_with_mode`].
 ///
+/// An `installed` unit, the one quadlet-mode autostart writes, also carries the
+/// lines that keep it off a pod of another project (`super::super::ownership`).
+///
 /// Returns `None` when the project has no pod-mode extension, so callers
 /// can splice the unit into the output list without a conditional.
 pub(crate) fn pod_unit(
 	project: &str,
 	file: &ComposeFile,
 	pod_fields: &PodFields,
+	installed: bool,
 ) -> Option<QuadletUnit> {
 	if !file.podman_pod().unwrap_or(false) {
 		return None;
@@ -134,8 +139,16 @@ pub(crate) fn pod_unit(
 	// from drifting on the same project.
 	pod.add("ExitPolicy", "continue".to_string());
 
+	let mut service = Section::new("Service");
+	if installed {
+		ownership::emit_pod(project, project, &mut pod, &mut service);
+	}
 	let mut contents = owner_marker(project);
 	contents.push_str(&pod.render());
+	if !service.is_empty() {
+		contents.push('\n');
+		contents.push_str(&service.render());
+	}
 	Some(QuadletUnit {
 		filename: format!("{}.pod", safe_unit_stem(project)),
 		contents,

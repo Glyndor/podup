@@ -60,7 +60,7 @@ fn a_link_to_a_pipe_is_left_alone_without_being_followed() {
 	});
 }
 
-const OWN: &str = "# podup-owner: proj\n[Container]\nImage=nginx\n";
+const OWN: &str = "# podup-owner: proj\n[Container]\nImage=nginx\nContainerName=proj-web\n";
 
 /// Entries a user legitimately keeps next to the units: a drop-in directory of
 /// this project, one of a sibling project that shares the prefix, a sibling's

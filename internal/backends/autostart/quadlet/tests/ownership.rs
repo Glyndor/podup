@@ -217,16 +217,11 @@ fn a_directory_others_can_write_is_refused_before_anything_is_written() {
 }
 
 #[test]
-fn uninstall_goes_on_past_a_drop_in_it_cannot_prove_is_its_own() {
+fn uninstall_refuses_unprotected_units_before_any_stop() {
 	for case in ["link", "unmarked"] {
 		super::with_env(|root| {
-			install(
-				"services:\n  web:\n    image: nginx\n  db:\n    image: postgres\n",
-				"proj",
-				false,
-			)
-			.unwrap();
-			let path = drop_in(root, "proj-db.service");
+			install(IMG, "proj", false).unwrap();
+			let path = drop_in(root, "proj-web.service");
 			std::fs::remove_file(&path).unwrap();
 			if case == "link" {
 				std::os::unix::fs::symlink(root.join("elsewhere"), &path).unwrap();
@@ -234,56 +229,11 @@ fn uninstall_goes_on_past_a_drop_in_it_cannot_prove_is_its_own() {
 				std::fs::write(&path, "[Service]\n").unwrap();
 			}
 			let sc = FakeCtl::new();
-			let log = warnings_of(|| uninstall_quadlet(&sc, "proj").unwrap());
-			let why = if case == "link" {
-				"symbolic link"
-			} else {
-				"no podup ownership marker"
-			};
-			assert!(
-				log.contains("proj-db.service.d") && log.contains(why),
-				"{case}: {log}"
-			);
-			assert!(path.symlink_metadata().is_ok(), "{case}: it was removed");
-			for unit in ["proj-web.container", "proj-db.container"] {
-				assert!(
-					!root.join("containers/systemd").join(unit).exists(),
-					"{case}: {unit} stayed"
-				);
-			}
-			assert!(!drop_in(root, "proj-web.service").exists(), "{case}");
-			assert!(
-				sc.log().contains(&vec!["daemon-reload".to_string()]),
-				"{case}: {:?}",
-				sc.log()
-			);
+			assert!(uninstall_quadlet(&sc, "proj").is_err(), "{case}");
+			assert!(sc.log().is_empty(), "{case}: {:?}", sc.log());
+			assert!(root.join("containers/systemd/proj-web.container").is_file());
+			assert!(path.symlink_metadata().is_ok());
 		});
-	}
-}
-
-/// What `run` logs.
-fn warnings_of(run: impl FnOnce()) -> String {
-	let bytes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-	let writer = bytes.clone();
-	let subscriber = tracing_subscriber::fmt()
-		.without_time()
-		.with_ansi(false)
-		.with_writer(move || Sink(writer.clone()))
-		.finish();
-	tracing::subscriber::with_default(subscriber, run);
-	let text = bytes.lock().unwrap().clone();
-	String::from_utf8(text).unwrap()
-}
-
-struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-
-impl std::io::Write for Sink {
-	fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-		self.0.lock().unwrap().extend_from_slice(bytes);
-		Ok(bytes.len())
-	}
-	fn flush(&mut self) -> std::io::Result<()> {
-		Ok(())
 	}
 }
 
@@ -300,4 +250,156 @@ fn a_drop_in_directory_others_can_write_is_refused_before_anything_is_written() 
 		assert!(!path.exists(), "a drop-in was written");
 		assert!(!root.join("containers/systemd/proj-web.container").exists());
 	});
+}
+
+const POD: &str = "x-podman-pod: true\nservices:\n  web:\n    image: nginx\n";
+
+#[test]
+fn a_pod_project_gets_a_drop_in_for_its_pod_and_uninstall_removes_both() {
+	super::with_env(|root| {
+		install(POD, "proj", false).unwrap();
+		let pod = drop_in(root, "proj-pod.service");
+		let web = drop_in(root, "proj-web.service");
+		let text = std::fs::read_to_string(&pod).unwrap();
+		assert!(text.starts_with("# podup-owner: proj\n"), "{text}");
+		assert!(text.contains("pod rm"), "{text}");
+		assert!(web.is_file());
+		let sc = FakeCtl::new();
+		uninstall_quadlet(&sc, "proj").unwrap();
+		assert!(!pod.exists() && !web.exists());
+		assert!(!root.join("containers/systemd/proj.pod").exists());
+		let stops: Vec<_> = sc.log().into_iter().filter(|c| c[0] == "stop").collect();
+		assert_eq!(
+			stops,
+			[["stop", "proj-web.service"], ["stop", "proj-pod.service"]],
+		);
+	});
+}
+
+#[test]
+fn a_project_that_leaves_pod_mode_loses_the_pod_drop_in() {
+	super::with_env(|root| {
+		install(POD, "proj", false).unwrap();
+		let sc = install(IMG, "proj", false).unwrap();
+		assert!(sc
+			.log()
+			.contains(&vec!["stop".to_string(), "proj-pod.service".to_string()]));
+		assert!(!root.join("containers/systemd/proj.pod").exists());
+		assert!(!drop_in(root, "proj-pod.service").exists());
+		assert!(drop_in(root, "proj-web.service").is_file());
+	});
+}
+
+/// Another project's pod unit is left alone, whatever its name shares.
+#[test]
+fn uninstall_leaves_the_pod_of_another_project() {
+	super::with_env(|root| {
+		install(POD, "app-x", false).unwrap();
+		uninstall_quadlet(&FakeCtl::new(), "app").unwrap();
+		assert!(root.join("containers/systemd/app-x.pod").is_file());
+		assert!(drop_in(root, "app-x-pod.service").is_file());
+	});
+}
+
+/// Units in the 6.1.0 format, without any ownership drop-ins or recorded runtime IDs.
+fn legacy_units(root: &Path) {
+	let dir = root.join("containers/systemd");
+	std::fs::create_dir_all(&dir).unwrap();
+	for (name, body) in [
+		(
+			"proj.pod",
+			"[Pod]\nPodName=proj\nLabel=podup.project=proj\n",
+		),
+		(
+			"proj-old.container",
+			"[Container]\nImage=nginx\nContainerName=proj-old\nPod=proj.pod\n",
+		),
+	] {
+		std::fs::write(dir.join(name), format!("# podup-owner: proj\n{body}")).unwrap();
+	}
+}
+
+fn migrate(sc: &impl crate::autostart::SystemCtl, uninstall: bool) -> crate::Result<()> {
+	if uninstall {
+		uninstall_quadlet(sc, "proj")
+	} else {
+		install_quadlet(
+			sc,
+			&parse_str(IMG).unwrap(),
+			"proj",
+			Path::new(BASE),
+			true,
+			false,
+		)
+	}
+}
+
+#[test]
+fn legacy_units_are_protected_and_loaded_before_retirement_or_uninstall() {
+	for uninstall in [false, true] {
+		super::with_env(|root| {
+			legacy_units(root);
+			let root = root.to_path_buf();
+			let loaded = std::cell::Cell::new(false);
+			let sc = ScriptedCtl::new(move |args| {
+				if args == ["daemon-reload"] && !loaded.replace(true) {
+					for service in ["proj-old.service", "proj-pod.service"] {
+						let text = std::fs::read_to_string(drop_in(&root, service)).unwrap();
+						assert!(text.contains("ExecStop=\n"), "{service}: {text}");
+						assert!(text.contains("--filter label=podup.project=proj"), "{text}");
+					}
+					assert!(root.join("containers/systemd/proj.pod").is_file());
+				}
+				if args.first() == Some(&"stop") {
+					assert!(loaded.get(), "stop before protective reload: {args:?}");
+				}
+				0
+			});
+			migrate(&sc, uninstall).unwrap();
+			let calls = sc.log();
+			assert_eq!(calls[0], ["daemon-reload"]);
+			for (offset, service) in [(1, "proj-old.service"), (4, "proj-pod.service")] {
+				assert_eq!(
+					calls[offset],
+					["show", "--property=ActiveState,Result", service]
+				);
+				assert_eq!(calls[offset + 1], ["stop", service]);
+				assert_eq!(
+					calls[offset + 2],
+					["show", "--property=ActiveState,Result", service]
+				);
+			}
+		});
+	}
+}
+
+#[test]
+fn a_failed_protective_reload_keeps_legacy_units_and_never_stops_them() {
+	for uninstall in [false, true] {
+		super::with_env(|root| {
+			legacy_units(root);
+			let sc = ScriptedCtl::new(|args| i32::from(args == ["daemon-reload"]));
+			assert!(migrate(&sc, uninstall).is_err());
+			assert_eq!(sc.log(), [vec!["daemon-reload".to_string()]]);
+			assert!(root.join("containers/systemd/proj.pod").is_file());
+			assert!(root.join("containers/systemd/proj-old.container").is_file());
+		});
+	}
+}
+
+#[test]
+fn a_refused_legacy_pod_drop_in_prevents_every_stop() {
+	for uninstall in [false, true] {
+		super::with_env(|root| {
+			legacy_units(root);
+			let path = drop_in(root, "proj-pod.service");
+			std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+			std::fs::write(&path, "# podup-owner: other\n").unwrap();
+			let sc = FakeCtl::new();
+			assert!(migrate(&sc, uninstall).is_err());
+			assert!(sc.log().is_empty());
+			assert!(root.join("containers/systemd/proj.pod").is_file());
+			assert!(root.join("containers/systemd/proj-old.container").is_file());
+		});
+	}
 }

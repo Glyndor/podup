@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use super::{drop_in, generate_at, generate_for_autostart, QuadletOutput};
+use super::{drop_in, generate_at, generate_for_autostart, pod_drop_in, QuadletOutput};
 use crate::parse_str;
 
 const BASE: &str = "/srv/app";
@@ -209,3 +209,129 @@ fn the_generator_writes_the_start_the_drop_in_is_written_against() {
 		);
 	}
 }
+
+const POD: &str = "x-podman-pod: true\nservices:\n  web:\n    image: nginx\n";
+
+/// The shell command the pod lines run, as the unit writes it.
+fn on_own_pod(verb: &str) -> String {
+	let guard = if verb == "rm --force" {
+		"members=$$(/usr/bin/podman ps -aq --filter pod=$$id \
+		 --filter label!=podup.project=proj) || exit $$?; \
+		 if [ -n \"$$members\" ]; then echo \"podup: refusing pod cleanup for $$id: \
+		 containers without podup.project=proj: $$members\" >&2; exit 1; fi; "
+	} else {
+		""
+	};
+	format!(
+		"/bin/sh -c 'ids=$$(/usr/bin/podman pod ps -q --no-trunc --filter name=^proj$$ \
+		 --filter label=podup.project=proj) || exit $$?; \
+		 for id in $$ids; do {guard}/usr/bin/podman pod {verb} $$id || exit $$?; done'"
+	)
+}
+
+#[test]
+fn an_installed_pod_never_replaces_by_name_and_records_its_id() {
+	let out = installed(POD, "proj");
+	let args = lines(&out, "proj.pod", "PodmanArgs=");
+	assert_eq!(
+		&args[args.len() - 2..],
+		[
+			"PodmanArgs=--replace=false",
+			"PodmanArgs=--pod-id-file=%t/%N.pod-id",
+		]
+	);
+	assert_eq!(
+		lines(&out, "proj.pod", "ExecStartPre="),
+		[format!("ExecStartPre={}", on_own_pod("rm --force"))]
+	);
+}
+
+#[test]
+fn the_exported_pod_carries_none_of_it() {
+	let file = parse_str(POD).unwrap();
+	let out = generate_at(&file, "proj", Path::new(BASE));
+	let unit = out.units.iter().find(|u| u.filename == "proj.pod").unwrap();
+	for needle in ["--replace=false", "--pod-id-file", "ExecStartPre="] {
+		assert!(
+			!unit.contents.contains(needle),
+			"{needle}: {}",
+			unit.contents
+		);
+	}
+}
+
+#[test]
+fn the_pod_drop_in_stops_by_id_and_checks_members_before_removal() {
+	assert_eq!(
+		pod_drop_in("proj", "[Pod]\nPodName=proj\n"),
+		format!(
+			"# podup-owner: proj\n\
+			 [Service]\n\
+			 ExecStop=\n\
+			 ExecStop=-/usr/bin/podman pod stop --ignore --time=10 --pod-id-file=%t/%N.pod-id\n\
+			 ExecStop={}\n\
+			 ExecStopPost=\n\
+			 ExecStopPost={}\n",
+			on_own_pod("stop --time=10"),
+			on_own_pod("rm --force")
+		)
+	);
+}
+
+/// What the real generator makes of an installed pod: this project's leftover is removed
+/// before the creation, which ends in the flags that stop it replacing by name, and the
+/// stop and removal the drop-in replaces are the ones by name.
+#[cfg(unix)]
+#[test]
+fn the_generator_writes_the_pod_start_the_drop_in_is_written_against() {
+	use crate::backends::quadlet::tests::generator::generator;
+	let Some(generator) = generator() else {
+		return;
+	};
+	let out = installed(POD, "proj");
+	let dir = tempfile::tempdir().unwrap();
+	crate::quadlet::write_units(dir.path(), &out.units).unwrap();
+	let run = std::process::Command::new(&generator)
+		.args(["-dryrun", "-user"])
+		.env("QUADLET_UNIT_DIRS", dir.path())
+		.env_remove("PODMAN")
+		.output()
+		.unwrap();
+	let text = String::from_utf8_lossy(&run.stdout).into_owned();
+	let service = text
+		.split("---proj-pod.service---")
+		.nth(1)
+		.unwrap_or_else(|| panic!("no proj-pod.service in {text}"))
+		.split("\n---")
+		.next()
+		.unwrap();
+	let line = |key: &str| {
+		service
+			.lines()
+			.filter(|l| l.starts_with(key))
+			.collect::<Vec<_>>()
+	};
+	let before = line("ExecStartPre=");
+	assert_eq!(before.len(), 2, "{service}");
+	assert!(before[0].contains("pod ps -q"), "{service}");
+	let create = before[1];
+	assert!(create.contains(" pod create "), "{create}");
+	let replaces: Vec<&str> = create
+		.split(' ')
+		.filter(|w| w.starts_with("--replace"))
+		.collect();
+	assert_eq!(replaces, ["--replace", "--replace=false"], "{create}");
+	assert!(create.contains("--pod-id-file=%t/%N.pod-id"), "{create}");
+	assert!(
+		line("ExecStop=")[0].ends_with(" pod stop --ignore --time=10 proj"),
+		"{service}"
+	);
+	assert!(
+		line("ExecStopPost=")[0].ends_with(" pod rm --ignore --force proj"),
+		"{service}"
+	);
+}
+
+#[cfg(unix)]
+#[path = "ownership_shell_tests.rs"]
+mod shell;

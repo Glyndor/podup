@@ -1,6 +1,7 @@
-//! The drop-in each installed container service carries, in
+//! The drop-in each installed container and pod service carries, in
 //! `~/.config/systemd/user/<service>.d/`. It replaces the cleanup by name that Quadlet writes with a
-//! cleanup of the container the unit started; see [`crate::quadlet::drop_in`] for what it holds.
+//! cleanup of what the unit started; see [`crate::quadlet::drop_in`] and
+//! [`crate::quadlet::pod_drop_in`] for what they hold.
 //!
 //! A drop-in is podup's only when its first line is the ownership marker of the project, the same
 //! mark the units carry. One that is someone else's, carries no marker, or is not a regular file, is
@@ -16,12 +17,33 @@ use crate::ComposeError;
 /// One drop-in to publish.
 pub(super) struct DropIn {
 	/// The service it belongs to, such as `proj-web.service`.
-	service: String,
+	pub(super) service: String,
 	/// What the file holds.
 	pub(super) contents: String,
 }
 
 impl DropIn {
+	/// Reuse only a freshly generated, non-ignored cleanup with a project-label filter.
+	/// Recorded IDs alone cannot authorise this independent retry.
+	pub(super) fn cleanup_command(&self) -> Option<String> {
+		self.contents
+			.lines()
+			.rev()
+			.filter_map(|line| {
+				line.strip_prefix("ExecStopPost=")
+					.or_else(|| line.strip_prefix("ExecStop="))
+			})
+			.find(|command| {
+				!command.starts_with('-') && command.contains("--filter label=podup.project=")
+			})
+			// These generated commands have no runtime specifiers; undo systemd's dollar escape.
+			.map(|command| command.replace("$$", "$"))
+	}
+
+	pub(super) fn same_service(&self, other: &Self) -> bool {
+		self.service == other.service
+	}
+
 	/// `<service>.d/<name>`, relative to the user's systemd unit directory.
 	pub(super) fn relative(&self) -> String {
 		format!("{}.d/{}", self.service, quadlet::DROP_IN_NAME)
@@ -38,16 +60,100 @@ fn path_for(service: &str) -> PathBuf {
 		.join(quadlet::DROP_IN_NAME)
 }
 
-/// The drop-ins of the `.container` units among `units`, one per service.
+/// The service of a unit file that carries a drop-in: `<stem>.service` for a container,
+/// `<stem>-pod.service` for a pod; `None` for the others.
+pub(super) fn service_of(filename: &str) -> Option<String> {
+	if let Some(stem) = filename.strip_suffix(".container") {
+		return Some(format!("{stem}.service"));
+	}
+	filename
+		.strip_suffix(".pod")
+		.map(|stem| format!("{stem}-pod.service"))
+}
+
+/// The drop-ins of the container and pod units among `units`, one per service.
 pub(super) fn plan(project: &str, units: &[QuadletUnit]) -> Vec<DropIn> {
 	units
 		.iter()
-		.filter_map(|u| Some((u.filename.strip_suffix(".container")?, u)))
-		.map(|(stem, u)| DropIn {
-			service: format!("{stem}.service"),
-			contents: quadlet::drop_in(project, &u.contents),
+		.filter_map(|u| {
+			Some(make_drop_in(
+				project,
+				&u.filename,
+				service_of(&u.filename)?,
+				&u.contents,
+			))
 		})
 		.collect()
+}
+
+fn make_drop_in(project: &str, name: &str, service: String, contents: &str) -> DropIn {
+	DropIn {
+		service,
+		contents: if name.ends_with(".pod") {
+			quadlet::pod_drop_in(project, contents)
+		} else {
+			quadlet::drop_in(project, contents)
+		},
+	}
+}
+
+/// Protect the units already on disk, including ones the next install will retire.
+pub(super) fn existing(project: &str, paths: &[PathBuf]) -> crate::Result<Vec<DropIn>> {
+	let mut drop_ins = Vec::new();
+	for path in paths {
+		let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+			continue;
+		};
+		if let Some(service) = service_of(name) {
+			let contents = if path
+				.symlink_metadata()
+				.map_err(|e| cannot("read", path, e))?
+				.len()
+				> crate::filesystem::MAX_FILE_BYTES
+			{
+				// Only complete lines of the bounded header can supply a legacy runtime name.
+				let head = crate::filesystem::read_head_capped(path, 4096)
+					.map_err(|e| cannot("read", path, e))?;
+				if !head.starts_with(format!("# podup-owner: {project}\n").as_bytes()) {
+					return Err(ComposeError::Autostart(format!(
+						"cannot protect {}: ownership marker not found in bounded header",
+						path.display()
+					)));
+				}
+				let key = if name.ends_with(".container") {
+					"ContainerName="
+				} else {
+					"PodName="
+				};
+				let head = String::from_utf8_lossy(&head);
+				let identity = head
+					.split_inclusive('\n')
+					.filter(|line| line.ends_with('\n'))
+					.find_map(|line| line.trim_end_matches(['\r', '\n']).strip_prefix(key))
+					.filter(|value| {
+						value
+							.as_bytes()
+							.first()
+							.is_some_and(u8::is_ascii_alphanumeric)
+							&& value.bytes().all(|c| {
+								c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'-')
+							})
+					})
+					.ok_or_else(|| {
+						ComposeError::Autostart(format!(
+							"cannot protect {}: no usable {key} in complete bounded header lines",
+							path.display()
+						))
+					})?;
+				format!("{key}{identity}\n")
+			} else {
+				crate::filesystem::read_to_string_capped(path)
+					.map_err(|e| cannot("read", path, e))?
+			};
+			drop_ins.push(make_drop_in(project, name, service, &contents));
+		}
+	}
+	Ok(drop_ins)
 }
 
 /// The project in the marker of the drop-in at `path`, when there is a file there.
@@ -64,7 +170,7 @@ fn owner(path: &Path) -> std::io::Result<Option<Option<String>>> {
 	})))
 }
 
-fn cannot(what: &str, path: &Path, e: std::io::Error) -> ComposeError {
+pub(super) fn cannot(what: &str, path: &Path, e: std::io::Error) -> ComposeError {
 	ComposeError::Autostart(format!("cannot {what} {}: {e}", path.display()))
 }
 

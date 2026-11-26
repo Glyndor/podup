@@ -38,7 +38,7 @@ fn stub_manager(dir: &Path) {
 	let bin = dir.join("bin");
 	fs::create_dir_all(&bin).unwrap();
 	for (name, body) in [
-		("systemctl", "echo \"$*\" >> \"$(dirname \"$0\")/calls\"\ncase \"$*\" in *is-enabled*) echo enabled;; *is-active*) echo active;; *LoadState*) echo LoadState=not-found;; esac\nexit 0\n"),
+		("systemctl", "echo \"$*\" >> \"$(dirname \"$0\")/calls\"\ncase \"$*\" in *is-enabled*) echo enabled;; *is-active*) echo active;; *--property=ActiveState,Result*) echo ActiveState=inactive; echo Result=success;; *--property=Result*) echo success;; *LoadState*) echo LoadState=not-found;; esac\nexit 0\n"),
 		("loginctl", "echo Linger=yes\nexit 0\n"),
 	] {
 		let path = bin.join(name);
@@ -215,7 +215,10 @@ fn a_pipe_that_is_not_the_projects_does_not_hold_status() {
 fn an_own_unit_longer_than_the_input_limit_is_stopped_and_removed() {
 	let dir = project();
 	let unit = units(dir.path()).join(format!("{PROJECT}-web.container"));
-	let mut text = format!("# podup-owner: {PROJECT}\n[Container]\nImage=nginx\n").into_bytes();
+	let mut text = format!(
+		"# podup-owner: {PROJECT}\n[Container]\nImage=nginx\nContainerName={PROJECT}-web\n"
+	)
+	.into_bytes();
 	while text.len() < 17 * 1024 * 1024 {
 		text.extend_from_slice(b"# padding\n");
 	}

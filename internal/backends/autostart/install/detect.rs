@@ -15,19 +15,19 @@ use crate::autostart::conflict;
 pub enum InstalledMode {
 	/// The service-mode `podup-<project>.service` unit is present.
 	Service,
-	/// Quadlet `<project>-*.container` units are present.
+	/// Quadlet container units or owned units such as `<project>.pod` are present.
 	Quadlet,
 	/// Neither: nothing is installed.
 	None,
 }
 
 /// Detect the installed autostart mode for `project` from what is on disk.
-pub fn installed_mode(project: &str) -> InstalledMode {
-	if unit_path(project).exists() {
+pub fn installed_mode(project: &str) -> crate::Result<InstalledMode> {
+	Ok(if unit_path(project).exists() {
 		InstalledMode::Service
-	} else if !conflict::quadlet_units_present(project).is_empty() {
+	} else if !conflict::quadlet_units_present(project)?.is_empty() {
 		InstalledMode::Quadlet
 	} else {
 		InstalledMode::None
-	}
+	})
 }
