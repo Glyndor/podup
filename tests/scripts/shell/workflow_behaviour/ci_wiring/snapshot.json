@@ -457,6 +457,7 @@
     "name": "Supported Podman majors${{ github.event_name == 'pull_request' && github.base_ref == 'main' && ' (promotion)' || !(github.event_name == 'merge_group' || github.event_name == 'pull_request' && github.base_ref == 'develop') && format(' ({0})', github.event_name) || '' }}",
     "needs": [
      "decide",
+     "slot",
      "podman-vm",
      "podman-native"
     ],
@@ -464,7 +465,7 @@
     "steps": [
      {
       "name": "Reflect the matrix result",
-      "sha": "ab99176dc793831b",
+      "sha": "180141af74f82f09",
       "uses": null
      }
     ],
@@ -475,8 +476,11 @@
      "GLYNDOR_APT_FPR": "9ADF04EA8C3139CDB67303CFA6705C2EA153F3D6",
      "PODMAN_FLOOR": "6.2.0"
     },
-    "if": "${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.decide.outputs.engine != 'false' }}",
-    "needs": "decide",
+    "if": "${{ !cancelled() && ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.decide.outputs.engine != 'false' || github.event_name == 'schedule' && needs.slot.outputs.due != 'false') }}",
+    "needs": [
+     "decide",
+     "slot"
+    ],
     "permissions": {
      "contents": "read"
     },
@@ -515,7 +519,7 @@
     "timeout-minutes": 60
    },
    "podman-vm": {
-    "if": "${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}",
+    "if": "${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' && (github.event_name != 'schedule' || github.event.schedule == '0 9 * * *') }}",
     "name": "podman-vm (${{ matrix.podman }}${{ matrix.mode == 'coverage' && ', coverage' || '' }})",
     "needs": "decide",
     "runs-on": "ubuntu-24.04",
@@ -576,6 +580,62 @@
      }
     },
     "timeout-minutes": "${{ matrix.job_minutes }}"
+   },
+   "report": {
+    "env": {
+     "AGGREGATE_RESULT": "${{ needs.podman-majors.result }}",
+     "GH_REPO": "${{ github.repository }}",
+     "GH_TOKEN": "${{ github.token }}",
+     "ISSUE_TITLE": "Scheduled Podman lane failed",
+     "NATIVE_RESULT": "${{ needs.podman-native.result }}",
+     "RUN_URL": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+     "SLOT_RESULT": "${{ needs.slot.result }}",
+     "VM_RESULT": "${{ needs.podman-vm.result }}"
+    },
+    "if": "${{ always() && github.event_name == 'schedule' && needs.podman-majors.result != 'success' }}",
+    "name": "Open an issue when the scheduled Podman lane fails",
+    "needs": [
+     "slot",
+     "podman-vm",
+     "podman-native",
+     "podman-majors"
+    ],
+    "permissions": {
+     "issues": "write"
+    },
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "name": "Open a single tracking issue and update it on each failure",
+      "sha": "3550705da61ec09e",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 10
+   },
+   "slot": {
+    "if": "${{ github.event_name == 'schedule' }}",
+    "name": "Decide whether the native lane is due on this slot",
+    "outputs": {
+     "due": "${{ steps.due.outputs.due }}"
+    },
+    "permissions": {
+     "actions": "read",
+     "contents": "read"
+    },
+    "runs-on": "ubuntu-latest",
+    "steps": [
+     {
+      "sha": "3939c41a8960de90",
+      "uses": "actions/checkout@<commit>"
+     },
+     {
+      "name": "Ask whether a scheduled run passed the native lane lately",
+      "sha": "87aa84800c342f03",
+      "uses": null
+     }
+    ],
+    "timeout-minutes": 10
    }
   },
   "name": "podman-lane",
@@ -601,6 +661,12 @@
    "schedule": [
     {
      "cron": "0 9 * * *"
+    },
+    {
+     "cron": "20 13 * * *"
+    },
+    {
+     "cron": "20 17 * * *"
     }
    ],
    "workflow_dispatch": null
