@@ -3,10 +3,18 @@
 use std::path::Path;
 
 use crate::compose::types::Service;
+use crate::error::sanitize_name;
 
 use super::super::{abs_against, quote_podman_arg_value, sorted_pairs, Section};
+use super::env_values::fits_env_file;
 
-/// Emit one `Environment=` line per compose environment entry, sorted by name.
+/// Emit the lines for the compose environment entries the env file of the
+/// service does not carry, sorted by name.
+///
+/// An entry with a value goes to that file (see [`super::env_values`]), because
+/// Quadlet puts every `Environment=KEY=VALUE` on the `podman run` command line.
+/// Only an entry the file cannot give back as written stays an `Environment=`
+/// line, and is reported.
 ///
 /// A bare `KEY`, or a null in a mapping, is "unset and removed from the service
 /// container environment" in the Compose Specification. `Environment=KEY`
@@ -18,10 +26,24 @@ use super::super::{abs_against, quote_podman_arg_value, sorted_pairs, Section};
 /// defined and keep the defined value when it is. Quadlet has no `UnsetEnv=`
 /// key (the generator rejects it as unsupported), so the removal goes through
 /// `PodmanArgs=--unsetenv=`, next to the bare `Environment=` line.
-pub(in super::super) fn emit_environment(service: &Service, container: &mut Section) {
+pub(in super::super) fn emit_environment(
+	name: &str,
+	service: &Service,
+	container: &mut Section,
+	warnings: &mut Vec<String>,
+) {
 	for (key, val) in sorted_pairs(service.environment.to_map()) {
 		match val {
-			Some(v) => container.add("Environment", format!("{key}={v}")),
+			Some(v) if fits_env_file(&key, &v) => {}
+			Some(v) => {
+				warnings.push(format!(
+					"{}: environment variable {} does not fit an env file, so its value is on \
+					 the podman command line",
+					sanitize_name(name),
+					sanitize_name(&key)
+				));
+				container.add("Environment", format!("{key}={v}"));
+			}
 			None => {
 				container.add("Environment", key.clone());
 				container.add(

@@ -42,9 +42,13 @@ use crate::error::{ComposeError, Result};
 use crate::ports::parse_ports;
 pub(crate) use unit::is_rootless_user_mode;
 use unit::{
-	build_unit, container_unit_with_mode, network_unit, volume_unit, ContainerUnitMode, PodFields,
-	UnitContext,
+	build_unit, container_unit_with_mode, environment_file, network_unit, volume_unit,
+	ContainerUnitMode, PodFields, UnitContext,
 };
+
+/// The end of the name of the file that carries a service's `environment:`
+/// values next to its container unit.
+pub(crate) const ENV_FILE_SUFFIX: &str = ".podup.env";
 
 /// Validate compose data before writing Quadlet units.
 pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
@@ -267,7 +271,8 @@ pub(crate) fn is_no_warn_set() -> bool {
 	NO_WARN.with(|c| c.get())
 }
 
-/// A single generated unit file: its name and full contents.
+/// A single generated file, a unit or the env file a container unit reads: its
+/// name and full contents.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct QuadletUnit {
@@ -336,7 +341,8 @@ pub fn generate(file: &ComposeFile, project: &str) -> QuadletOutput {
 /// it must carry an absolute `SetWorkingDirectory`; pass the compose base here.
 ///
 /// Emits one `.container` per service, one `.network` per declared network,
-/// and one `.volume` per declared named volume. Replica scaling, inline-Dockerfile
+/// and one `.volume` per declared named volume. A service with `environment:`
+/// values also gets a `.podup.env` file, which holds them. Replica scaling, inline-Dockerfile
 /// builds, and other fields without a Quadlet mapping are reported as warnings
 /// rather than silently dropped.
 pub fn generate_at(file: &ComposeFile, project: &str, base_dir: &std::path::Path) -> QuadletOutput {
@@ -507,6 +513,8 @@ fn generate_with_mode(
 		) {
 			out.units.push(unit);
 		}
+		// Before the container unit that names it.
+		out.units.extend(environment_file(project, name, service));
 		out.units.push(container_unit_with_mode(
 			name,
 			service,
@@ -554,6 +562,10 @@ fn generate_with_mode(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "environment_file_tests.rs"]
+mod environment_file_tests;
 
 #[cfg(test)]
 #[path = "ownership_tests.rs"]

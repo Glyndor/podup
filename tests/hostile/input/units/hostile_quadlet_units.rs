@@ -71,6 +71,33 @@ fn q(s: &str) -> String {
 	out
 }
 
+/// Everything wrong with the structure of an env file. Podman reads it line by
+/// line with no quoting, so after the owner line each line has to be one
+/// `KEY=VALUE` whose key is not read as a comment or trimmed. A tab is the one
+/// control character it may hold.
+fn env_file_problems(name: &str, contents: &str) -> Vec<String> {
+	let mut bad = Vec::new();
+	if let Some(c) = contents
+		.chars()
+		.find(|c| c.is_control() && !matches!(c, '\n' | '\t'))
+	{
+		bad.push(format!("{name}: raw control character {c:?}"));
+	}
+	let mut lines = contents.lines();
+	if !lines
+		.next()
+		.is_some_and(|l| l.starts_with("# podup-owner: "))
+	{
+		bad.push(format!("{name}: no owner line"));
+	}
+	for line in lines {
+		if line.starts_with(|c: char| c == '#' || c.is_whitespace()) || !line.contains('=') {
+			bad.push(format!("{name}: line is not KEY=VALUE: {line:?}"));
+		}
+	}
+	bad
+}
+
 /// Everything wrong with the structure of `out`.
 fn problems(units: &[(&str, &str)], canary: &str) -> Vec<String> {
 	let mut bad = Vec::new();
@@ -84,6 +111,10 @@ fn problems(units: &[(&str, &str)], canary: &str) -> Vec<String> {
 			bad.push(format!(
 				"unit file name is not one safe component: {name:?}"
 			));
+		}
+		if name.ends_with(".podup.env") {
+			bad.extend(env_file_problems(name, contents));
+			continue;
 		}
 		if let Some(c) = contents.chars().find(|c| c.is_control() && *c != '\n') {
 			bad.push(format!("{name}: raw control character {c:?}"));
@@ -226,6 +257,24 @@ fn the_structure_check_sees_each_kind_of_injection() {
 	// A payload that stays inside a quoted argument is an argument.
 	let quoted = unit("[Service]\nExecStart=/bin/sh -c \"x\" \"a\\\"; ExecStartPre=/bin/c\"\n");
 	assert!(problems(&quoted, "c").is_empty());
+}
+
+#[test]
+fn the_env_file_check_sees_each_kind_of_injection() {
+	for (what, contents) in [
+		("no owner line", "A=b\n"),
+		("raw cr", "# podup-owner: p\nA=b\rc\n"),
+		("not key value", "# podup-owner: p\nnonsense\n"),
+		("a comment", "# podup-owner: p\n# A=b\n"),
+		("a trimmed key", "# podup-owner: p\n A=b\n"),
+	] {
+		assert!(
+			!problems(&[("proj-web.podup.env", contents)], "c").is_empty(),
+			"the check missed: {what}"
+		);
+	}
+	let honest = "# podup-owner: p\nA=%h $x\t\"q\" \\\n";
+	assert!(problems(&[("proj-web.podup.env", honest)], "c").is_empty());
 }
 
 /// `generate quadlet` stops, before it writes a unit, for a secret whose file is a

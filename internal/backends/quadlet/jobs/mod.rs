@@ -38,7 +38,9 @@ use indexmap::IndexMap;
 
 use self::schedule::{plan, Plan};
 use self::timer::{is_fixed_offset_zone, is_safe_unit_name, job_stem, timer_unit, TimerSpec};
-use super::unit::{build_unit, container_name, emits_build_unit, job_container_unit, UnitContext};
+use super::unit::{
+	build_unit, container_name, emits_build_unit, environment_file, job_container_unit, UnitContext,
+};
 use super::QuadletOutput;
 use crate::compose::types::{ComposeFile, DependsOn, Job, Service};
 use crate::error::sanitize_name;
@@ -251,6 +253,8 @@ fn export_job(
 		})
 		.collect();
 	out.units.extend(build);
+	out.units
+		.extend(environment_file(ctx.project, name, &service));
 	out.units.push(container);
 	let mut written = 0;
 	let mut follows_dst = false;
