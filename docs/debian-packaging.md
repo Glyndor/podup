@@ -16,7 +16,7 @@ Installed `unattended-upgrades` does not guarantee automatic updates. The schedu
 
 ## Build a .deb locally
 
-Build prerequisites: `debhelper` 13, `build-essential`, `dpkg-dev`, `musl-tools` and the workflow-pinned rustup toolchain with the matching musl target.
+Build prerequisites: `debhelper` 13, `build-essential`, `dpkg-dev` and the workflow-pinned rustup toolchain with the matching musl target. `musl-tools` is not needed for it: the package is built without the `update` feature (`debian/rules`), and the pull-request build of the package runs without it.
 
 ```sh
 dpkg-buildpackage -us -uc -b
