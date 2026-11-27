@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::compose::types::{ComposeFile, Service};
-use crate::quadlet::QuadletUnit;
+use crate::quadlet::{escape_unit_value, QuadletUnit};
 
 /// Keep the path every secret already has in the units this install overwrites,
 /// and report each secret whose path was kept.
@@ -106,7 +106,7 @@ fn keep_unit_paths(contents: &str, old: &str, compose: &Service) -> (Option<Stri
 	if lines.len() != compose.secrets.len() {
 		return (None, Vec::new());
 	}
-	let old_entries: Vec<Entry<'_>> = secret_lines(old)
+	let old_entries: Vec<Entry> = secret_lines(old)
 		.iter()
 		.map(|entry| Entry::new(entry.1))
 		.collect();
@@ -136,11 +136,15 @@ fn keep_unit_paths(contents: &str, old: &str, compose: &Service) -> (Option<Stri
 		if installed_target == new_target {
 			continue;
 		}
-		// The target is written as the installed unit wrote it: the target it
-		// names, or its own name when it names none, so the path stays exactly
-		// where the service already reads it.
-		let target_raw = installed.target_raw.unwrap_or(installed.name_raw);
-		changes.insert(line, with_target(raw, target_raw));
+		// The destination is decoded and goes through the same field filter the
+		// writer applies to every field of the line, so a `,` or an `=` in it
+		// cannot inject an option of its own. It is then written with the
+		// writer's escaping, not with the text the installed unit happened to
+		// carry: a destination with a space in it stays one quoted value, the
+		// way the writer would have written it.
+		let destination = secret_field(installed_target);
+		let value = parsed.with_target(&destination);
+		changes.insert(line, escape_unit_value("Secret", &value));
 		if installed.target.is_none() {
 			// The installed unit mounts the secret under its own name: that is
 			// the path the units of 6.1.0 gave it, and the user is told about
@@ -159,29 +163,60 @@ fn keep_unit_paths(contents: &str, old: &str, compose: &Service) -> (Option<Stri
 }
 
 /// One `Secret=` entry of a container unit.
-struct Entry<'a> {
-	/// The name field, as it is written.
-	name_raw: &'a str,
-	/// The name, with the systemd escapes undone.
+struct Entry {
+	/// The name of the secret, with the systemd escapes undone.
 	name: String,
-	/// The target, when the entry names one.
+	/// The target, when the entry names one, with the systemd escapes undone.
 	target: Option<String>,
-	/// The target, as it is written.
-	target_raw: Option<&'a str>,
+	/// The whole value, with the systemd escapes undone.
+	value: String,
 }
 
-impl<'a> Entry<'a> {
-	fn new(raw: &'a str) -> Self {
-		let mut fields = split_quotes(raw).1.split(',');
-		let name_raw = fields.next().unwrap_or_default();
-		let target_raw = fields.find_map(|field| field.strip_prefix("target="));
+impl Entry {
+	/// The entry a raw `Secret=` value carries: the name of the secret, the
+	/// target it names and the value itself, all with the systemd escapes
+	/// undone.
+	fn new(raw: &str) -> Self {
+		let value = decode(split_quotes(raw).1);
+		let mut fields = value.split(',');
+		let name = fields.next().unwrap_or_default().to_string();
+		let target = fields
+			.find_map(|field| field.strip_prefix("target="))
+			.map(str::to_string);
 		Entry {
-			name_raw,
-			name: decode(name_raw),
-			target: target_raw.map(decode),
-			target_raw,
+			name,
+			target,
+			value,
 		}
 	}
+
+	/// The value with the whole `target=` field set to `destination`, the other
+	/// fields keeping their place and their order.
+	fn with_target(&self, destination: &str) -> String {
+		let mut out = String::with_capacity(self.value.len() + destination.len());
+		for (index, field) in self.value.split(',').enumerate() {
+			if index > 0 {
+				out.push(',');
+			}
+			if field.starts_with("target=") {
+				out.push_str("target=");
+				out.push_str(destination);
+			} else {
+				out.push_str(field);
+			}
+		}
+		out
+	}
+}
+
+/// One field of a `Secret=` option list: the `,`/`=` separators and the control
+/// characters are dropped, the same rule the writer applies to every field it
+/// renders, so a value cannot inject an option of its own.
+fn secret_field(value: &str) -> String {
+	value
+		.chars()
+		.filter(|c| !c.is_control() && *c != ',' && *c != '=')
+		.collect()
 }
 
 /// The lines of a unit's `[Container]` section, with their index in the file.
@@ -271,31 +306,6 @@ fn decode(raw: &str) -> String {
 		}
 	}
 	out.replace("%%", "%").replace("$$", "$")
-}
-
-/// The `Secret=` value with its `target=` option set to `target`.
-///
-/// The target is written as the unit it comes from wrote it, so the value keeps
-/// the escapes that unit already uses for it.
-fn with_target(raw: &str, target: &str) -> String {
-	let (quoted, body) = split_quotes(raw);
-	let mut out = String::with_capacity(raw.len());
-	for (index, field) in body.split(',').enumerate() {
-		if index > 0 {
-			out.push(',');
-		}
-		if field.starts_with("target=") {
-			out.push_str("target=");
-			out.push_str(target);
-		} else {
-			out.push_str(field);
-		}
-	}
-	if quoted {
-		format!("\"{out}\"")
-	} else {
-		out
-	}
 }
 
 /// The unit text with the given lines replaced, by their index in the file.
