@@ -190,6 +190,7 @@ mod install;
 mod oversized;
 mod ownership;
 mod rebuild;
+mod secret_paths;
 mod stop_result;
 mod uninstall;
 // #1970: prebuilt-shape install + rebuild behaviour. Split into its own

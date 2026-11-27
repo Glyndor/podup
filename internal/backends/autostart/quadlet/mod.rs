@@ -16,6 +16,7 @@ use crate::{quadlet, ComposeError};
 
 mod drop_ins;
 mod installed;
+mod secret_paths;
 mod stop;
 pub(in super::super) use installed::installed_units;
 
@@ -179,7 +180,7 @@ pub fn install_quadlet<S: SystemCtl>(
 	}
 
 	quadlet::validate_for_quadlet(file)?;
-	let result = quadlet::generate_for_autostart(file, project, base_dir);
+	let mut result = quadlet::generate_for_autostart(file, project, base_dir);
 	if let Some(dup) = result.duplicate_filename() {
 		return Err(ComposeError::Autostart(format!(
 			"quadlet: two resources map to the same unit file {dup:?}; \
@@ -195,6 +196,14 @@ pub fn install_quadlet<S: SystemCtl>(
 	// anything is written, so the install stops and names the path instead of
 	// writing its units and failing afterwards.
 	let installed = installed_units(project)?;
+	// The units of an install that 6.1.0 made mount every secret under its own
+	// name, and the ones of today name the target after the compose secret.
+	// Rewriting them would move the file a running service reads, so the
+	// units this install is about to overwrite are read first and the path
+	// each secret already has is kept.
+	for kept in secret_paths::keep_installed_paths(&mut result.units, file, &installed) {
+		crate::ui::errln!("{kept}")?;
+	}
 	let services = container_services(&result.units);
 	// `podup autostart rebuild` is what restarts a `.build` unit to rebuild an
 	// image, so the install path only has to build once. List the `.build`
