@@ -35,6 +35,11 @@ impl SecretBytes {
 		self.0.len()
 	}
 
+	/// Whether both hold the same bytes.
+	pub(super) fn holds_the_same(&self, other: &SecretBytes) -> bool {
+		self.0 == other.0
+	}
+
 	/// The bytes themselves, for the single place they have to leave: the body of
 	/// the `secrets/create` request. Any other caller is a leak, which is the
 	/// point of it being greppable rather than implicit.
