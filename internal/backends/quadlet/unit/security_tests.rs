@@ -27,7 +27,7 @@ fn secret_field_strips_separators_and_controls() {
 fn render_secret_short_form_sanitizes_name() {
 	// A short-form name with a `,`/`=` would inject extra `Secret=` options.
 	let s = ServiceSecretRef::Short("tok,uid=0".into());
-	assert_eq!(render_bare(&s), "tokuid0");
+	assert_eq!(render_bare(&s), "tokuid0,target=tokuid0");
 }
 
 #[test]
@@ -61,6 +61,46 @@ fn render_secret_cannot_inject_extra_options() {
 	// separate option: exactly one comma (the legitimate `,target=`).
 	assert_eq!(out.matches(',').count(), 1);
 	assert_eq!(out, "tok,target=/run/xuid0");
+}
+
+#[test]
+fn a_secret_without_a_target_is_mounted_under_its_compose_name() {
+	let mut secrets = IndexMap::new();
+	secrets.insert(
+		"token".to_string(),
+		SecretConfig {
+			content: Some("x".into()),
+			..SecretConfig::default()
+		},
+	);
+	secrets.insert(
+		"logical".to_string(),
+		SecretConfig {
+			external: Some(true),
+			name: Some("physical".into()),
+			..SecretConfig::default()
+		},
+	);
+	let short = |name: &str| ServiceSecretRef::Short(name.into());
+	assert_eq!(
+		render_secret(&short("token"), "app", &secrets),
+		"app_secret_token,target=token"
+	);
+	assert_eq!(
+		render_secret(&short("logical"), "app", &secrets),
+		"physical,target=logical"
+	);
+	let long = ServiceSecretRef::Long {
+		source: "token".into(),
+		target: None,
+		uid: None,
+		gid: None,
+		mode: Some(0o440),
+	};
+	assert_eq!(
+		render_secret(&long, "app", &secrets),
+		"app_secret_token,target=token,mode=440"
+	);
 }
 
 // --- map_security_opt: each recognized form maps to its dedicated key -----
@@ -144,7 +184,10 @@ fn inline_secret_resolves_to_project_scoped_name() {
 	);
 	assert!(is_inline_secret(defs.get("tok")));
 	let s = ServiceSecretRef::Short("tok".into());
-	assert_eq!(render_secret(&s, "proj", &defs), "proj_secret_tok");
+	assert_eq!(
+		render_secret(&s, "proj", &defs),
+		"proj_secret_tok,target=tok"
+	);
 
 	// A file-based secret is created by `up` under the project-scoped name too.
 	let mut file_defs = IndexMap::new();
@@ -156,7 +199,10 @@ fn inline_secret_resolves_to_project_scoped_name() {
 		},
 	);
 	assert!(is_inline_secret(file_defs.get("tok")));
-	assert_eq!(render_secret(&s, "proj", &file_defs), "proj_secret_tok");
+	assert_eq!(
+		render_secret(&s, "proj", &file_defs),
+		"proj_secret_tok,target=tok"
+	);
 
 	// An external secret is referenced by its existing name, never scoped.
 	let mut ext_defs = IndexMap::new();
@@ -169,7 +215,7 @@ fn inline_secret_resolves_to_project_scoped_name() {
 		},
 	);
 	assert!(!is_inline_secret(ext_defs.get("tok")));
-	assert_eq!(render_secret(&s, "proj", &ext_defs), "tok");
+	assert_eq!(render_secret(&s, "proj", &ext_defs), "tok,target=tok");
 
 	// With a `name:` the engine attaches that existing secret, so the unit does too.
 	let mut named = IndexMap::new();
@@ -181,7 +227,7 @@ fn inline_secret_resolves_to_project_scoped_name() {
 			..Default::default()
 		},
 	);
-	assert_eq!(render_secret(&s, "proj", &named), "real-name");
+	assert_eq!(render_secret(&s, "proj", &named), "real-name,target=tok");
 }
 
 #[test]

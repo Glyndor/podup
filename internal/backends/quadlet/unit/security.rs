@@ -49,8 +49,11 @@ fn secret_source_name(
 }
 
 /// Render a service `secrets:` entry into a Quadlet `Secret=` value
-/// (`name[,target=,uid=,gid=,mode=]`), resolving inline secrets to their
-/// project-scoped name so the reference matches what `up` creates.
+/// (`name,target=[,uid=,gid=,mode=]`), resolving inline secrets to their
+/// project-scoped name so the reference matches what `up` creates. The target is
+/// always written: without one Podman names the mount after the source, which is
+/// the project-scoped or external name, while `up` mounts it under the compose
+/// name.
 pub(super) fn render_secret(
 	secret: &ServiceSecretRef,
 	project: &str,
@@ -59,7 +62,11 @@ pub(super) fn render_secret(
 	match secret {
 		// Sanitize the short-form name too: `Secret=` is an option list, so a
 		// `,`/`=` in the name would inject extra options (same guard as Long).
-		ServiceSecretRef::Short(name) => secret_field(&secret_source_name(project, name, secrets)),
+		ServiceSecretRef::Short(name) => format!(
+			"{},target={}",
+			secret_field(&secret_source_name(project, name, secrets)),
+			secret_field(name)
+		),
 		ServiceSecretRef::Long {
 			source,
 			target,
@@ -71,9 +78,8 @@ pub(super) fn render_secret(
 			// or `=` embedded in any field would inject extra options. Strip
 			// those (and control chars) from each value at the boundary.
 			let mut s = secret_field(&secret_source_name(project, source, secrets));
-			if let Some(t) = target {
-				s.push_str(&format!(",target={}", secret_field(t)));
-			}
+			let t = target.as_deref().unwrap_or(source);
+			s.push_str(&format!(",target={}", secret_field(t)));
 			if let Some(u) = uid {
 				s.push_str(&format!(",uid={}", secret_field(u)));
 			}

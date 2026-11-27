@@ -27,6 +27,9 @@ mod publishing;
 pub use publishing::write_units;
 pub(crate) use publishing::{check_unit_owners, write_autostart_units};
 mod render;
+/// The writer's own escaping of a unit value, so code that rewrites a
+/// rendered unit writes the value the way the writer would have written it.
+pub(crate) use render::escape_unit_value;
 mod secrets_unit;
 mod unit;
 mod unit_file;

@@ -8,7 +8,10 @@ use std::path::Path;
 
 use super::tests::{creates_nothing, secrets_unit, yaml_path};
 use crate::compose::parse_str;
-use crate::quadlet::{generate_at, validate_for_quadlet, validate_for_quadlet_in, QuadletOutput};
+use crate::quadlet::{
+	generate_at, generate_for_autostart, validate_for_quadlet, validate_for_quadlet_in,
+	QuadletOutput,
+};
 
 fn container<'a>(out: &'a QuadletOutput, name: &str) -> &'a str {
 	&out.units
@@ -48,7 +51,7 @@ fn a_file_is_mounted_with_the_mode_it_has_on_the_host() {
 		"services:\n  web:\n    image: img\n    secrets: [s600]\n    configs: [c640, d644]\nsecrets:\n  s600:\n    file: ./s600\nconfigs:\n  c640:\n    file: ./c640\n  d644:\n    file: ./d644\n",
 	);
 	let web = container(&out, "web");
-	assert!(web.contains("Secret=proj_secret_s600,mode=600\n"));
+	assert!(web.contains("Secret=proj_secret_s600,target=s600,mode=600\n"));
 	assert!(web.contains("Secret=proj_config_c640,type=mount,target=/c640,mode=640\n"));
 	assert!(web.contains("Secret=proj_config_d644,type=mount,target=/d644,mode=644\n"));
 }
@@ -70,6 +73,28 @@ fn a_mode_the_service_gives_wins() {
 	assert_eq!(line.matches("mode=").count(), 1);
 }
 
+/// The units `autostart --mode quadlet` installs mount secrets that `up` made, and
+/// give them the same mode `up` does: the bits of the host file, unless the
+/// service says otherwise.
+#[cfg(unix)]
+#[test]
+fn the_installed_units_keep_the_mode_of_a_secret_file_and_the_mode_a_service_gives() {
+	let dir = tempfile::tempdir().unwrap();
+	file_with_mode(dir.path(), "s600", 0o600);
+	file_with_mode(dir.path(), "s640", 0o640);
+	file_with_mode(dir.path(), "given", 0o600);
+	let yaml = "services:\n  web:\n    image: img\n    secrets:\n      - s600\n      - s640\n      - source: given\n        mode: 0o440\nsecrets:\n  s600:\n    file: ./s600\n  s640:\n    file: ./s640\n  given:\n    file: ./given\n";
+	let out = generate_for_autostart(&parse_str(yaml).unwrap(), "proj", dir.path());
+	let web = container(&out, "web");
+	for line in [
+		"Secret=proj_secret_s600,target=s600,mode=600\n",
+		"Secret=proj_secret_s640,target=s640,mode=640\n",
+		"Secret=proj_secret_given,target=given,mode=440\n",
+	] {
+		assert!(web.contains(line), "{line}: {web}");
+	}
+}
+
 /// A file that cannot be read cannot be asked for its mode: the narrowest one
 /// is used, and the operator is told.
 #[test]
@@ -79,7 +104,7 @@ fn a_file_that_cannot_be_read_is_mounted_with_the_narrowest_mode_and_said_so() {
 		"proj",
 		Path::new("/nonexistent/project"),
 	);
-	assert!(container(&out, "web").contains("Secret=proj_secret_s,mode=400\n"));
+	assert!(container(&out, "web").contains("Secret=proj_secret_s,target=s,mode=400\n"));
 	assert!(out
 		.warnings
 		.iter()
@@ -110,7 +135,7 @@ fn a_file_with_an_execute_or_setuid_bit_is_not_exported() {
 		// and is given nothing more open than 0400.
 		let web = container(&out, "web");
 		assert!(web.contains("Requires=proj-podup-secrets.service"));
-		assert!(web.contains("Secret=proj_secret_s,mode=400\n"));
+		assert!(web.contains("Secret=proj_secret_s,target=s,mode=400\n"));
 	}
 }
 
@@ -521,7 +546,9 @@ fn a_refused_source_fails_closed_in_the_command_in_the_unit_and_in_the_container
 		assert!(web
 			.contents
 			.contains("Requires=proj-podup-secrets.service\n"));
-		assert!(web.contents.contains("Secret=proj_secret_token,mode=400\n"));
+		assert!(web
+			.contents
+			.contains("Secret=proj_secret_token,target=token,mode=400\n"));
 	}
 	// The command for the name fails and says which.
 	let yaml = one_secret(dir.path().join("link").to_str().unwrap());
