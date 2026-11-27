@@ -367,6 +367,6 @@ fn installed_destination_ending_in_a_backslash_is_not_left_unquoted() {
 			line,
 			"Secret=\"proj_secret_token,target=/run/my secrets/token\\\\,mode=644\""
 		);
-		assert!(!line.ends_with('\\'), "{line}");
+		assert!(!line.ends_with('\\'), "the line ends in a continuation");
 	});
 }
