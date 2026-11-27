@@ -121,6 +121,36 @@ def python_without_isolation(steps, where):
     return out
 
 
+DEBIAN_RULES = os.environ.get("PODUP_DEBIAN_RULES", f"{REPO}/debian/rules")
+
+
+def deb_sbom_problems(sbom_run, rules):
+    """The `gen_sbom` call of each .deb against the target and the features that `debian/rules` builds with.
+
+    One line per problem. The rules map each Debian architecture to its Rust target (`RUST_TARGET_<arch> = <triple>`)
+    and name the features once (`CARGO_FEATURES = --no-default-features --features ...`)."""
+    out = []
+    targets = dict(re.findall(r"^RUST_TARGET_(\w+)\s*[:?]?=\s*(\S+)\s*$", rules, re.M))
+    features = re.findall(r"^CARGO_FEATURES\s*[:?]?=\s*(.+?)\s*$", rules, re.M)
+    if not targets or len(features) != 1:
+        return ["debian/rules: no RUST_TARGET_<arch> per architecture and a single CARGO_FEATURES to compare the SBOMs with"]
+    calls = {}
+    for m in re.finditer(r'^\s*gen_sbom\s+"podup_\$\{VERSION\}_(\w+)\.deb"\s+(\S+)[ \t]*(.*?)\s*$', sbom_run, re.M):
+        calls[m.group(1)] = (m.group(2), m.group(3))
+    for arch, target in sorted(targets.items()):
+        if arch not in calls:
+            out.append(f"the SBOM of the {arch} .deb is not made, and debian/rules builds it for {target}")
+            continue
+        got_target, got_features = calls[arch]
+        if got_target != target:
+            out.append(f"the SBOM of the {arch} .deb is made for {got_target} and debian/rules builds it for {target}")
+        if got_features.split() != features[0].split():
+            out.append(f"the SBOM of the {arch} .deb is made with `{got_features}` and debian/rules builds it with `{features[0]}`")
+    for arch in sorted(set(calls) - set(targets)):
+        out.append(f"the SBOM of the {arch} .deb is made and debian/rules maps no target for that architecture")
+    return out
+
+
 def problems(path):
     spec = yaml.safe_load(open(path))
     jobs = spec["jobs"]
@@ -215,6 +245,47 @@ def problems(path):
         bad("a published tag stops a real release and not a rehearsal: by the script, with the mode taken from dry_run, and no condition")
     if "refs/tags/${{ inputs.tag }}" != next(st for st in vjobs["verify"]["steps"] if uses(st, "actions/checkout"))["with"]["ref"]:
         bad("the verification does not check out the tag it was given")
+    # 2b. The tag is shown to be on `main` before a line of the tag runs: right after the checkout, inline (a script
+    # of the tag could answer the question itself, with a `git` of its own put first on the path), with no condition,
+    # no way to fail and go on, and the branch spelled out in the fetch and in the comparison.
+    vsteps = vjobs["verify"]["steps"]
+    on_main = next((i for i, st in enumerate(vsteps) if st.get("name") == "Tag must be on main"), None)
+    co = next(i for i, st in enumerate(vsteps) if uses(st, "actions/checkout"))
+    if on_main is None:
+        bad("the verification does not ask whether the tag is on main")
+    else:
+        step_main = vsteps[on_main]
+        text = str(step_main.get("run", ""))
+        if on_main != co + 1:
+            bad("the tag is not shown to be on main right after the checkout, before anything else")
+        if "if" in step_main or step_main.get("continue-on-error"):
+            bad("the check that the tag is on main is conditional or may fail")
+        if ".github/scripts" in text or re.search(r"\bbash\s+\S|\bsource\b|\.\s+\S+\.sh", text):
+            bad("the check that the tag is on main runs a file of the tag")
+        if '"+refs/heads/main:refs/remotes/origin/main"' not in text or "git merge-base --is-ancestor HEAD refs/remotes/origin/main" not in text:
+            bad("the check that the tag is on main does not name the branch in the fetch and in the comparison")
+        script = first_script(vsteps)
+        if script is not None and script < on_main:
+            bad("the verification runs a script of the tag before it shows that the tag is on main")
+
+    # 2c. A real release is refused before the checkout when the ref of the run is not the tag it was given
+    # (a dispatch from `main` is built to the end and refused by the signer, which asks for the tag): the
+    # step comes first, only a rehearsal escapes it, it cannot fail and go on, and it compares the ref of
+    # the run with `refs/tags/<tag>`, both read from the workflow's own context and not from the checkout.
+    from_tag = next((i for i, st in enumerate(vsteps) if st.get("name") == "A real release runs from its tag"), None)
+    if from_tag is None:
+        bad("the verification does not refuse a real release that does not run from its tag")
+    else:
+        step_tag = vsteps[from_tag]
+        if from_tag > co:
+            bad("a real release is refused for the ref it runs from only after the checkout")
+        if step_tag.get("if") != "${{ !inputs.dry_run }}" or step_tag.get("continue-on-error"):
+            bad("the check that a real release runs from its tag is not exactly for a real release, or may fail")
+        env_tag = step_tag.get("env") or {}
+        if env_tag.get("TAG") != "${{ inputs.tag }}" or env_tag.get("REF") != "${{ github.ref }}":
+            bad("the check that a real release runs from its tag does not read the tag and the ref of the run")
+        if '[ "$REF" != "refs/tags/$TAG" ]' not in str(step_tag.get("run", "")) or ".github/scripts" in str(step_tag.get("run", "")):
+            bad("the check that a real release runs from its tag does not compare the ref with refs/tags/<tag>, or runs a file")
 
     # 3b. Every job that holds the key, mints a token or writes the release looks the tag up again before it
     # runs a script of the checkout, and compares what it finds with the commit that was verified.
@@ -407,6 +478,10 @@ def problems(path):
         bad("`sbom` does not check that it changed no file of the source and wrote exactly the SBOMs")
     if any(uses(s, "download-artifact") and not (s.get("with") or {}).get("name") == "sbom-tools" for s in sbom["steps"]):
         bad("`sbom` downloads something other than its tools, into a workspace that holds the source")
+    # 8b. The SBOM of each .deb is made for the target and the features `debian/rules` builds that package with:
+    # the target decides which dependencies the resolution keeps, so a certificate for another target describes
+    # something that was not built.
+    out += deb_sbom_problems("\n".join(str(s.get("run", "")) for s in sbom["steps"]), open(DEBIAN_RULES).read())
 
     # 9. Python is started with -I wherever the tag's own scripts run, and nothing is piped into a shell.
     for label, group in (("release.yml", jobs), ("the reusable", rjobs)):

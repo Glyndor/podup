@@ -50,6 +50,22 @@ jobs:
       version: ${{ steps.pin.outputs.version }}
       tag: ${{ steps.pin.outputs.tag }}
     steps:
+      # A real release is started by the push of its tag or by a dispatch from that tag. A dispatch from `main`
+      # with the tag typed in checks out the right commit, so every check below passes, but the attestation of
+      # what it builds names `refs/heads/main` and the signer, which asks for the tag, refuses the provenance
+      # after every build has run. It is refused here, before the checkout, from the ref of the run alone. A
+      # rehearsal makes no attestation and may start from `main`.
+      - name: A real release runs from its tag
+        if: ${{ !inputs.dry_run }}
+        env:
+          TAG: ${{ inputs.tag }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/tags/$TAG" ]; then
+            echo "::error::${TAG} is not the tag this run started from (${REF}); start a real release from its tag."
+            exit 1
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         # No credential is left in the checkout, and the fetches this job makes
         # (the tag, `main`) are of a public repository and need none. It installs
@@ -57,6 +73,23 @@ jobs:
         with:
           persist-credentials: false
           ref: refs/tags/${{ inputs.tag }}
+
+      # The first thing this job does with the tag, before a line of the tag is run: a commit that is not
+      # on `main` is not reviewed, and every script below (`check-tag.sh`, the key slots, the check of the
+      # published releases) is a file of that commit, so one that could put a `git` of its own first on the
+      # path would answer this question itself. The question is asked here, in commands of this workflow,
+      # of the git of the runner, with the name of the branch spelled out.
+      - name: Tag must be on main
+        # Releases are cut only from `main` (develop → main merge, then tag).
+        # Refuse a tag pushed to any other branch so an unreviewed commit can
+        # never be published.
+        run: |
+          git fetch --unshallow --no-tags origin "+refs/heads/main:refs/remotes/origin/main" 2>/dev/null \
+            || git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          if ! git merge-base --is-ancestor HEAD refs/remotes/origin/main; then
+            echo "::error::Tagged commit is not reachable from origin/main; releases must be cut from main."
+            exit 1
+          fi
 
       - name: Take the release scripts from the commit that started the rehearsal
         if: ${{ inputs.dry_run }}
@@ -154,18 +187,6 @@ jobs:
             exit 1
           fi
           echo "Cargo.lock version ${LOCK_VERSION} matches."
-
-      - name: Tag must be on main
-        # Releases are cut only from `main` (develop → main merge, then tag).
-        # Refuse a tag pushed to any other branch so an unreviewed commit can
-        # never be published.
-        run: |
-          git fetch --unshallow --no-tags origin main 2>/dev/null \
-            || git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor HEAD origin/main; then
-            echo "::error::Tagged commit is not reachable from origin/main; releases must be cut from main."
-            exit 1
-          fi
 
       # Before anything is installed: `cargo install` below runs build scripts of other people's
       # crates in this workspace, and the commit has to be read before they can touch it.

@@ -81,7 +81,7 @@ fn the_container_requires_the_unit_and_keeps_its_secret() {
 	let web = container(&out, "web");
 	assert!(web.contains("Requires=proj-podup-secrets.service\n"));
 	assert!(web.contains("After=proj-podup-secrets.service\n"));
-	assert!(web.contains("Secret=proj_secret_token,mode=400\n"));
+	assert!(web.contains("Secret=proj_secret_token,target=token,mode=400\n"));
 }
 
 #[test]
@@ -143,7 +143,7 @@ fn an_external_secret_is_not_ours_to_create() {
 	);
 	assert!(secrets_unit(&out).is_none());
 	let web = container(&out, "web");
-	assert!(web.contains("Secret=pre_made\n"));
+	assert!(web.contains("Secret=pre_made,target=ext\n"));
 	assert!(!web.contains("podup-secrets"));
 }
 
@@ -164,7 +164,10 @@ fn an_environment_or_inline_secret_is_left_to_the_operator_and_the_unit_has_no_v
 	}
 	// The container still names them, so it does not start without them.
 	let web = container(&out, "web");
-	assert!(web.contains("Secret=proj_secret_e\n") && web.contains("Secret=proj_secret_c\n"));
+	assert!(
+		web.contains("Secret=proj_secret_e,target=e\n")
+			&& web.contains("Secret=proj_secret_c,target=c\n")
+	);
 	assert!(!web.contains("podup-secrets"));
 }
 
@@ -229,16 +232,18 @@ fn a_service_with_the_units_name_keeps_its_own_unit() {
 		.any(|u| u.filename == "proj-podup-secrets.container"));
 }
 
-// --- what `autostart --mode quadlet` installs does not change ------------------
+// --- what `autostart --mode quadlet` installs ----------------------------------
 
 /// A stack that starts under `autostart --mode quadlet` today must keep
 /// starting. Its units are generated in the prebuilt shape, which has no secrets
 /// unit yet (nothing there would install it), so the secrets unit, the
 /// `Requires=` on it and the mounted configs stay out of it. The golden text is
 /// what `podup autostart install --mode quadlet --dry-run` printed on `develop`
-/// at 67ae1b9b for the same file (units, then warnings, in order), taken before
-/// this change. A secret with a file source, an inline one, an external one and
-/// two configs are all in it.
+/// at 67ae1b9b for the same file (units, then warnings, in order), plus the lines
+/// that keep an installed container unit off a container it does not own, the
+/// target each secret is mounted at and the mode of the file one (0400 here: the
+/// file is not there to be read). A secret with a file source, an inline one, an
+/// external one and two configs are all in it.
 #[test]
 fn the_units_autostart_installs_are_the_ones_it_installed_before() {
 	// Parsed the way the command parses it, which adds the project's default
@@ -334,9 +339,14 @@ Label=podup.project=proj
 Label=podup.service=web
 LogDriver=k8s-file
 LogOpt=max-size=10485760
-Secret=proj_secret_filesec
+Secret=proj_secret_filesec,target=filesec,mode=400
 Secret=proj_secret_inl,target=inline.txt,mode=400
-Secret=extsec
+Secret=extsec,target=extsec
+PodmanArgs=--replace=false
+PodmanArgs=--cidfile=%t/%N.cid
+
+[Service]
+ExecStartPre=-/usr/bin/podman rm --force --ignore --filter name=^proj-web$$ --filter label=podup.project=proj
 
 [Install]
 WantedBy=default.target
@@ -353,7 +363,12 @@ Label=podup.project=proj
 Label=podup.service=worker
 LogDriver=k8s-file
 LogOpt=max-size=10485760
-Secret=proj_secret_filesec
+Secret=proj_secret_filesec,target=filesec,mode=400
+PodmanArgs=--replace=false
+PodmanArgs=--cidfile=%t/%N.cid
+
+[Service]
+ExecStartPre=-/usr/bin/podman rm --force --ignore --filter name=^proj-worker$$ --filter label=podup.project=proj
 
 [Install]
 WantedBy=default.target

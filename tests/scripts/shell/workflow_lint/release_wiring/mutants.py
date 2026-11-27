@@ -87,6 +87,19 @@ MUTANTS["a-published-release-is-refused-in-a-rehearsal"] = ver(lambda m: step(m,
 MUTANTS["a-published-release-is-accepted-in-a-release"] = ver(lambda m: step(m, "verify", "Refuse an already published")["env"].update({"MODE": "rehearsal"}))
 MUTANTS["the-published-check-is-inline-again"] = ver(lambda m: step(m, "verify", "Refuse an already published").update({"run": "gh api repos/x/releases"}))
 MUTANTS["builds-without-dry-run"] = rel(lambda m: m["jobs"]["builds"]["with"].pop("dry_run"))
+MUTANTS["the-tag-is-not-asked-whether-it-is-on-main"] = ver(lambda m: m["jobs"]["verify"]["steps"].remove(step(m, "verify", "Tag must be on main")))
+MUTANTS["the-main-check-is-conditional"] = ver(lambda m: step(m, "verify", "Tag must be on main").update({"if": "${{ !inputs.dry_run }}"}))
+MUTANTS["the-main-check-may-fail"] = ver(lambda m: step(m, "verify", "Tag must be on main").update({"continue-on-error": True}))
+MUTANTS["the-main-check-asks-the-tag"] = ver(lambda m: step(m, "verify", "Tag must be on main").update({"run": "bash .github/scripts/release/check-tag.sh main"}))
+MUTANTS["the-main-check-names-no-branch"] = ver(lambda m: step(m, "verify", "Tag must be on main").update({"run": step(m, "verify", "Tag must be on main")["run"].replace('"+refs/heads/main:refs/remotes/origin/main"', "main")}))
+MUTANTS["the-main-check-after-the-scripts-of-the-tag"] = ver(lambda m: m["jobs"]["verify"]["steps"].insert(next(i for i, x in enumerate(m["jobs"]["verify"]["steps"]) if x.get("name") == "Tag must be an existing tag object at the checked-out commit") + 1, m["jobs"]["verify"]["steps"].pop(next(i for i, x in enumerate(m["jobs"]["verify"]["steps"]) if x.get("name") == "Tag must be on main"))))
+MUTANTS["a-real-release-may-run-from-any-ref"] = ver(lambda m: m["jobs"]["verify"]["steps"].remove(step(m, "verify", "A real release runs from its tag")))
+MUTANTS["the-ref-check-is-only-for-a-rehearsal"] = ver(lambda m: step(m, "verify", "A real release runs from its tag").update({"if": "${{ inputs.dry_run }}"}))
+MUTANTS["the-ref-check-applies-to-a-rehearsal-too"] = ver(lambda m: step(m, "verify", "A real release runs from its tag").pop("if"))
+MUTANTS["the-ref-check-may-fail"] = ver(lambda m: step(m, "verify", "A real release runs from its tag").update({"continue-on-error": True}))
+MUTANTS["the-ref-check-reads-another-ref"] = ver(lambda m: step(m, "verify", "A real release runs from its tag")["env"].update({"REF": "${{ github.base_ref }}"}))
+MUTANTS["the-ref-check-compares-with-a-branch"] = ver(lambda m: step(m, "verify", "A real release runs from its tag").update({"run": step(m, "verify", "A real release runs from its tag")["run"].replace("refs/tags/$TAG", "refs/heads/main")}))
+MUTANTS["the-ref-check-after-the-checkout"] = ver(lambda m: m["jobs"]["verify"]["steps"].insert(1, m["jobs"]["verify"]["steps"].pop(0)))
 MUTANTS["verify-checks-out-another-tag"] = ver(lambda m: step(m, "verify", "actions/checkout")["with"].update({"ref": "refs/heads/main"}))
 MUTANTS["the-audit-checks-out-a-revision-an-output-carries"] = ver(lambda m: step(m, "audit", "actions/checkout")["with"].update({"ref": "${{ needs.verify.outputs.commit }}"}))
 MUTANTS["verify-called-with-another-tag"] = rel(lambda m: m["jobs"]["verify"]["with"].update({"tag": "${{ github.ref_name }}"}))
@@ -246,6 +259,15 @@ MUTANTS["the-container-job-trusts-the-workspace-too-late"] = bld(lambda m: m["jo
     m["jobs"]["build-deb"]["steps"].pop(m["jobs"]["build-deb"]["steps"].index(step(m, "build-deb", "Trust the workspace")))))
 
 # --- no shared cache ------------------------------------------------------------------------------
+def sbom_call(m, old, new):
+    s = step(m, "sbom", "gen_sbom")
+    assert old in s["run"]
+    s["run"] = s["run"].replace(old, new, 1)
+
+
+MUTANTS["the-deb-sbom-is-made-for-gnu"] = bld(lambda m: sbom_call(m, 'amd64.deb" x86_64-unknown-linux-musl', 'amd64.deb" x86_64-unknown-linux-gnu'))
+MUTANTS["the-deb-sbom-loses-the-features"] = bld(lambda m: sbom_call(m, "--features watch,completions", "--features watch"))
+MUTANTS["the-deb-sbom-of-arm64-is-not-made"] = bld(lambda m: sbom_call(m, 'gen_sbom "podup_${VERSION}_arm64.deb"', ': "podup_${VERSION}_arm64.deb"'))
 CACHE = {"name": "cache", "uses": "actions/cache@0000000000000000000000000000000000000000", "with": {"path": "target", "key": "k"}}
 for _j in ("build", "build-deb", "build-rpm", "build-pacman", "sbom"):
     MUTANTS[f"reusable-{_j}-restores-a-cache"] = bld((lambda j: lambda m: m["jobs"][j]["steps"].insert(1, dict(CACHE)))(_j))

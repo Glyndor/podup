@@ -13,18 +13,23 @@
 
 mod exported_names;
 mod jobs;
+mod ownership;
 /// Entry point for the fuzz harness, compiled only under `test-helpers`.
 #[cfg(feature = "test-helpers")]
 pub(crate) use jobs::fuzz_hook;
 pub use jobs::stale_timers;
+pub(crate) use ownership::{drop_in, pod_drop_in, DROP_IN_NAME};
 #[cfg(test)]
 mod floor;
 #[cfg(test)]
 pub(crate) use floor::min_podman;
 mod publishing;
-pub(crate) use publishing::write_autostart_units;
 pub use publishing::write_units;
+pub(crate) use publishing::{check_unit_owners, write_autostart_units};
 mod render;
+/// The writer's own escaping of a unit value, so code that rewrites a
+/// rendered unit writes the value the way the writer would have written it.
+pub(crate) use render::escape_unit_value;
 mod secrets_unit;
 mod unit;
 mod unit_file;
@@ -284,17 +289,36 @@ pub struct QuadletOutput {
 }
 
 impl QuadletOutput {
-	/// The first unit file name that two different units share, if any. Distinct
-	/// compose keys can sanitize to the same stem (e.g. `web:1` and `web_1` both
-	/// become `web_1`); writing them would silently overwrite one unit, dropping
-	/// a service/network/volume from the export. Callers surface this as an error
-	/// instead of clobbering.
+	/// The first unit file whose name, or whose systemd service, another unit
+	/// already has, if any. Distinct compose keys can sanitize to the same stem
+	/// (e.g. `web:1` and `web_1` both become `web_1`); writing them would silently
+	/// overwrite one unit, dropping a service/network/volume from the export. And
+	/// files with different names can make one service: `web.build` and
+	/// `web-build.container` are both `web-build.service`, so one would silently
+	/// shadow the other. Callers surface either as an error.
 	pub fn duplicate_filename(&self) -> Option<&str> {
-		let mut seen = std::collections::HashSet::new();
+		let mut files = std::collections::HashSet::new();
+		let mut services = std::collections::HashSet::new();
 		self.units
 			.iter()
-			.find(|u| !seen.insert(u.filename.as_str()))
+			.find(|u| {
+				let repeated_file = !files.insert(u.filename.as_str());
+				let repeated_service =
+					service_of(&u.filename).is_some_and(|name| !services.insert(name));
+				repeated_file || repeated_service
+			})
 			.map(|u| u.filename.as_str())
+	}
+}
+
+/// The systemd service a unit file becomes, with Quadlet's naming (measured on
+/// Podman 6.2.1); `None` for a file that is not a service of its own, a timer.
+fn service_of(filename: &str) -> Option<String> {
+	let (stem, kind) = filename.rsplit_once('.')?;
+	match kind {
+		"container" | "kube" | "service" => Some(format!("{stem}.service")),
+		"build" | "image" | "network" | "pod" | "volume" => Some(format!("{stem}-{kind}.service")),
+		_ => None,
 	}
 }
 
@@ -405,7 +429,8 @@ fn generate_with_mode(
 	if file.podman_pod().unwrap_or(false) {
 		out.warnings.extend(pod_fields.warnings());
 	}
-	if let Some(pod) = crate::quadlet::unit::pod_unit(project, file, &pod_fields) {
+	let installed = mode == ContainerUnitMode::Prebuilt;
+	if let Some(pod) = crate::quadlet::unit::pod_unit(project, file, &pod_fields, installed) {
 		out.units.push(pod);
 	}
 	let declared_networks: Vec<&str> = file
@@ -529,6 +554,10 @@ fn generate_with_mode(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "ownership_tests.rs"]
+mod ownership_tests;
 
 #[cfg(test)]
 #[path = "exported_names_tests.rs"]

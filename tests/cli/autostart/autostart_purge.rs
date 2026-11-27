@@ -66,7 +66,7 @@ impl Workspace {
 		for tool in ["systemctl", "loginctl"] {
 			let script = format!(
 				"#!/bin/sh\necho \"{tool} $*\" >> \"{log}\"\n\
-				 case \"$*\" in *is-active*) exit 4 ;; *'{fail}'*) echo 'refused' >&2; exit 1 ;; esac\nexit 0\n",
+				 case \"$*\" in *is-active*) exit 4 ;; *--property=ActiveState,Result*) echo ActiveState=inactive; echo Result=success ;; *'{fail}'*) echo 'refused' >&2; exit 1 ;; esac\nexit 0\n",
 				log = dir.join("systemctl.log").display(),
 			);
 			let path = dir.join("bin").join(tool);
@@ -215,7 +215,7 @@ fn purge_without_a_reachable_engine_fails_and_says_so() {
 	let tool = dir.path().join("bin").join("systemctl");
 	fs::write(
 		&tool,
-		"#!/bin/sh\ncase \"$*\" in *is-active*) exit 4 ;; esac\nexit 0\n",
+		"#!/bin/sh\ncase \"$*\" in *is-active*) exit 4 ;; *--property=ActiveState,Result*) echo ActiveState=inactive; echo Result=success ;; esac\nexit 0\n",
 	)
 	.unwrap();
 	fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();

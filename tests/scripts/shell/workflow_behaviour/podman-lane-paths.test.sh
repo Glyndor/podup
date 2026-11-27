@@ -82,7 +82,7 @@ check "missing argument diagnostic" 1 "$(printf '%s\n' "$out" | grep -cF 'usage:
 awk '
  /id: files/ { step=1 }
  step && /        run: \|/ { body=1; next }
- body && /^  podman-vm:/ { exit }
+ body && /^  [a-z-]+:/ { exit }
  body { sub(/^          /, ""); print }
 ' "$workflow" >"$WORK/decide.sh"
 mkdir "$WORK/bin"
@@ -152,7 +152,7 @@ check "Nothing to boot is reached only on an explicit false" 1 \
 check "no step reads the engine answer as == 'true'" 0 \
 	"$(grep -cF "outputs.engine == 'true'" "$workflow")"
 check "the required check name remains stable" 1 "$(grep -cF 'name: Supported Podman majors' "$workflow")"
-check "the required check waits for the plan and both lanes" 1 "$(grep -cF 'needs: [decide, podman-vm, podman-native]' "$workflow")"
+check "the required check waits for the plan and both lanes" 1 "$(grep -cF 'needs: [decide, slot, podman-vm, podman-native]' "$workflow")"
 # The lane boots one Podman major, the newest, and the identity gate reads the
 # known-failures file of the major the VM actually booted. A gate that finds no
 # file skips silently, so every major in the matrix needs its own.
@@ -172,8 +172,12 @@ awk '
  body && /^  [a-z-]+:/ { exit }
  body { sub(/^          /, ""); print }
 ' "$workflow" >"$WORK/result.sh"
+# On the schedule the slot answers, and these cases are the first slot with the native lane excused
+# (`due=false`); the slots and the due flag have their own cases in podman_lane/lane-schedule.test.sh.
 lane() { # <event> <plan> <engine> <vm> <native> -> exit status
-	PLAN="$2" ENGINE="$3" VM="$4" NATIVE="$5" EVENT="$1" bash "$WORK/result.sh" >"$WORK/result.log" 2>&1
+	local slot=skipped due="" schedule=""
+	if [ "$1" = schedule ]; then slot=success due=false schedule='0 9 * * *'; fi
+	PLAN="$2" ENGINE="$3" VM="$4" NATIVE="$5" EVENT="$1" SLOT="$slot" DUE="$due" SCHEDULE="$schedule" bash "$WORK/result.sh" >"$WORK/result.log" 2>&1
 	echo $?
 }
 check "a pull request passes on the native lane" 0 "$(lane pull_request success true skipped success)"
@@ -188,14 +192,14 @@ for result in failure cancelled; do
 done
 check "the schedule passes on the VM" 0 "$(lane schedule success true success skipped)"
 check "a dispatch passes on the VM" 0 "$(lane workflow_dispatch success true success skipped)"
-check "a schedule on which the native lane ran is refused" 1 "$(lane schedule success true success success)"
+check "a dispatch on which the native lane ran is refused" 1 "$(lane workflow_dispatch success true success success)"
 check "a schedule whose VM was skipped is refused" 1 "$(lane schedule success true skipped skipped)"
 for plan in failure cancelled skipped ""; do
 	check "a plan that is '$plan' is refused on a pull request, whatever the lane did" 1 "$(lane pull_request "$plan" true skipped success)"
 	check "a plan that is '$plan' is refused on a schedule, whatever the lane did" 1 "$(lane schedule "$plan" true success skipped)"
 done
 check "the refusal says the plan did not succeed" 1 "$(lane pull_request failure true skipped success >/dev/null; grep -c 'the plan did not succeed' "$WORK/result.log")"
-check "the native lane job runs only for a pull request and the queue" 1 \
+check "the native lane job runs for a pull request and the queue (and on the schedule, asking the slot)" 1 \
 	"$(awk '/^  podman-native:/{f=1} f&&/github.event_name == .pull_request. \|\| github.event_name == .merge_group./{c++;exit} END{print c+0}' "$workflow")"
 check "the VM job never runs for a pull request or the queue" 1 \
 	"$(awk '/^  podman-vm:/{f=1} f&&/github.event_name != .pull_request. && github.event_name != .merge_group./{c++;exit} END{print c+0}' "$workflow")"

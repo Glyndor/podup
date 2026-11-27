@@ -69,6 +69,29 @@ fn write_unit_file(path: &std::path::Path, contents: &str) -> std::io::Result<()
 	unit_file::write_private(path, contents)
 }
 
+/// The path each of `units` would be written to in `dir`, refusing a file name that is not a plain
+/// path component and a unit that belongs to another project. Writes nothing.
+pub(crate) fn check_unit_owners(
+	dir: &std::path::Path,
+	units: &[QuadletUnit],
+) -> std::io::Result<Vec<std::path::PathBuf>> {
+	let mut paths = Vec::with_capacity(units.len());
+	for unit in units {
+		if std::path::Path::new(&unit.filename).file_name()
+			!= Some(std::ffi::OsStr::new(&unit.filename))
+		{
+			return Err(std::io::Error::new(
+				std::io::ErrorKind::InvalidInput,
+				format!("refusing unsafe quadlet unit file name: {}", unit.filename),
+			));
+		}
+		let path = dir.join(&unit.filename);
+		guard_existing_owner(&path, &unit.filename, &unit.contents)?;
+		paths.push(path);
+	}
+	Ok(paths)
+}
+
 /// Write `units` into `dir`, creating it if needed, and return the paths written
 /// in order. Defense in depth: refuse any unit whose file name is not a plain path
 /// component. The library already sanitizes stems, but a write target must never
@@ -81,21 +104,8 @@ pub fn write_units(
 ) -> std::io::Result<Vec<std::path::PathBuf>> {
 	crate::backends::unit_directory::create(dir)?;
 	crate::backends::unit_directory::warn_if_shared(dir)?;
-	let mut written = Vec::with_capacity(units.len());
-	for unit in units {
-		if std::path::Path::new(&unit.filename).file_name()
-			!= Some(std::ffi::OsStr::new(&unit.filename))
-		{
-			return Err(std::io::Error::new(
-				std::io::ErrorKind::InvalidInput,
-				format!("refusing unsafe quadlet unit file name: {}", unit.filename),
-			));
-		}
-		let path = dir.join(&unit.filename);
-		guard_existing_owner(&path, &unit.filename, &unit.contents)?;
-		written.push(path);
-	}
 	// Predictable type/owner failures must not publish even the first unit.
+	let written = check_unit_owners(dir, units)?;
 	for (unit, path) in units.iter().zip(&written) {
 		write_unit_file(path, &unit.contents)?;
 	}

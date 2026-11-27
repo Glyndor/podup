@@ -1,3 +1,35 @@
+podup (6.2.0) unstable; urgency=medium
+
+  * A quadlet-mode autostart install now replaces and removes only the containers of its
+    own project. The installed unit starts with `--replace=false`, records the container
+    it started and removes a leftover container only when that one carries this project's
+    `podup.project` label, so a container of another project keeps its ID and the start
+    fails with Podman's "name is already in use" message. The units an earlier release
+    wrote stay as they are: install the autostart again to get these protections.
+  * The pod of a pod project is kept to its own project the same way: the installed
+    `.pod` unit records the pod it started and removes only the pod that carries the
+    label. `uninstall`, and a reinstall that leaves pod mode, now stop and remove the
+    project's `.pod` unit too; before, it stayed installed with its pod running.
+  * `uninstall` and a reinstall now report a stop or a cleanup that failed and keep
+    the unit and its protection to be retried, and a pod that holds a container without
+    the project's label is left in place.
+  * Every `Secret=` line a service gets now names its target, the compose name unless the
+    service gives one, so the file lands where `up` puts it. The units
+    `autostart --mode quadlet` installs also give a `file:` secret the mode of the host
+    file. An install over the units 6.1.0 wrote keeps the path those units had, so the
+    service keeps finding the file, and says how to move it.
+  * `generate quadlet` and quadlet-mode autostart now refuse two units that make the
+    same systemd service, before anything is written or `systemctl` is called. Only the
+    file names were compared, so a service called `web-build` next to a `web` that builds
+    was accepted and both became `<project>-web-build.service`.
+  * Building from source needs Rust 1.91 or newer (it was 1.88).
+  * The installers stop a download at its 200 MB ceiling while they read it, so a release
+    that is too large is refused without being downloaded whole.
+  * The SBOM of each Debian package is now resolved for the musl target the package is
+    built for, so what was certified is what was built.
+
+ -- Glyndor <packages@glyndor.net>  Thu, 27 Nov 2026 04:45:00 +0000
+
 podup (6.1.0) unstable; urgency=medium
 
   * `--no-warn` no longer silences the warnings that say what a compose file opens up:

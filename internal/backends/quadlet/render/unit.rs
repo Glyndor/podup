@@ -116,7 +116,7 @@ fn quote_shell_split_value(value: &str) -> String {
 ///
 /// Argument-line keys keep their own rendering (they encode whitespace splitting
 /// deliberately) and only have control characters stripped.
-pub(super) fn escape_unit_value(key: &str, value: &str) -> String {
+pub(crate) fn escape_unit_value(key: &str, value: &str) -> String {
 	if key_is_arg_line(key) {
 		return sanitize_value(value);
 	}

@@ -17,6 +17,7 @@ on:
       - "tests/scripts/powershell/check-hardening.Tests.ps1"
       - "tests/scripts/powershell/install-python-isolation.Tests.ps1"
       - "tests/scripts/powershell/install-https-redirects.Tests.ps1"
+      - "tests/scripts/powershell/install-download-limit.Tests.ps1"
       # The rustflags that give the Windows binary Control Flow Guard live
       # here; a change to them is what this workflow builds and reads.
       - ".cargo/**"
@@ -38,6 +39,7 @@ on:
       - "tests/scripts/powershell/check-hardening.Tests.ps1"
       - "tests/scripts/powershell/install-python-isolation.Tests.ps1"
       - "tests/scripts/powershell/install-https-redirects.Tests.ps1"
+      - "tests/scripts/powershell/install-download-limit.Tests.ps1"
       # The rustflags that give the Windows binary Control Flow Guard live
       # here; a change to them is what this workflow builds and reads.
       - ".cargo/**"
@@ -121,6 +123,11 @@ jobs:
       - name: Run the installer redirect fixture
         shell: pwsh
         run: pwsh -NoProfile -File tests/scripts/powershell/install-https-redirects.Tests.ps1
+      # The download fixture proves the installer stops at its ceiling while it
+      # reads a response. It serves one from a local listener, no network.
+      - name: Run the installer download fixture
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/scripts/powershell/install-download-limit.Tests.ps1
       # The fixture proves the script; this proves the binary. The release
       # runs the same script over the same target before signing, and the
       # Control Flow Guard bit rests on a rustflag in .cargo/config.toml,

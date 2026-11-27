@@ -62,11 +62,10 @@ fn uninstall_stops_unconditionally_without_probing_is_active() {
 }
 
 /// #1080: a running service that refuses to stop was swallowed by `let _ =`, so
-/// uninstall exited 0 with the container still up. It must now report, while
-/// still removing the unit files and reloading, so the uninstall is not left
-/// half-done.
+/// uninstall exited 0 with the container still up. Retain the unit and its
+/// protection when the stop fails so it can be retried safely.
 #[test]
-fn uninstall_reports_a_stop_failure_but_still_removes_and_reloads() {
+fn uninstall_reports_a_stop_failure_and_retains_the_unit() {
 	with_env(|root| {
 		install_quadlet(
 			&FakeCtl::new(),
@@ -84,14 +83,22 @@ fn uninstall_reports_a_stop_failure_but_still_removes_and_reloads() {
 		assert!(format!("{err}").contains("stop"), "got {err:?}");
 
 		assert!(
-			!root.join("containers/systemd/proj-web.container").exists(),
-			"the unit file must still be removed"
+			root.join("containers/systemd/proj-web.container").is_file(),
+			"the unit file must remain for retry"
 		);
 		let calls = sc.log();
 		assert_eq!(
-			calls.last().unwrap(),
-			&vec!["daemon-reload".to_string()],
-			"the manager must still be reloaded: {calls:?}"
+			calls,
+			[
+				vec!["daemon-reload".to_string()],
+				vec![
+					"show".to_string(),
+					"--property=ActiveState,Result".to_string(),
+					"proj-web.service".to_string()
+				],
+				vec!["stop".to_string(), "proj-web.service".to_string()]
+			],
+			"only the protective reload, state query and stop should run: {calls:?}"
 		);
 	});
 }

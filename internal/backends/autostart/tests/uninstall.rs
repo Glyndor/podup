@@ -1,6 +1,80 @@
 use super::*;
 
 #[test]
+fn a_lone_owned_pod_is_detected_as_quadlet() {
+	with_env(|root| {
+		let dir = root.join("containers/systemd");
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("proj.pod");
+		for (body, expected) in [
+			(
+				"# podup-owner: proj\n[Pod]\nPodName=proj\n",
+				crate::autostart::InstalledMode::Quadlet,
+			),
+			(
+				"# podup-owner: other\n[Pod]\nPodName=proj\n",
+				crate::autostart::InstalledMode::None,
+			),
+			(
+				"[Pod]\nPodName=proj\n",
+				crate::autostart::InstalledMode::None,
+			),
+		] {
+			std::fs::write(&path, body).unwrap();
+			assert_eq!(
+				crate::autostart::installed_mode("proj").unwrap(),
+				expected,
+				"{body}"
+			);
+			assert_eq!(std::fs::read_to_string(&path).unwrap(), body);
+		}
+	});
+}
+
+#[test]
+fn a_lone_pod_with_an_invalid_neighbour_propagates_detection_errors() {
+	with_env(|root| {
+		let dir = root.join("containers/systemd");
+		std::fs::create_dir_all(&dir).unwrap();
+		let pod = dir.join("proj.pod");
+		let body = "# podup-owner: proj\n[Pod]\nPodName=proj\n";
+		std::fs::write(&pod, body).unwrap();
+		assert!(std::process::Command::new("/usr/bin/mkfifo")
+			.arg(dir.join("proj-bad.build"))
+			.status()
+			.unwrap()
+			.success());
+		let sc = FakeCtl::new();
+		let errors = [
+			crate::autostart::installed_mode("proj").unwrap_err(),
+			collect_status(&sc, "proj")
+				.err()
+				.expect("status must propagate detection failure"),
+			install(&sc, &opts(root, "proj", false, true)).unwrap_err(),
+		];
+		for error in errors {
+			assert!(error.to_string().contains("proj-bad.build"), "{error}");
+		}
+		assert!(sc.systemctl_log().is_empty());
+		assert_eq!(std::fs::read_to_string(pod).unwrap(), body);
+		assert!(!root.join("systemd/user/podup-proj.service").exists());
+	});
+}
+
+#[test]
+fn an_unreadable_unit_directory_is_not_an_absent_installation() {
+	with_env(|root| {
+		std::fs::create_dir_all(root.join("containers")).unwrap();
+		std::fs::write(root.join("containers/systemd"), "not a directory").unwrap();
+		let error = crate::autostart::installed_mode("proj").unwrap_err();
+		assert!(
+			error.to_string().contains("cannot enumerate quadlet units"),
+			"{error}"
+		);
+	});
+}
+
+#[test]
 fn uninstall_disables_removes_and_reloads() {
 	with_env(|root| {
 		let sc = FakeCtl::new();

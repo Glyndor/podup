@@ -5,6 +5,7 @@ use indexmap::IndexMap;
 use crate::compose::dependencies::effective_depends_on;
 use crate::compose::types::{ConfigConfig, SecretConfig, Service};
 
+use super::super::ownership;
 use super::health::render_healthcheck;
 use super::security::{is_inline_secret, map_security_opt, render_secret, secret_field};
 // Shared helpers from the sibling `render`/`warnings`/`security` modules and
@@ -307,6 +308,15 @@ fn render_container_unit(
 		UnitRole::Job => svc.add("Type", "oneshot".to_string()),
 	}
 	emit_bind_dirs(name, service, base_dir, &mut svc, warnings);
+	// The installed units must not replace or remove a container of another project.
+	if mode == ContainerUnitMode::Prebuilt && role == UnitRole::Service {
+		ownership::emit(
+			project,
+			&container_name(project, name, service),
+			&mut container,
+			&mut svc,
+		);
+	}
 
 	// The configs a service mounts are written as `Secret=` lines when the secrets
 	// unit is written, so they are not reported as skipped.

@@ -146,12 +146,11 @@ pub(crate) async fn dispatch(
 			// Remove whichever mode is installed; the two never coexist, and asking
 			// the user to name the mode only risks a no-op against the wrong one.
 			// Hold the uninstall's outcome rather than `?`-ing it here. By the time
-			// it can fail, the unit files are already gone and `installed_mode`
-			// would no longer recognise the project, so short-circuiting would
+			// it can fail, some unit files may be gone, so short-circuiting would
 			// skip `--purge` exactly when the stack is still up and most needs
 			// tearing down, leaving its named volumes behind and the state
 			// unrecognisable. Purge first, report the failure after.
-			let uninstalled = match podup::autostart::installed_mode(&project) {
+			let uninstalled = match podup::autostart::installed_mode(&project)? {
 				podup::autostart::InstalledMode::Quadlet => {
 					podup::autostart::uninstall_quadlet(&podup::autostart::RealSystemCtl, &project)
 				}

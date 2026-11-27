@@ -203,10 +203,9 @@ fn install_build_with_pull_policy_still_emits_one_pull_never() {
 	});
 }
 
-/// #1970: a project with no `build:` produces the same units
-/// `podup generate quadlet` emits (byte-identical) and no extra build
-/// systemctl call. The autostart path is the standard path for that
-/// case; only buildable services change.
+/// #1970: a project with no `build:` produces the units `podup generate quadlet`
+/// emits, plus the lines that keep an installed unit off a container it does not
+/// own, and no extra build systemctl call. Only buildable services change further.
 #[test]
 fn install_no_build_units_byte_identical_to_generate_at() {
 	super::with_env(|_root| {
@@ -241,10 +240,18 @@ fn install_no_build_units_byte_identical_to_generate_at() {
 				.into_iter()
 				.find(|u| u.filename == "proj-web.container")
 				.unwrap();
+		let ownership = "PodmanArgs=--replace=false\n\
+			PodmanArgs=--cidfile=%t/%N.cid\n\
+			\n\
+			[Service]\n\
+			ExecStartPre=-/usr/bin/podman rm --force --ignore --filter name=^proj-web$$ \
+			--filter label=podup.project=proj\n";
+		let installed = String::from_utf8(installed).unwrap();
+		assert!(installed.contains(ownership), "{installed}");
 		assert_eq!(
-			String::from_utf8(installed).unwrap(),
+			installed.replacen(ownership, "", 1),
 			std_unit.contents,
-			"non-buildable service must render byte-identically under both paths"
+			"non-buildable service must render the same apart from the ownership lines"
 		);
 	});
 }
@@ -292,6 +299,7 @@ fn install_build_dry_run_prints_build_line_and_runs_no_systemctl() {
 			.collect();
 		let plan = super::super::dry_run_plan(
 			&units,
+			&[],
 			&root.join("containers/systemd"),
 			&services,
 			&build_services,
@@ -336,6 +344,7 @@ fn install_dry_run_skips_build_line_when_there_is_no_build_unit() {
 			.collect();
 		let plan = super::super::dry_run_plan(
 			&units,
+			&[],
 			std::path::Path::new("/srv/app/containers/systemd"),
 			&services,
 			&[],

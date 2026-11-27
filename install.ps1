@@ -66,17 +66,81 @@ $TmpDir = New-Item -ItemType Directory -Path (Join-Path ([System.IO.Path]::GetTe
 try {
 	# --- Download ------------------------------------------------------------
 
-	# 200 MB ceiling on any downloaded release asset. Invoke-WebRequest runs the
-	# download to completion before -OutFile can be checked, so this is a
-	# post-hoc guard - it rejects an oversized file after it lands on disk, it
-	# does not cap a hostile stream mid-flight. -TimeoutSec is the bound that
-	# actually applies while the request is in flight: it caps the whole
-	# request so a stalled or never-ending response cannot hang the installer.
+	# 200 MB, the most any downloaded file may weigh. A download is read from the
+	# response in blocks and the ceiling holds while it is read, whatever the
+	# response says about its length (Invoke-WebRequest would write the whole
+	# body before anything could check it). -TimeoutSec caps the whole request,
+	# so a stalled or never-ending response cannot hang the installer.
 	$MaxDownloadBytes = 209715200
 	$DownloadTimeoutSec = 300
 
+	# Copy a response body into a file, counting the bytes as they arrive: nothing
+	# past the ceiling is written, a body shorter than its declared length is
+	# refused, and the partial file is removed on any failure.
+	function Save-LimitedStream {
+		param([System.IO.Stream]$Source, [string]$Path, [long]$MaxBytes, [int]$TimeoutSec, $ExpectedBytes = $null)
+		$buffer = New-Object byte[] 65536
+		$total = [long]0
+		$complete = $false
+		$clock = [System.Diagnostics.Stopwatch]::StartNew()
+		$file = [System.IO.File]::Open($Path, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)
+		try {
+			while ($true) {
+				$read = $Source.ReadAsync($buffer, 0, $buffer.Length)
+				$left = [long]$TimeoutSec * 1000 - $clock.ElapsedMilliseconds
+				if ($left -le 0 -or -not $read.Wait([int]$left)) { throw "Timed out after $TimeoutSec seconds" }
+				$count = $read.Result
+				if ($count -eq 0) { break }
+				if ($total + $count -gt $MaxBytes) { throw "Download too large (over $MaxBytes bytes)" }
+				$file.Write($buffer, 0, $count)
+				$total += $count
+			}
+			if ($null -ne $ExpectedBytes -and $total -ne $ExpectedBytes) {
+				throw "Incomplete download: $total of $ExpectedBytes bytes"
+			}
+			$complete = $true
+		} finally {
+			$file.Dispose()
+			if (-not $complete) { Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue }
+		}
+	}
+
+	# One download request with redirects switched off, streamed into $OutFile
+	# under the ceiling. Returns the same shape as Invoke-HttpHop.
+	function Save-HttpDownload {
+		param([string]$Uri, [string]$OutFile, [hashtable]$Headers, [int]$TimeoutSec, [long]$MaxBytes)
+		Add-Type -AssemblyName System.Net.Http
+		$handler = New-Object System.Net.Http.HttpClientHandler
+		$handler.AllowAutoRedirect = $false
+		$client = New-Object System.Net.Http.HttpClient -ArgumentList $handler
+		$response = $null
+		try {
+			$client.Timeout = [TimeSpan]::FromSeconds($TimeoutSec)
+			$client.DefaultRequestHeaders.Add('User-Agent', 'podup-installer')
+			if ($Headers) {
+				foreach ($name in $Headers.Keys) { $client.DefaultRequestHeaders.Add($name, [string]$Headers[$name]) }
+			}
+			$response = $client.GetAsync($Uri, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+			$code = [int]$response.StatusCode
+			if ($code -ge 300 -and $code -lt 400) {
+				$location = ''
+				if ($null -ne $response.Headers.Location) { $location = $response.Headers.Location.OriginalString }
+				return [pscustomobject]@{ StatusCode = $code; Location = $location; Content = $null }
+			}
+			if ($code -ge 400) { throw "HTTP status $code from $Uri" }
+			$length = $response.Content.Headers.ContentLength
+			if ($null -ne $length -and $length -gt $MaxBytes) { throw "Download too large (over $MaxBytes bytes)" }
+			$body = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+			Save-LimitedStream -Source $body -Path $OutFile -MaxBytes $MaxBytes -TimeoutSec $TimeoutSec -ExpectedBytes $length
+			return [pscustomobject]@{ StatusCode = $code; Location = $null; Content = $null }
+		} finally {
+			if ($response) { $response.Dispose() }
+			$client.Dispose()
+		}
+	}
+
 	# One request with redirects switched off, so the caller sees the 3xx and
-	# decides. Windows PowerShell 5.1 throws a WebException for a 3xx here and
+	# decides. A request that saves to a file goes through Save-HttpDownload. Windows PowerShell 5.1 throws a WebException for a 3xx here and
 	# carries the response on the exception (headers are a WebHeaderCollection);
 	# PowerShell 7 either throws an HttpResponseException carrying an
 	# HttpResponseMessage (Location is a Uri) or returns the 3xx outright, so
@@ -84,8 +148,10 @@ try {
 	# Returns StatusCode, Location (the raw header text, or $null) and Content.
 	function Invoke-HttpHop {
 		param([string]$Uri, [string]$OutFile, [hashtable]$Headers, [int]$TimeoutSec)
+		if ($OutFile) {
+			return Save-HttpDownload -Uri $Uri -OutFile $OutFile -Headers $Headers -TimeoutSec $TimeoutSec -MaxBytes $MaxDownloadBytes
+		}
 		$request = @{ Uri = $Uri; UseBasicParsing = $true; TimeoutSec = $TimeoutSec; MaximumRedirection = 0 }
-		if ($OutFile) { $request.OutFile = $OutFile }
 		if ($Headers) { $request.Headers = $Headers }
 		$threw = $false
 		try {
@@ -98,8 +164,7 @@ try {
 		$code = [int]$response.StatusCode
 		if ($code -lt 300 -or $code -ge 400) {
 			if ($threw) { throw "HTTP status $code from $Uri" }
-			$content = if ($OutFile) { $null } else { $response.Content }
-			return [pscustomobject]@{ StatusCode = $code; Location = $null; Content = $content }
+			return [pscustomobject]@{ StatusCode = $code; Location = $null; Content = $response.Content }
 		}
 		$location = $null
 		$respHeaders = $response.Headers
@@ -149,9 +214,6 @@ try {
 			$null = Invoke-HttpsRequest -Uri $url -OutFile $dest -TimeoutSec $DownloadTimeoutSec
 		} catch {
 			Fail "Download failed: $url ($($_.Exception.Message))"
-		}
-		if ((Get-Item -Path $dest).Length -gt $MaxDownloadBytes) {
-			Fail "Download too large (over 200 MB): $url"
 		}
 		return $dest
 	}

@@ -146,7 +146,7 @@ pub fn collect_status<S: super::super::systemctl::SystemCtl>(
 	sc: &S,
 	project: &str,
 ) -> crate::Result<StatusReport> {
-	match installed_mode(project) {
+	match installed_mode(project)? {
 		InstalledMode::Quadlet => collect_quadlet_status(sc, project),
 		_ => Ok(collect_service_status(sc, project)),
 	}
