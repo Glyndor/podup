@@ -9,9 +9,8 @@
 
 #![cfg(unix)]
 
-use std::process::Command;
-
 use crate::backends::quadlet::tests::generator::generator;
+use crate::backends::quadlet::tests::real_env::command;
 use crate::parse_str;
 use crate::quadlet::generate_at;
 
@@ -58,7 +57,7 @@ fn run_args(generator: &std::path::Path, yaml: &str) -> Vec<String> {
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 	crate::quadlet::write_units(unit_dir.path(), &out.units).unwrap();
-	let run = Command::new(generator)
+	let run = command(generator)
 		.args(["-dryrun", "-user"])
 		.env("QUADLET_UNIT_DIRS", unit_dir.path())
 		.output()
@@ -88,12 +87,12 @@ fn run_args(generator: &std::path::Path, yaml: &str) -> Vec<String> {
 /// itself in every container, so the name is one every image has.
 fn container_var(yaml: &str, host_value: Option<&str>) -> Option<Option<String>> {
 	let generator = generator()?;
-	if Command::new("podman").arg("--version").output().is_err() {
+	if command("podman").arg("--version").output().is_err() {
 		eprintln!("SKIP: podman is not installed");
 		return None;
 	}
 	let args = run_args(&generator, yaml);
-	let mut run = Command::new("podman");
+	let mut run = command("podman");
 	run.arg("run").arg("--rm").args(&args);
 	match host_value {
 		Some(v) => run.env("container", v),
