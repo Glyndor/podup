@@ -681,7 +681,7 @@ checksum = "c938015719552d665fd0553b90d96cd7ff58e83e4c061ca99e6bb78865a72752"
 
 [[package]]
 name = "podup"
-version = "6.1.0"
+version = "6.2.0"
 dependencies = [
  "anstream",
  "anstyle",
