@@ -29,6 +29,69 @@ fn duplicate_filename_detects_collision() {
 }
 
 #[test]
+fn two_files_that_make_one_service_are_a_collision() {
+	let mk = |n: &str| QuadletUnit {
+		filename: n.to_string(),
+		contents: String::new(),
+	};
+	for (first, second) in [
+		("app-web.build", "app-web-build.container"),
+		("app-web.network", "app-web-network.container"),
+		("app-web.volume", "app-web-volume.container"),
+		("app-web.pod", "app-web-pod.container"),
+		("app-web.image", "app-web-image.container"),
+		("app-web.container", "app-web.service"),
+		("app-web.kube", "app-web.container"),
+		("app-web.build", "app-web-build.service"),
+	] {
+		for units in [[first, second], [second, first]] {
+			let out = QuadletOutput {
+				units: units.into_iter().map(mk).collect(),
+				..Default::default()
+			};
+			assert_eq!(out.duplicate_filename(), Some(units[1]), "{units:?}");
+		}
+	}
+}
+
+#[test]
+fn files_that_make_different_services_are_no_collision() {
+	let mk = |n: &str| QuadletUnit {
+		filename: n.to_string(),
+		contents: String::new(),
+	};
+	// A timer names the service it starts, and is no service of its own.
+	let out = QuadletOutput {
+		units: [
+			"app-web.build",
+			"app-web.container",
+			"app-web.network",
+			"app-web.volume",
+			"app-web.pod",
+			"app-job-1.timer",
+			"app-job-1.container",
+		]
+		.into_iter()
+		.map(mk)
+		.collect(),
+		..Default::default()
+	};
+	assert_eq!(out.duplicate_filename(), None);
+}
+
+#[test]
+fn a_service_named_like_a_build_collides_with_it() {
+	let yaml = "services:\n  web:\n    build: .\n  web-build:\n    image: x\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "app", std::path::Path::new("/srv/app"));
+	assert_eq!(out.duplicate_filename(), Some("app-web-build.container"));
+	let yaml = "services:\n  web:\n    build: .\n  api:\n    image: x\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "app", std::path::Path::new("/srv/app"));
+	assert_eq!(out.duplicate_filename(), None);
+}
+
+#[test]
 fn hostile_service_name_cannot_escape_output_directory() {
 	// A compose key containing path separators must never yield a unit
 	// file name that escapes the output directory.
