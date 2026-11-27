@@ -5,6 +5,7 @@
 
 mod images;
 mod prefetch;
+mod preflight;
 mod readiness;
 mod schedule;
 mod up_one;
@@ -197,6 +198,8 @@ impl Engine {
 			// And that no two of them resolve to the same container name, before
 			// the first create of either.
 			self.check_distinct_container_names(file, &enabled)?;
+			// And that the environment of each can be read.
+			self.check_env_files(file, &enabled, &target_set)?;
 
 			// Prefetch the project's containers once (instead of one API call per
 			// replica): which names already exist, and for each the facts
