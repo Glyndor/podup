@@ -174,8 +174,9 @@ impl Engine {
 	/// overwritten.
 	///
 	/// A secret cannot be put back when the API does not give its content back
-	/// byte for byte (it carries it as text, so content that is not UTF-8 is
-	/// lost on the way), or when Podman cannot be reached after the removal. The
+	/// byte for byte: it carries the content as text, so bytes that are not
+	/// UTF-8 are replaced with U+FFFD on the way, and a content that holds
+	/// U+FFFD itself is indistinguishable from one that was altered. The
 	/// create's error is returned either way, and a warning says which happened.
 	///
 	/// # Concurrency contract: read before touching the inspect → delete → create sequence
@@ -187,8 +188,11 @@ impl Engine {
 	///
 	/// 1. The **cross-invocation** case is closed by the per-project lock
 	///    ([`crate::engine::project::lock`]) held for the duration of `up`. Two
-	///    `podup` processes touching the same project serialise through it,
-	///    so the inspect is never stale across processes.
+	///    `podup up` processes touching the same project serialise through it,
+	///    so the inspect is never stale across them. `podup watch` takes no
+	///    lock and calls this too, so a watch running beside an `up` is not
+	///    serialised; it cannot corrupt anything either, because no create
+	///    here names `replace`.
 	/// 2. The **within-invocation** case is closed by the project-scoped
 	///    naming. Every secret created here has a name of the form
 	///    `<project>_...`, which is unique to this `Engine` instance, and the

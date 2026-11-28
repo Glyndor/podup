@@ -15,13 +15,20 @@ struct Case {
 
 async fn replace(case: Case) -> (Option<String>, fake_podman::FakePodman) {
 	let posted = Arc::new(AtomicUsize::new(0));
-	let fake = fake_podman::start(move |method, _| {
+	let fake = fake_podman::start(move |method, target| {
 		if method == "GET" {
+			// The API only carries the content when the inspect asks for it, so
+			// a fake that always answered with it would not notice the query
+			// going away.
+			let content = if target.contains("showsecret=true") {
+				format!(r#","SecretData":"{}""#, case.held)
+			} else {
+				String::new()
+			};
 			(
 				200,
 				format!(
-					r#"{{"ID":"old","Spec":{{"Labels":{{"podup.project":"proj","kept":"yes"}}}},"SecretData":"{}"}}"#,
-					case.held
+					r#"{{"ID":"old","Spec":{{"Labels":{{"podup.project":"proj","kept":"yes"}}}}{content}}}"#
 				),
 			)
 		} else if method == "POST" {
@@ -136,4 +143,21 @@ async fn a_restore_that_fails_still_reports_the_first_error() {
 	.await;
 	assert!(err.is_some_and(|e| e.contains("turn 0")));
 	assert_eq!(changes(&fake).1.len(), 2);
+}
+
+/// The content only comes back when the inspect asks for it, so the request
+/// has to carry `showsecret=true` or the whole restore is dead.
+#[tokio::test]
+async fn the_inspect_asks_for_the_content() {
+	let (err, fake) = replace(Case {
+		held: "old-content",
+		creates: &[500, 201],
+	})
+	.await;
+	assert!(err.is_some_and(|e| e.contains("turn 0")));
+	let requests = fake.requests.lock().unwrap().clone();
+	assert!(
+		requests.iter().any(|r| r.contains("showsecret=true")),
+		"the inspect did not ask for the content: {requests:?}"
+	);
 }
