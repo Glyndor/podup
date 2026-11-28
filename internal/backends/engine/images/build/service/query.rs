@@ -92,10 +92,8 @@ impl Engine {
 		labels.insert("podup.project".to_string(), self.project.clone());
 		labels.insert("podup.service".to_string(), service_name.to_string());
 
-		// Pre-validate the keys libpod's buildkit-fronted parser rejects
-		// (anything outside `[A-Za-z0-9_.-]`), so a bad `build.args` or
-		// `build.labels` key surfaces as a `PodmanError::Field` naming the
-		// compose-side field rather than libpod's `400` body. Runs before
+		// A refused `build.args` or `build.labels` key surfaces as a
+		// `PodmanError::Field` naming the compose-side field. Runs before
 		// the build URL is assembled so a bad key fails before any POST to
 		// the daemon (#1357).
 		pre_validate_build(&build_args, &labels)?;

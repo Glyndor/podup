@@ -272,3 +272,41 @@ async fn build_labels_every_image_including_intermediate_stages() {
 		);
 	}
 }
+
+/// #2709: a `build.labels` key outside `[A-Za-z0-9_.-]` builds, and the image
+/// carries it as written.
+#[tokio::test]
+async fn build_keeps_a_free_form_label_key() {
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let Some(socket) = podman_socket_url() else {
+		return;
+	};
+	let dir = tempfile::tempdir().unwrap();
+	let project = proj("labelkey");
+	let engine = Engine::with_base_dir(client, project.clone(), dir.path().to_path_buf());
+	let _images = TestImages::new(&project, "app", &socket);
+	fs::write(dir.path().join("Dockerfile"), b"FROM scratch\n").unwrap();
+	let yaml = "services:\n  app:\n    build:\n      context: .\n      labels:\n        \
+	            app.kubernetes.io/name: demo\n        'with space, and:colon': kept\n";
+	let file = parse_str(yaml).unwrap();
+
+	engine
+		.build_all_with_options(
+			&file,
+			&[],
+			&podup::BuildOptions::new(true, false, Vec::new(), false),
+		)
+		.await
+		.expect("a prefixed label key must build");
+
+	let image = format!("{project}-app");
+	for (key, value) in [
+		("app.kubernetes.io/name", "demo"),
+		("with space, and:colon", "kept"),
+	] {
+		assert_eq!(read_label(&socket, &image, key), value, "label {key:?}");
+	}
+}

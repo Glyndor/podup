@@ -19,21 +19,6 @@ fn kv_key_rejects_invalid() {
 }
 
 #[test]
-fn first_invalid_kv_key_returns_first_failure() {
-	let keys = ["GOOD", "MALFORMED\nKEY", "ALSO_GOOD"];
-	let (field, key, msg) = first_invalid_kv_key("build.args", keys.iter().copied()).unwrap();
-	assert_eq!(field, "build.args");
-	assert_eq!(key, "MALFORMED\nKEY");
-	assert!(msg.contains("not a valid identifier"));
-}
-
-#[test]
-fn first_invalid_kv_key_passes_when_all_valid() {
-	let keys = ["GOOD", "ALSO_GOOD"];
-	assert!(first_invalid_kv_key("build.args", keys.iter().copied()).is_none());
-}
-
-#[test]
 fn pre_validate_build_rejects_bad_key() {
 	let mut args = HashMap::new();
 	args.insert("MALFORMED\nKEY".to_string(), "value".to_string());
@@ -42,17 +27,94 @@ fn pre_validate_build_rejects_bad_key() {
 	let msg = err.to_string();
 	assert!(msg.contains("build.args"));
 	assert!(msg.contains("MALFORMED\\nKEY"));
+	assert!(msg.contains("not a valid identifier"));
 }
 
 #[test]
 fn pre_validate_build_rejects_bad_label() {
 	let args = HashMap::new();
 	let mut labels = HashMap::new();
-	labels.insert("bad key".to_string(), "value".to_string());
+	labels.insert("bad=key".to_string(), "value".to_string());
 	let err = pre_validate_build(&args, &labels).unwrap_err();
 	let msg = err.to_string();
 	assert!(msg.contains("build.labels"));
-	assert!(msg.contains("bad key"));
+	assert!(msg.contains("bad=key"));
+	assert!(msg.contains("without `=`, `$` or combining marks"));
+}
+
+#[test]
+fn label_key_accepts_what_podman_stores_unchanged() {
+	for key in [
+		"app.kubernetes.io/name",
+		"com.example/with:colon@and+plus",
+		"a b",
+		"a,b;c#d",
+		"a\"b",
+		"a\\b",
+		"a'b`c",
+		"{\"a\":1}",
+		"\u{f1}and\u{fa}",
+		"\u{540d}\u{524d}",
+		"a\u{1f600}",
+		"\u{e9}",
+		"\u{2764}",
+	] {
+		assert!(is_valid_label_key(key), "{key:?}");
+	}
+}
+
+#[test]
+fn label_key_rejects_what_podman_would_change() {
+	for key in [
+		"",
+		"a=b",
+		"a=",
+		"=a",
+		"a$b",
+		"${HOME}",
+		"a$",
+		"a\nb",
+		"a\rb",
+		"a\tb",
+		"a\0b",
+		"a\u{1}b",
+		"a\u{b}b",
+		"a\u{7f}b",
+		"a\u{85}b",
+		"a\u{a0}b",
+		"a\u{ad}b",
+		"a\u{200b}b",
+		"a\u{200d}b",
+		"a\u{2028}b",
+		"a\u{3000}b",
+		"a\u{feff}b",
+		"a\u{e000}b",
+		"a\u{378}b",
+		// Podman stores these; refused to keep the check small.
+		"e\u{301}",
+		"\u{2764}\u{fe0f}",
+		// A printable `"` or `\` must not make room for one that is not.
+		"\"a\\\nb",
+	] {
+		assert!(!is_valid_label_key(key), "{key:?}");
+	}
+}
+
+#[test]
+fn pre_validate_build_accepts_a_prefixed_label_key() {
+	let args = HashMap::new();
+	let mut labels = HashMap::new();
+	labels.insert("app.kubernetes.io/name".to_string(), "demo".to_string());
+	assert!(pre_validate_build(&args, &labels).is_ok());
+}
+
+#[test]
+fn pre_validate_build_keeps_the_arg_charset() {
+	let mut args = HashMap::new();
+	args.insert("app.kubernetes.io/name".to_string(), "demo".to_string());
+	let labels: HashMap<String, String> = HashMap::new();
+	let err = pre_validate_build(&args, &labels).unwrap_err();
+	assert!(err.to_string().contains("build.args"));
 }
 
 #[test]
