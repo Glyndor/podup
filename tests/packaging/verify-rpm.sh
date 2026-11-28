@@ -106,7 +106,8 @@ fi
 	done </stage/files.txt
 	test -f /usr/share/man/man1/podup.1.gz
 	rpm --erase podup
-	! rpm -q podup >/dev/null 2>&1
+	# Spelled out with `if`: errexit ignores a command negated with `!`.
+	if rpm -q podup >/dev/null 2>&1; then echo "podup is still installed after its removal" >&2; exit 1; fi
 	while read -r _mode path _sha _size; do test ! -e "/$path"; done </stage/files.txt
 	test ! -e /usr/share/licenses/podup
 	test ! -e /usr/share/doc/podup
