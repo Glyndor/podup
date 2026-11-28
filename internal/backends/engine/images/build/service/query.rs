@@ -61,7 +61,7 @@ impl Engine {
 
 		// A secret passed as a build arg is recorded in the image history and, if
 		// promoted via `ENV`, the image config, so it can leak. Warn and point at
-		// `build.secrets` (BuildKit `--mount=type=secret`), which does not persist.
+		// `build.secrets` (`RUN --mount=type=secret`), which does not persist.
 		let mut secretish: Vec<&str> = build_args
 			.keys()
 			.filter(|k| looks_like_secret(k))
@@ -88,13 +88,13 @@ impl Engine {
 		// miss every image this build produced and reach for `other`'s
 		// instead. A `BTreeMap` (rather than the `HashMap` this used to be)
 		// keeps the label order deterministic across builds, so a second
-		// `podup build` of the same Containerfile hits the buildkit layer
-		// cache instead of producing a different `LABEL` step every time.
+		// `podup build` of the same Containerfile hits the layer cache instead
+		// of producing a different `LABEL` step every time.
 		labels.insert("podup.project".to_string(), self.project.clone());
 		labels.insert("podup.service".to_string(), service_name.to_string());
 
-		// Pre-validate the keys libpod's buildkit-fronted parser rejects
-		// (anything outside `[A-Za-z0-9_.-]`), so a bad `build.args` or
+		// Pre-validate the `build.args` and `build.labels` keys (anything
+		// outside `[A-Za-z0-9_.-]` is refused), so a bad `build.args` or
 		// `build.labels` key surfaces as a `PodmanError::Field` naming the
 		// compose-side field rather than libpod's `400` body. Runs before
 		// the build URL is assembled so a bad key fails before any POST to

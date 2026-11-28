@@ -120,8 +120,8 @@ pub(super) fn ignored_volume_mount_fields(units: &ContainerUnits<'_>, out: &mut 
 	}
 }
 
-/// Build options that exist only in BuildKit/buildx and have no libpod
-/// build-API mapping. Honored fields are left untouched.
+/// Build options podup cannot forward to the libpod build API. Honored fields
+/// are left untouched.
 pub(super) fn ignored_build_fields(units: &ContainerUnits<'_>, out: &mut Vec<String>) {
 	for (service, def) in units {
 		let Some(BuildConfig::Config {

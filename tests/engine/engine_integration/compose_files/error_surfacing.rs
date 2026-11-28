@@ -107,9 +107,8 @@ async fn build_with_malformed_arg_key_names_the_field() {
 	)
 	.unwrap();
 	let proj = proj("build1357");
-	// A newline in the build-arg key trips libpod's buildkit-fronted
-	// parser; the pre-validator catches it before the POST so the error
-	// is a `Field` naming `build.args` rather than libpod's raw body.
+	// The pre-validator refuses a newline in a build-arg key before the POST,
+	// so the error is a `Field` naming `build.args`.
 	let yaml = "services:\n  app:\n    build:\n      context: .\n      args:\n        \"BAD\\nKEY\": value\n    image: bogus-build-arg-key-test:latest\n";
 	let path = dir.path().join("docker-compose.yml");
 	fs::write(&path, yaml).unwrap();
