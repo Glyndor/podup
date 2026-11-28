@@ -164,12 +164,20 @@ impl Engine {
 	/// `podup.project=<proj>` so it can be cleaned up on `down`. The payload size
 	/// is checked up front to turn Podman's opaque 500 into a clear message.
 	///
-	/// Idempotent across re-`up`s: the existing secret of this name is removed
-	/// first (a 404 is fine) and then created fresh. Podman 6.2.0 accepts
-	/// `replace=true` whether or not the name exists (measured 2026-11-22), so
-	/// that is no longer why this is not one request. The delete goes by the ID
-	/// that was inspected, which `replace=true` cannot do: a name handed to
-	/// someone else after the inspect is left alone instead of overwritten.
+	/// Idempotent across re-`up`s: a secret of the project that already holds
+	/// these bytes is left alone. One that holds others is removed and created
+	/// fresh, and when the create fails the content it had is put back. Podman
+	/// 6.2.0 accepts `replace=true` whether or not the name exists (measured
+	/// 2026-11-22), so that is not why this is not one request. The delete goes
+	/// by the ID that was inspected, which `replace=true` cannot do: a name
+	/// handed to someone else after the inspect is left alone instead of
+	/// overwritten.
+	///
+	/// A secret cannot be put back when the API does not give its content back
+	/// byte for byte: it carries the content as text, so bytes that are not
+	/// UTF-8 are replaced with U+FFFD on the way, and a content that holds
+	/// U+FFFD itself is indistinguishable from one that was altered. The
+	/// create's error is returned either way, and a warning says which happened.
 	///
 	/// # Concurrency contract: read before touching the inspect → delete → create sequence
 	///
@@ -180,8 +188,11 @@ impl Engine {
 	///
 	/// 1. The **cross-invocation** case is closed by the per-project lock
 	///    ([`crate::engine::project::lock`]) held for the duration of `up`. Two
-	///    `podup` processes touching the same project serialise through it,
-	///    so the inspect is never stale across processes.
+	///    `podup up` processes touching the same project serialise through it,
+	///    so the inspect is never stale across them. `podup watch` takes no
+	///    lock and calls this too, so a watch running beside an `up` is not
+	///    serialised; it cannot corrupt anything either, because no create
+	///    here names `replace`.
 	/// 2. The **within-invocation** case is closed by the project-scoped
 	///    naming. Every secret created here has a name of the form
 	///    `<project>_...`, which is unique to this `Engine` instance, and the
@@ -201,37 +212,54 @@ impl Engine {
 		check_secret_size(name, payload.byte_len())?;
 		// Guard the delete-then-create: if a secret of this name already exists and
 		// is not labelled as ours, refuse rather than clobber a foreign secret.
-		// Our own secret (or a 404) is replaced fresh, keeping re-`up` idempotent.
-		let inspect = format!("{API_PREFIX}/secrets/{}/json", urlencoded(name));
-		let existing: Option<String> =
-			match self.client.get_json::<serde_json::Value>(&inspect).await {
-				Ok(info) => {
-					let owned = info
-						.get("Spec")
-						.and_then(|spec| spec.get("Labels"))
-						.and_then(|labels| labels.get("podup.project"))
-						.and_then(|v| v.as_str())
-						== Some(self.project.as_str());
-					if !owned {
-						return Err(ComposeError::Unsupported(format!(
-							"a secret named '{name}' already exists and is not labelled \
+		// `showsecret` brings the content back with the same request, to compare
+		// it and to put it back.
+		let inspect = format!(
+			"{API_PREFIX}/secrets/{}/json?showsecret=true",
+			urlencoded(name)
+		);
+		let mut existing = match self.client.get_json::<serde_json::Value>(&inspect).await {
+			Ok(info) => {
+				let owned = info
+					.get("Spec")
+					.and_then(|spec| spec.get("Labels"))
+					.and_then(|labels| labels.get("podup.project"))
+					.and_then(|v| v.as_str())
+					== Some(self.project.as_str());
+				if !owned {
+					return Err(ComposeError::Unsupported(format!(
+						"a secret named '{name}' already exists and is not labelled \
 						 podup.project={}; refusing to overwrite a secret podup did \
 						 not create",
-							self.project
-						)));
-					}
-					Some(super::remove::removal_key(&info, name))
+						self.project
+					)));
 				}
-				Err(e) if e.is_status(404) => None,
-				Err(e) => return Err(ComposeError::Podman(e)),
-			};
+				Some(info)
+			}
+			Err(e) if e.is_status(404) => None,
+			Err(e) => return Err(ComposeError::Podman(e)),
+		};
+		// The API puts U+FFFD where a byte is not UTF-8, so a text that holds it
+		// may not be the content.
+		let held = existing
+			.as_mut()
+			.and_then(|info| match info.get_mut("SecretData")?.take() {
+				serde_json::Value::String(text) if !text.contains('\u{FFFD}') => {
+					Some(SecretBytes::new(text.into_bytes()))
+				}
+				_ => None,
+			});
+		if held.as_ref().is_some_and(|h| h.holds_the_same(payload)) {
+			return Ok(());
+		}
 		// Only delete something that is actually there (#1219). On a first `up`
 		// every secret is a 404, so this was a round trip per secret spent
 		// removing nothing.
 		let mut removed = false;
-		if let Some(key) = existing {
+		if let Some(info) = &existing {
 			// By the ID that was inspected: a name taken by another secret since
 			// then answers 404 and is not removed.
+			let key = super::remove::removal_key(info, name);
 			let delete_path = format!("{API_PREFIX}/secrets/{}", urlencoded(&key));
 			removed = self
 				.client
@@ -239,38 +267,66 @@ impl Engine {
 				.await
 				.map_err(ComposeError::Podman)?;
 		}
-		let labels = serde_json::json!({ "podup.project": self.project }).to_string();
-		let path = format!(
-			"{API_PREFIX}/secrets/create?name={}&labels={}",
-			urlencoded(name),
-			urlencoded(&labels),
+		let ours = serde_json::json!({ "podup.project": self.project });
+		// The new content first; if that fails and the old secret was removed
+		// here, the old content under the labels it had.
+		let (mut labels, mut content) = (&ours, payload);
+		let mut failed = None;
+		let created = loop {
+			let path = format!(
+				"{API_PREFIX}/secrets/create?name={}&labels={}",
+				urlencoded(name),
+				urlencoded(&labels.to_string()),
+			);
+			// The response is `{"ID": "..."}`; we don't need the id, only success.
+			let sent = self
+				.client
+				.post_bytes_json::<serde_json::Value>(
+					&path,
+					bytes::Bytes::copy_from_slice(content.expose_secret()),
+					"application/octet-stream",
+				)
+				.await;
+			let Err(e) = sent else { break true };
+			if failed.is_some() {
+				break false;
+			}
+			failed = Some(e);
+			// The create names no `replace`, so it takes the name back only if
+			// nobody else holds it.
+			let old = existing
+				.as_ref()
+				.and_then(|info| info.get("Spec")?.get("Labels"));
+			match (old, &held) {
+				(Some(old), Some(held)) if removed => (labels, content) = (old, held),
+				_ => break false,
+			}
+		};
+		let Some(e) = failed else {
+			return Ok(());
+		};
+		// Skipping the delete opens a window: the inspect said the name was
+		// free, and something claimed it before the create landed. `up` now
+		// fails there instead of clobbering whatever arrived, the better
+		// outcome, but only if it is legible. Podman's own message for this
+		// is an opaque 500, so it is named here rather than passed through.
+		if !removed {
+			return Err(ComposeError::Unsupported(format!(
+				"secret '{name}' was not there to replace when podup checked but \
+				 could not be created: {e}. Something else created a secret of \
+				 that name in between. Re-run `up`, or remove it if it is not \
+				 wanted."
+			)));
+		}
+		tracing::warn!(
+			"secret {name} could not be replaced; {}",
+			if created {
+				"the content it had was put back"
+			} else {
+				"it was removed and could not be put back, so run `up` again"
+			}
 		);
-		// The response is `{"ID": "..."}`; we don't need the id, only success.
-		self.client
-			.post_bytes_json::<serde_json::Value>(
-				&path,
-				bytes::Bytes::copy_from_slice(payload.expose_secret()),
-				"application/octet-stream",
-			)
-			.await
-			.map(|_| ())
-			.map_err(|e| {
-				// Skipping the delete opens a window: the inspect said the name was
-				// free, and something claimed it before the create landed. `up` now
-				// fails there instead of clobbering whatever arrived, the better
-				// outcome, but only if it is legible. Podman's own message for this
-				// is an opaque 500, so it is named here rather than passed through.
-				if !removed {
-					ComposeError::Unsupported(format!(
-						"secret '{name}' was not there to replace when podup checked but \
-						 could not be created: {e}. Something else created a secret of \
-						 that name in between. Re-run `up`, or remove it if it is not \
-						 wanted."
-					))
-				} else {
-					ComposeError::Podman(e)
-				}
-			})
+		Err(ComposeError::Podman(e))
 	}
 }
 

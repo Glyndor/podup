@@ -15,6 +15,8 @@ mod environment;
 #[cfg(unix)]
 mod mode;
 #[cfg(unix)]
+mod previous;
+#[cfg(unix)]
 mod replace;
 #[cfg(unix)]
 mod sizes;
