@@ -120,13 +120,12 @@ pub(super) fn ignored_volume_mount_fields(units: &ContainerUnits<'_>, out: &mut 
 	}
 }
 
-/// Build options that exist only in BuildKit/buildx and have no libpod
-/// build-API mapping. Honored fields are left untouched.
+/// Build options podup cannot forward to the libpod build API. Honored fields
+/// are left untouched.
 pub(super) fn ignored_build_fields(units: &ContainerUnits<'_>, out: &mut Vec<String>) {
 	for (service, def) in units {
 		let Some(BuildConfig::Config {
 			privileged,
-			isolation,
 			entitlements,
 			provenance,
 			sbom,
@@ -145,9 +144,6 @@ pub(super) fn ignored_build_fields(units: &ContainerUnits<'_>, out: &mut Vec<Str
 		if !ssh.is_empty() {
 			unmapped.push(("ssh", NO_EQUIVALENT));
 		}
-		if isolation.is_some() {
-			unmapped.push(("isolation", NO_EQUIVALENT));
-		}
 		if !entitlements.is_empty() {
 			unmapped.push(("entitlements", NO_EQUIVALENT));
 		}
@@ -155,7 +151,11 @@ pub(super) fn ignored_build_fields(units: &ContainerUnits<'_>, out: &mut Vec<Str
 			unmapped.push(("provenance", NO_EQUIVALENT));
 		}
 		if sbom.is_some() {
-			unmapped.push(("sbom", NO_EQUIVALENT));
+			unmapped.push((
+				"sbom",
+				"is ignored: libpod needs sbom-scanner-image, sbom-scanner-command and \
+				 sbom-output, which the compose value does not name",
+			));
 		}
 		if !matches!(no_cache_filter, StringOrList::Empty) {
 			unmapped.push((

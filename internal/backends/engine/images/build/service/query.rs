@@ -12,6 +12,7 @@ use super::super::names::looks_like_secret;
 use super::super::request::BuildPlan;
 use super::super::{context::map_additional_context, BuildOptions, Engine};
 use super::cache::{references, CacheField};
+use super::endpoint_values;
 
 impl Engine {
 	pub(super) async fn service_build_query(
@@ -23,6 +24,9 @@ impl Engine {
 		tag: &str,
 		plan: &BuildPlan,
 	) -> Result<(String, String)> {
+		// Without `build.platforms` the build is for the platform the service
+		// runs on, as in Compose.
+		let (platform, isolation) = endpoint_values::checked(service, build)?;
 		// The project environment a bare `KEY` reads from: the process, plus the
 		// project `.env` or the global `--env-file` files that replace it. It is
 		// the same environment a bare `environment: [KEY]` reads.
@@ -60,7 +64,7 @@ impl Engine {
 
 		// A secret passed as a build arg is recorded in the image history and, if
 		// promoted via `ENV`, the image config, so it can leak. Warn and point at
-		// `build.secrets` (BuildKit `--mount=type=secret`), which does not persist.
+		// `build.secrets` (`RUN --mount=type=secret`), which does not persist.
 		let mut secretish: Vec<&str> = build_args
 			.keys()
 			.filter(|k| looks_like_secret(k))
@@ -87,13 +91,13 @@ impl Engine {
 		// miss every image this build produced and reach for `other`'s
 		// instead. A `BTreeMap` (rather than the `HashMap` this used to be)
 		// keeps the label order deterministic across builds, so a second
-		// `podup build` of the same Containerfile hits the buildkit layer
-		// cache instead of producing a different `LABEL` step every time.
+		// `podup build` of the same Containerfile hits the layer cache instead
+		// of producing a different `LABEL` step every time.
 		labels.insert("podup.project".to_string(), self.project.clone());
 		labels.insert("podup.service".to_string(), service_name.to_string());
 
-		// Pre-validate the keys libpod's buildkit-fronted parser rejects
-		// (anything outside `[A-Za-z0-9_.-]`), so a bad `build.args` or
+		// Pre-validate the `build.args` and `build.labels` keys (anything
+		// outside `[A-Za-z0-9_.-]` is refused), so a bad `build.args` or
 		// `build.labels` key surfaces as a `PodmanError::Field` naming the
 		// compose-side field rather than libpod's `400` body. Runs before
 		// the build URL is assembled so a bad key fails before any POST to
@@ -108,18 +112,6 @@ impl Engine {
 		} else {
 			None
 		};
-		let platform = match build {
-			BuildConfig::Config { platforms, .. } => platforms.first().inspect(|first| {
-				let rest_count = platforms.len() - 1;
-				if rest_count > 0 {
-					warn!(target: "podup::backends::engine::images::build::service","build.platforms: libpod builds one platform per request; building {first}, ignoring {rest_count} other(s)");
-				}
-			}).cloned(),
-			_ => None,
-		};
-		// Without `build.platforms` the build is for the platform the service
-		// runs on, as in Compose.
-		let platform = platform.or_else(|| service.platform.clone());
 		// Distinguish "absent" from "present but unparseable": a malformed
 		// `shm_size` must be rejected, not silently dropped to the default.
 		//
@@ -137,13 +129,13 @@ impl Engine {
 		// The libpod endpoint reads `extrahosts` as a JSON array of
 		// `host:ip` entries. A comma-separated list is not that shape: the
 		// daemon rejects the build before it starts.
-		let extrahosts = if build.extra_hosts().is_empty() {
-			None
-		} else {
-			Some(crate::engine::to_query_json(
-				"build.extra_hosts",
-				&build.extra_hosts(),
-			)?)
+		// The `Vec` itself is serialised, the type the cache lists use too: a
+		// second serialiser for a slice does not fit the binary budget.
+		let extrahosts = match build {
+			BuildConfig::Config { extra_hosts, .. } if !extra_hosts.is_empty() => Some(
+				crate::engine::to_query_json("build.extra_hosts", extra_hosts)?,
+			),
+			_ => None,
 		};
 		// The endpoint reads the caches as a JSON array of image references.
 		// Compose writes them with the global cache syntax, so a registry
@@ -225,8 +217,13 @@ impl Engine {
 		if build.pull() || opts.pull {
 			qs.push_str("&pullpolicy=always");
 		}
-		if let Some(p) = &platform {
+		if let Some(p) = platform {
 			qs.push_str(&format!("&platform={}", urlencoded(p)));
+		}
+		if let Some(i) = isolation {
+			// One of the four names, so there is nothing to encode.
+			qs.push_str("&isolation=");
+			qs.push_str(i);
 		}
 		if let Some(n) = &network {
 			qs.push_str(&format!("&networkmode={}", urlencoded(n)));

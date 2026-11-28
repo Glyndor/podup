@@ -249,6 +249,77 @@ mod tests {
 		assert_eq!(param(&query, "platform=").as_deref(), Some("linux/amd64"));
 	}
 
+	/// The error of a build the engine must refuse, after checking that no
+	/// build request reached the daemon.
+	async fn refused_build(compose: &str) -> String {
+		let (_dir, fake, engine) = start_capture("proj");
+		let file = crate::parse_str(compose).expect("the compose file parses");
+		let error = engine
+			.build_all_with_options(&file, &[], &crate::engine::BuildOptions::default())
+			.await
+			.expect_err("the build must be refused");
+		let requests = fake.requests.lock().unwrap().clone();
+		assert!(
+			!requests.iter().any(|r| r.contains("/build?")),
+			"nothing may be built: {requests:?}"
+		);
+		error.to_string()
+	}
+
+	/// The endpoint gives every platform of one request the same image name, so
+	/// the name ends up on whichever platform finishes last. A build for
+	/// several platforms is refused instead of dropping all but one or leaving
+	/// the name on an image the host may not run.
+	#[tokio::test]
+	async fn several_build_platforms_are_refused() {
+		let message = refused_build(
+			"services:\n  app:\n    image: proj/img:1\n    build:\n      context: .\n      \
+			 platforms:\n        - linux/amd64\n        - linux/arm64\n",
+		)
+		.await;
+
+		for part in ["build.platforms", "linux/amd64", "linux/arm64"] {
+			assert!(message.contains(part), "missing {part}: {message}");
+		}
+	}
+
+	/// libpod splits a single `platform=` value at its commas, so a list
+	/// written in one entry is several platforms too.
+	#[tokio::test]
+	async fn a_comma_list_in_one_platform_entry_is_refused() {
+		let listed = refused_build(
+			"services:\n  app:\n    image: proj/img:1\n    build:\n      context: .\n      \
+			 platforms:\n        - \"linux/amd64,linux/arm64\"\n",
+		)
+		.await;
+		assert!(listed.contains("build.platforms"), "{listed}");
+
+		let service = refused_build(
+			"services:\n  app:\n    image: proj/img:1\n    platform: \
+			 \"linux/amd64,linux/arm64\"\n    build:\n      context: .\n",
+		)
+		.await;
+		assert!(service.contains("podman error: platform:"), "{service}");
+	}
+
+	/// Merged compose files may list one platform twice, which is still one
+	/// platform.
+	#[tokio::test]
+	async fn one_platform_listed_twice_is_one_platform() {
+		let (_dir, fake, engine) = start_capture("proj");
+
+		let query = build_query(
+			&engine,
+			&fake,
+			"services:\n  app:\n    image: proj/img:1\n    build:\n      context: .\n      \
+			 platforms:\n        - linux/amd64\n        - linux/amd64\n",
+		)
+		.await;
+
+		assert_eq!(query.matches("platform=").count(), 1, "{query}");
+		assert_eq!(param(&query, "platform=").as_deref(), Some("linux/amd64"));
+	}
+
 	/// A `service:` context reaches the daemon as the image that service
 	/// builds, not as a path on disk.
 	#[tokio::test]
@@ -310,5 +381,65 @@ mod tests {
 		.await;
 
 		assert_eq!(param(&query, "networkmode=").as_deref(), Some("none"));
+	}
+
+	/// `build.isolation` reaches the endpoint's `isolation` parameter as
+	/// written, for every name Buildah reads. It reads them without regard to
+	/// case.
+	#[tokio::test]
+	async fn build_isolation_reaches_the_build_query() {
+		for value in ["oci", "default", "rootless", "chroot", "Chroot"] {
+			let (_dir, fake, engine) = start_capture("proj");
+
+			let query = build_query(
+				&engine,
+				&fake,
+				&format!(
+					"services:\n  app:\n    image: proj/img:1\n    build:\n      \
+					 context: .\n      isolation: {value}\n"
+				),
+			)
+			.await;
+
+			assert_eq!(param(&query, "isolation=").as_deref(), Some(value));
+		}
+	}
+
+	/// Without `build.isolation`, or with an empty one, the engine keeps its own
+	/// default.
+	#[tokio::test]
+	async fn an_unset_isolation_is_not_sent() {
+		for build in ["context: .", "context: .\n      isolation: \"\""] {
+			let (_dir, fake, engine) = start_capture("proj");
+
+			let query = build_query(
+				&engine,
+				&fake,
+				&format!("services:\n  app:\n    image: proj/img:1\n    build:\n      {build}\n"),
+			)
+			.await;
+
+			assert_eq!(param(&query, "isolation="), None, "{query}");
+		}
+	}
+
+	/// An isolation Podman does not have is refused before the request, naming
+	/// the compose field: the engine would answer with a message that does not.
+	/// A number is refused too, although the endpoint would take one as a raw
+	/// Buildah constant.
+	#[tokio::test]
+	async fn an_isolation_the_engine_does_not_take_fails_the_build() {
+		for value in ["hyperv", "process", "2"] {
+			let message = refused_build(&format!(
+				"services:\n  app:\n    image: proj/img:1\n    build:\n      context: .\n      \
+				 isolation: \"{value}\"\n"
+			))
+			.await;
+
+			assert!(
+				message.contains("build.isolation") && message.contains(value),
+				"the error must name the field and the value: {message}"
+			);
+		}
 	}
 }

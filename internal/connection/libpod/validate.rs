@@ -4,13 +4,13 @@
 //! the create endpoint and when a build query string arrives at the build
 //! endpoint. The validators are scattered across the libpod source: namespaces
 //! via `ParseNamespace`, `device_cgroup_rule` access strings via
-//! `parseLinuxResourcesDeviceAccess`, and a handful of others (build-arg keys,
-//! label keys) rejected by the buildkit-fronted parser. When libpod rejects
-//! one of these, the raw error message names the validator, not the
+//! `parseLinuxResourcesDeviceAccess`, and a handful of others. When libpod
+//! rejects one of these, the raw error message names the validator, not the
 //! compose-side field. Podup owns the compose-side translation, so it also
 //! owns the field-aware error surface: this module runs the same allow-lists
 //! libpod uses, produces a structured `PodmanError::Field` before contacting
-//! the daemon, and lets every other field fall through to the runtime.
+//! the daemon, and lets every other field fall through to the runtime. The
+//! build-arg and label keys are the exception: their allow-list is podup's own.
 //!
 //! `#1357` reframed the original "per-field allow-list for compose fields
 //! forwarded to libpod" proposal into this: pre-validate what libpod
@@ -220,13 +220,14 @@ fn is_valid_device_access(access: &str) -> bool {
 // build query key validation
 // ---------------------------------------------------------------------------
 
-/// The OCI build-arg / build-label key charset libpod accepts.
+/// The build-arg / build-label key charset podup accepts.
 ///
-/// libpod's buildkit-fronted parser rejects keys that contain any character
-/// outside `[A-Za-z0-9_.-]`. Validating client-side lets a bad key surface as
-/// a `build.args: ... (value: "...")` error naming the field, instead of
-/// libpod's `400` body (which names the key but not the compose-side field)
-/// (#1357).
+/// Keys with any character outside `[A-Za-z0-9_.-]` are refused, as a
+/// `build.args: ... (value: "...")` error naming the compose field (#1357).
+///
+/// This limit is podup's and is narrower than the engine's: on 2026-11-27 a
+/// build on Podman 6.2.1 took a build-arg key and a label key that held a
+/// space, `+` and `/`.
 fn is_valid_kv_key(key: &str) -> bool {
 	!key.is_empty()
 		&& key
@@ -421,7 +422,7 @@ pub(crate) fn pre_validate_spec(
 /// any map type (`HashMap`, `BTreeMap`, ...) the caller wants; the
 /// build path uses a `BTreeMap` to keep label order deterministic
 /// across builds so a second `podup build` of the same Containerfile
-/// hits the buildkit layer cache.
+/// hits the layer cache.
 pub(crate) fn pre_validate_build(
 	build_args: &std::collections::HashMap<String, String>,
 	labels: &impl LabelKeys,
