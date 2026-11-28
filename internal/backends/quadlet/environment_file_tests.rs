@@ -67,7 +67,10 @@ fn the_unit_names_the_file_after_the_services_own_env_files() {
 			.lines()
 			.filter_map(|l| l.strip_prefix("EnvironmentFile="))
 			.collect();
-		assert_eq!(named, ["/srv/app/base.env", "proj-web.podup.env"]);
+		// The service's own file is made absolute with the separator of the host.
+		assert_eq!(named.len(), 2, "{named:?}");
+		assert!(named[0].ends_with("base.env"), "{named:?}");
+		assert_eq!(named[1], "proj-web.podup.env");
 		let position = |name: &str| out.units.iter().position(|u| u.filename == name);
 		assert!(position("proj-web.podup.env") < position("proj-web.container"));
 	}
