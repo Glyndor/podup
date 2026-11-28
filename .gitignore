@@ -37,7 +37,5 @@ bench/results/
 # cover them on the maintainer's machine, but neither travels with the repo, so
 # on a fresh clone or on CI they were unprotected: a single `git add -A` would
 # publish them. Listing them here keeps them out of the tree for everyone.
-.claude/
 .superpowers/
-.playwright-mcp/
 /bench/timeit/target
