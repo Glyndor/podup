@@ -33,6 +33,8 @@ Quadlet export reports `pre_start is not exported; each init step requires its o
 
 `build.secrets` takes the short form (the name of a top-level secret, also its id in the build) and the long form with `source`, `target`, `uid`, `gid` and `mode`. `target` is the id the Dockerfile reads with `RUN --mount=type=secret,id=...`; it defaults to `source`. `uid`, `gid` and `mode` are accepted and have no effect, because a build secret has no owner or mode to set. Both names may hold only letters, digits, `.`, `_` and `-`.
 
+A `build.labels` key is free text, so `app.kubernetes.io/name` or a key with spaces builds as written. podup refuses a key that is empty, holds `=` or `$`, or holds a character that does not print (a line break, a tab, a no-break or zero-width space). Podman's build endpoint would cut such a key at the `=`, expand the `$`, store the escape text of the character, or drop an empty key. A key with combining marks (an accent written as a separate code point, an emoji variation selector) is refused too, although Podman would keep it, so write accented letters in their precomposed form. This was measured on Podman 6.2.1. `build.args` keys are limited to `[A-Za-z0-9_.-]`.
+
 The following Compose fields are translated onto Podman's libpod API. Fields outside this list still parse (an unknown key never errors, per the Compose spec's forward-compatibility rule) and podup reports any it cannot honor during `up`; see the accepted-but-has-no-effect section.
 
 | Category | Keys |

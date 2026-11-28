@@ -4,8 +4,8 @@
 //! the create endpoint and when a build query string arrives at the build
 //! endpoint. The validators are scattered across the libpod source: namespaces
 //! via `ParseNamespace`, `device_cgroup_rule` access strings via
-//! `parseLinuxResourcesDeviceAccess`, and a handful of others (build-arg keys,
-//! label keys) rejected by the buildkit-fronted parser. When libpod rejects
+//! `parseLinuxResourcesDeviceAccess`, and the `key=value` pairs of the build
+//! query (build args and labels). When libpod rejects
 //! one of these, the raw error message names the validator, not the
 //! compose-side field. Podup owns the compose-side translation, so it also
 //! owns the field-aware error surface: this module runs the same allow-lists
@@ -220,12 +220,10 @@ fn is_valid_device_access(access: &str) -> bool {
 // build query key validation
 // ---------------------------------------------------------------------------
 
-/// The OCI build-arg / build-label key charset libpod accepts.
+/// The `build.args` key charset podup accepts.
 ///
-/// libpod's buildkit-fronted parser rejects keys that contain any character
-/// outside `[A-Za-z0-9_.-]`. Validating client-side lets a bad key surface as
-/// a `build.args: ... (value: "...")` error naming the field, instead of
-/// libpod's `400` body (which names the key but not the compose-side field)
+/// Validating client-side lets a key outside `[A-Za-z0-9_.-]` surface as a
+/// `build.args: ... (value: "...")` error naming the compose-side field
 /// (#1357).
 fn is_valid_kv_key(key: &str) -> bool {
 	!key.is_empty()
@@ -234,24 +232,25 @@ fn is_valid_kv_key(key: &str) -> bool {
 			.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
 }
 
-/// Validate every key in a `build.args` / `build.labels` map. Returns the
-/// first invalid key as `(field, key, message)` so the caller can build a
-/// `Field` error.
-pub(crate) fn first_invalid_kv_key<'a, I>(field: &str, keys: I) -> Option<(String, String, String)>
-where
-	I: IntoIterator<Item = &'a str>,
-{
-	for key in keys {
-		if is_valid_kv_key(key) {
-			continue;
-		}
-		return Some((
-			field.to_string(),
-			key.to_string(),
-			format!("key {key:?} is not a valid identifier; must match `[A-Za-z0-9_.-]+`"),
-		));
-	}
-	None
+/// Whether a `build.labels` key reaches the image as written.
+///
+/// Compose label keys are free text. The build endpoint joins each pair into
+/// `key=value`, and buildah writes the pairs into a `LABEL` instruction, each
+/// side quoted with Go's `%q`. Measured against Podman 6.2.1 (2026-11-28): an
+/// `=` ends the key early, a `$` before a name or `{` is expanded, a character
+/// that does not print is stored as its escape text, and an empty key fails the
+/// build or is dropped. `$` is refused wherever it sits. Combining marks are
+/// refused too, although Podman stores them: `Debug` spells them out, and
+/// telling them apart added more than 1 KiB to the release binary.
+/// A code point newer than the Unicode tables of Podman's own build passes
+/// here and is stored as escape text.
+fn is_valid_label_key(key: &str) -> bool {
+	// `Debug` quotes the key and adds one byte before each `"` and `\`, which
+	// survive the trip. Anything longer holds a character that `Debug` spells out.
+	let backslashed = key.matches(['"', '\\']).count();
+	!key.is_empty()
+		&& !key.contains(['=', '$'])
+		&& format!("{key:?}").len() == key.len() + backslashed + 2
 }
 
 // ---------------------------------------------------------------------------
@@ -413,7 +412,7 @@ pub(crate) fn pre_validate_spec(
 	Ok(())
 }
 
-/// Pre-validate the build-query fields libpod validates. Called from the
+/// Pre-validate the keys of the build query, args before labels. Called from the
 /// build path before the URL is assembled, so a bad key fails before any
 /// POST to the daemon (#1357).
 ///
@@ -426,17 +425,26 @@ pub(crate) fn pre_validate_build(
 	build_args: &std::collections::HashMap<String, String>,
 	labels: &impl LabelKeys,
 ) -> Result<(), ComposeError> {
-	if let Some((field, key, msg)) =
-		first_invalid_kv_key("build.args", build_args.keys().map(String::as_str))
-	{
-		return Err(ComposeError::Podman(build_field_error(field, key, msg)));
+	let refused = build_args
+		.keys()
+		.find(|key| !is_valid_kv_key(key))
+		.map(|key| {
+			let rule = "is not a valid identifier; must match `[A-Za-z0-9_.-]+`";
+			("build.args", key, rule)
+		})
+		.or_else(|| {
+			let key = labels.keys().find(|key| !is_valid_label_key(key))?;
+			let rule = "must be non-empty and printable, without `=`, `$` or combining marks";
+			Some(("build.labels", key, rule))
+		});
+	match refused {
+		Some((field, key, rule)) => Err(ComposeError::Podman(build_field_error(
+			field,
+			key,
+			format!("key {key:?} {rule}"),
+		))),
+		None => Ok(()),
 	}
-	if let Some((field, key, msg)) =
-		first_invalid_kv_key("build.labels", labels.keys().map(String::as_str))
-	{
-		return Err(ComposeError::Podman(build_field_error(field, key, msg)));
-	}
-	Ok(())
 }
 
 /// Any map whose `keys()` iterator yields `String`s, with the
