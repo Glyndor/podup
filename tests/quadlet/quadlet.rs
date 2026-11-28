@@ -56,11 +56,11 @@ Requires=proj-db.service
 ContainerName=web
 Image=nginx:1.27
 PublishPort=8080:80
-Environment=TZ=UTC
 Volume=proj-data.volume:/var/lib/data
 Network=proj-frontend.network:alias=web
 Label=podup.project=proj
 Label=podup.service=web
+EnvironmentFile=proj-web.podup.env
 LogDriver=k8s-file
 LogOpt=max-size=10485760
 
@@ -71,6 +71,10 @@ Restart=always
 WantedBy=default.target
 ";
 	assert_eq!(unit(&out, "proj-web.container"), expected);
+	assert_eq!(
+		unit(&out, "proj-web.podup.env"),
+		"# podup-owner: proj\nTZ=UTC\n"
+	);
 }
 
 #[test]

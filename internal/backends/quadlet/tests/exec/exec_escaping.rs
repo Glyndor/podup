@@ -43,9 +43,10 @@ fn a_string_command_is_written_as_its_words() {
 
 #[test]
 fn a_dollar_is_doubled_in_every_container_value_that_reaches_a_command_line() {
-	let unit = container(
-		"services:\n  web:\n    image: nginx\n    command: [sh, -c, \"echo $$HOME\"]\n    environment:\n      K: \"$$HOME\"\n    labels:\n      l: \"$$HOME\"\n    volumes: [\"/srv/$$HOME:/d\"]\n",
-	);
+	// A value with a line break stays on the command line; one without goes to
+	// the env file, which Podman reads as written.
+	let yaml = "services:\n  web:\n    image: nginx\n    command: [sh, -c, \"echo $$HOME\"]\n    environment:\n      K: \"$$HOME\\n\"\n      F: \"$$HOME\"\n    labels:\n      l: \"$$HOME\"\n    volumes: [\"/srv/$$HOME:/d\"]\n";
+	let unit = container(yaml);
 	for key in ["Exec", "Environment", "Volume"] {
 		assert!(line(&unit, key).contains("$$HOME"), "{key}: {unit}");
 	}
@@ -54,6 +55,10 @@ fn a_dollar_is_doubled_in_every_container_value_that_reaches_a_command_line() {
 		.filter(|l| l.replace("$$", "").contains('$'))
 		.collect();
 	assert!(stray.is_empty(), "lone dollar left in: {stray:?}");
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
+	let env = &unit_named(&out, "proj-web.podup.env").contents;
+	assert!(env.ends_with("\nF=$HOME\n"), "{env}");
 }
 
 #[test]

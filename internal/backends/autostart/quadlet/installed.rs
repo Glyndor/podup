@@ -54,8 +54,14 @@ const UNIT_SUFFIXES: [&str; 8] = [
 	".artifact",
 ];
 
+/// Whether podup writes files with a name like this one: a unit, or the env
+/// file of a container unit, which has to be removed with it.
 fn has_unit_suffix(name: &str) -> bool {
-	UNIT_SUFFIXES.iter().any(|s| name.ends_with(s))
+	UNIT_SUFFIXES
+		.iter()
+		.copied()
+		.chain([crate::quadlet::ENV_FILE_SUFFIX])
+		.any(|s| name.ends_with(s))
 }
 
 /// This project's installed quadlet unit files, sorted. Drives uninstall

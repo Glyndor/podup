@@ -15,11 +15,15 @@ use crate::parse_str;
 use crate::quadlet::generate_at;
 
 fn unit_of(yaml: &str) -> String {
+	file_of(yaml, "proj-web.container")
+}
+
+fn file_of(yaml: &str, name: &str) -> String {
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 	out.units
 		.iter()
-		.find(|u| u.filename == "proj-web.container")
+		.find(|u| u.filename == name)
 		.unwrap()
 		.contents
 		.clone()
@@ -27,16 +31,17 @@ fn unit_of(yaml: &str) -> String {
 
 #[test]
 fn a_bare_key_and_a_null_are_removed_and_a_value_is_kept() {
-	let unit = unit_of(
-		"services:\n  web:\n    image: img\n    environment:\n      BARE:\n      KEEP: value\n      NULLED: null\n",
-	);
+	let yaml = "services:\n  web:\n    image: img\n    environment:\n      BARE:\n      KEEP: value\n      NULLED: null\n";
+	let unit = unit_of(yaml);
 	assert!(unit.contains("Environment=BARE\n"), "{unit}");
 	assert!(unit.contains("PodmanArgs=--unsetenv=\"BARE\"\n"), "{unit}");
 	assert!(
 		unit.contains("PodmanArgs=--unsetenv=\"NULLED\"\n"),
 		"{unit}"
 	);
-	assert!(unit.contains("Environment=KEEP=value\n"), "{unit}");
+	assert!(!unit.contains("KEEP=value"), "{unit}");
+	let env = file_of(yaml, "proj-web.podup.env");
+	assert!(env.ends_with("\nKEEP=value\n"), "{env}");
 	assert!(!unit.contains("--unsetenv=\"KEEP\""), "{unit}");
 }
 
@@ -51,8 +56,9 @@ fn a_name_cannot_carry_another_flag() {
 }
 
 /// The `podman run` arguments Quadlet builds for the `proj-web` unit, without
-/// the ones that only belong to a service.
-fn run_args(generator: &std::path::Path, yaml: &str) -> Vec<String> {
+/// the ones that only belong to a service, and the directory of the units,
+/// which holds the env file the arguments name.
+fn run_args(generator: &std::path::Path, yaml: &str) -> (tempfile::TempDir, Vec<String>) {
 	let unit_dir = tempfile::tempdir().unwrap();
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
@@ -79,7 +85,7 @@ fn run_args(generator: &std::path::Path, yaml: &str) -> Vec<String> {
 			_ => kept.push(word),
 		}
 	}
-	kept
+	(unit_dir, kept)
 }
 
 /// What `printenv container` prints, and whether it found the variable, in a
@@ -91,7 +97,7 @@ fn container_var(yaml: &str, host_value: Option<&str>) -> Option<Option<String>>
 		eprintln!("SKIP: podman is not installed");
 		return None;
 	}
-	let args = run_args(&generator, yaml);
+	let (_units, args) = run_args(&generator, yaml);
 	let mut run = command("podman");
 	run.arg("run").arg("--rm").args(&args);
 	match host_value {

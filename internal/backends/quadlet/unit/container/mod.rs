@@ -30,6 +30,9 @@ mod storage;
 
 pub(crate) use definition::container_name;
 pub(crate) use networking::is_rootless_user_mode;
+pub(crate) use process::environment_file;
+#[cfg(test)]
+pub(crate) use process::fits_env_file;
 
 use confinement::{
 	emit_capabilities, emit_deploy_limits, emit_group_add, emit_limits, emit_memory_options,
@@ -44,8 +47,8 @@ use networking::{
 	emit_ports,
 };
 use process::{
-	emit_command, emit_env_files, emit_environment, emit_logging, emit_restart, emit_runtime,
-	emit_stop, emit_timeouts,
+	emit_command, emit_env_files, emit_environment, emit_environment_file, emit_logging,
+	emit_restart, emit_runtime, emit_stop, emit_timeouts,
 };
 use storage::{emit_bind_dirs, emit_secrets, emit_tmpfs, emit_volumes};
 
@@ -234,7 +237,7 @@ fn render_container_unit(
 	emit_runtime(name, service, &mut container);
 	namespaces::emit_namespaces(service, ctx, &mut container);
 	emit_ports(service, in_pod, &mut container);
-	emit_environment(service, &mut container);
+	emit_environment(name, service, &mut container, warnings);
 	emit_volumes(
 		service,
 		project,
@@ -258,6 +261,7 @@ fn render_container_unit(
 	emit_command(service, &mut container);
 	emit_annotations(service, &mut container);
 	emit_env_files(name, service, base_dir, &mut container, warnings);
+	emit_environment_file(project, name, service, &mut container);
 	emit_tmpfs(service, &mut container);
 	emit_sysctls(service, &mut container);
 	emit_ulimits(service, &mut container);

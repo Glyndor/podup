@@ -78,6 +78,7 @@ fn writes_the_container_the_exportable_timers_and_reports_the_rest() {
 			"proj-backup-1.timer",
 			"proj-backup-2.timer",
 			"proj-backup.container",
+			"proj-backup.podup.env",
 			"proj-db.container",
 			"proj-default.network",
 		]
@@ -91,9 +92,11 @@ fn writes_the_container_the_exportable_timers_and_reports_the_rest() {
 	assert!(!container.contains("[Install]"), "{container}");
 	assert!(container.contains("After=proj-db.service\n"), "{container}");
 	assert!(
-		container.contains("Environment=MODE=nightly\n"),
+		container.contains("EnvironmentFile=proj-backup.podup.env\n"),
 		"{container}"
 	);
+	let env = fs::read_to_string(out.path().join("proj-backup.podup.env")).unwrap();
+	assert!(env.ends_with("\nMODE=nightly\n"), "{env}");
 
 	let first = fs::read_to_string(out.path().join("proj-backup-1.timer")).unwrap();
 	assert!(first.contains("OnCalendar=*-*-* 02:30:00\n"), "{first}");

@@ -12,6 +12,9 @@ mod shared_values;
 mod volume;
 
 pub(super) use build::{build_unit, emits_build_unit};
+pub(super) use container::environment_file;
+#[cfg(test)]
+pub(super) use container::fits_env_file;
 pub(super) use container::{
 	container_name, container_unit_with_mode, job_container_unit, ContainerUnitMode, UnitContext,
 };

@@ -63,9 +63,10 @@ fn a_scheduled_job_gets_a_oneshot_container_and_a_timer() {
 	);
 	assert!(container.contains("Image=alpine\n"), "{container}");
 	assert!(
-		container.contains("Environment=MODE=batch\n"),
+		container.contains("EnvironmentFile=proj-nightly.podup.env\n"),
 		"{container}"
 	);
+	assert!(unit(&out, "proj-nightly.podup.env").ends_with("\nMODE=batch\n"));
 	assert!(
 		container.contains("[Service]\nType=oneshot\n"),
 		"{container}"
@@ -116,6 +117,10 @@ jobs:
 	let job = lines(unit(&out, "proj-job.container"));
 	assert!(!service.is_empty());
 	assert_eq!(service, job);
+	assert_eq!(
+		unit(&out, "proj-svc.podup.env"),
+		unit(&out, "proj-job.podup.env")
+	);
 }
 
 #[test]

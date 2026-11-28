@@ -36,8 +36,9 @@ networks:
 	assert!(web.contents.contains("ContainerName=web"));
 	assert!(web.contents.contains("PublishPort=8080:80"));
 	// Environment is emitted in sorted key order for determinism.
-	let a = web.contents.find("Environment=A_KEY=one").unwrap();
-	let b = web.contents.find("Environment=B_KEY=two").unwrap();
+	let env = &unit_named(&out, "proj-web.podup.env").contents;
+	let a = env.find("A_KEY=one").unwrap();
+	let b = env.find("B_KEY=two").unwrap();
 	assert!(a < b, "environment keys must be sorted");
 	// Declared named volume is tied to its .volume unit.
 	assert!(web

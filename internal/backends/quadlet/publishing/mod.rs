@@ -59,9 +59,9 @@ fn guard_existing_owner(
 
 /// Write a unit private to its owner.
 ///
-/// Units render each `environment:` entry as an `Environment=KEY=VALUE` line,
-/// so a compose file's database password ends up in this file verbatim. The
-/// default umask would leave it world-readable; systemd reads user units as the
+/// The env file of a service holds its `environment:` values, and a unit holds
+/// the ones that file cannot carry, so a compose file's database password ends
+/// up in one of them verbatim. The default umask would leave it world-readable; systemd reads user units as the
 /// owning user, so 0600 costs nothing. The file is written to a new private file
 /// and renamed into place, so a link or a file with looser permissions at the
 /// name is replaced rather than written through or kept.

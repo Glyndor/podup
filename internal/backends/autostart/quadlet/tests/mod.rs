@@ -185,6 +185,7 @@ const IMG_MULTI: &str =
 	"services:\n  web:\n    image: nginx\n  api:\n    image: nginx\n  worker:\n    image: nginx\n";
 const BASE: &str = "/srv/app";
 
+mod environment_file;
 mod failed_cleanup;
 mod install;
 mod oversized;

@@ -90,7 +90,7 @@ podup validates selected fields before calling libpod; other fields rely on libp
 
 - Names: Podman object-name pattern; project names have stricter lowercase/length checks.
 - URL segments: encoded before requests.
-- Quadlet values: escaped, arguments quoted and output filenames checked.
+- Quadlet values: escaped, arguments quoted and output filenames checked. `environment:` values go to a private env file that the unit names, so they are not on the `podman run` command line; a value the file cannot carry stays in the unit and is reported.
 - Signals: resolved to numeric libpod values.
 - Pull policy: unknown values rejected.
 - Shutdown timeout: nonnegative i32 seconds, otherwise rejected.
