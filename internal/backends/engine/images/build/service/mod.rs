@@ -10,6 +10,7 @@
 mod base_pull;
 mod cache;
 mod capture;
+mod endpoint_values;
 mod execution;
 mod query;
 mod steps;

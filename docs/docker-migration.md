@@ -33,11 +33,13 @@ Quadlet export reports `pre_start is not exported; each init step requires its o
 
 `build.secrets` takes the short form (the name of a top-level secret, also its id in the build) and the long form with `source`, `target`, `uid`, `gid` and `mode`. `target` is the id the Dockerfile reads with `RUN --mount=type=secret,id=...`; it defaults to `source`. `uid`, `gid` and `mode` are accepted and have no effect, because a build secret has no owner or mode to set. Both names may hold only letters, digits, `.`, `_` and `-`.
 
+podup builds one platform at a time. A `build.platforms` list (or a service `platform`) that names more than one platform fails the build before anything is sent, with an error that names the field: libpod's build endpoint gives every platform of a request the same image name, so the name ends up on whichever platform finishes last, and the host may not be able to run that one. List one platform, or build each one under its own tag. The Quadlet export is separate: a `.build` unit carries the first platform of the list.
+
 The following Compose fields are translated onto Podman's libpod API. Fields outside this list still parse (an unknown key never errors, per the Compose spec's forward-compatibility rule) and podup reports any it cannot honor during `up`; see the accepted-but-has-no-effect section.
 
 | Category | Keys |
 |---|---|
-| Images / build | `image`, `build` (context, dockerfile, args, target, cache_from, cache_to, secrets, labels, network), `pull_policy` (time policies map to `newer`), `pull_refresh_after` (strict syntax only) |
+| Images / build | `image`, `build` (context, dockerfile, args, target, cache_from, cache_to, secrets, labels, network, platforms), `pull_policy` (time policies map to `newer`), `pull_refresh_after` (strict syntax only) |
 | Execution | `command`, `entrypoint`, `working_dir`, `user`, `umask`, `platform`, `tty`, `stdin_open`, `init`, `runtime`, `stop_signal` |
 | Environment | `environment`, `env_file` (dotenv format, or `format: raw`; see the note below the table), variable substitution (`${VAR:-default}`) |
 | Networking | `ports`, `expose`, `networks`, `network_mode`, `hostname`, `dns`, `dns_opt`, `dns_search`, `extra_hosts` |

@@ -12,6 +12,7 @@ use super::super::names::looks_like_secret;
 use super::super::request::BuildPlan;
 use super::super::{context::map_additional_context, BuildOptions, Engine};
 use super::cache::{references, CacheField};
+use super::endpoint_values;
 
 impl Engine {
 	pub(super) async fn service_build_query(
@@ -108,18 +109,9 @@ impl Engine {
 		} else {
 			None
 		};
-		let platform = match build {
-			BuildConfig::Config { platforms, .. } => platforms.first().inspect(|first| {
-				let rest_count = platforms.len() - 1;
-				if rest_count > 0 {
-					warn!(target: "podup::backends::engine::images::build::service","build.platforms: libpod builds one platform per request; building {first}, ignoring {rest_count} other(s)");
-				}
-			}).cloned(),
-			_ => None,
-		};
 		// Without `build.platforms` the build is for the platform the service
 		// runs on, as in Compose.
-		let platform = platform.or_else(|| service.platform.clone());
+		let platform = endpoint_values::platform(service, build)?;
 		// Distinguish "absent" from "present but unparseable": a malformed
 		// `shm_size` must be rejected, not silently dropped to the default.
 		//
@@ -225,7 +217,7 @@ impl Engine {
 		if build.pull() || opts.pull {
 			qs.push_str("&pullpolicy=always");
 		}
-		if let Some(p) = &platform {
+		if let Some(p) = platform {
 			qs.push_str(&format!("&platform={}", urlencoded(p)));
 		}
 		if let Some(n) = &network {
