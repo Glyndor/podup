@@ -230,7 +230,7 @@ fn limited(program: &str, args: &[&str], secs: u64) -> std::process::Output {
 		if started.elapsed().as_secs() > secs {
 			let _ = child.kill();
 			let _ = child.wait();
-			panic!("{program} {args:?} did not end in {secs} s");
+			panic!("{program} did not end in {secs} s");
 		}
 		std::thread::sleep(std::time::Duration::from_millis(50));
 	}
