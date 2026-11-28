@@ -58,6 +58,7 @@ while IFS= read -r f; do
 		.github/workflows/lint-shell.yml) ;;
 		.github/workflows/linux-hardening.yml) ;;
 		.github/workflows/main-guard.yml) ;;
+		.github/workflows/packaging-check.yml) ;;
 		.github/workflows/pin-watch.yml) ;;
 		.github/workflows/podman-lane-develop-nightly.yml) ;;
 		.github/workflows/podman-watch.yml) ;;

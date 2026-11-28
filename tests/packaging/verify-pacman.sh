@@ -46,12 +46,14 @@ stage="$(cd "$stage" && pwd)"
 	bsdtar -tvf "/pkg/$NAME" | head -1 | grep -q "^-"
 	test "$(bsdtar -xOf "/pkg/$NAME" .PKGINFO | wc -c)" -le 65536
 	# No member with an absolute name, a .. component, or anything that is not a
-	# plain file or directory; no more than 100000 entries.
-	! bsdtar -tf "/pkg/$NAME" | grep -E "^/|(^|/)\.\.(/|$)"
-	! bsdtar -tvf "/pkg/$NAME" | grep -E "^[^-d]"
+	# plain file or directory; no more than 100000 entries. A refusal is spelled
+	# out with `if`: errexit ignores a command negated with `!`.
+	refuse() { echo "refused: $1" >&2; exit 1; }
+	if bsdtar -tf "/pkg/$NAME" | grep -E "^/|(^|/)\.\.(/|$)"; then refuse "a member name leaves the package root"; fi
+	if bsdtar -tvf "/pkg/$NAME" | grep -E "^[^-d]"; then refuse "a member is neither a file nor a directory"; fi
 	test "$(bsdtar -tf "/pkg/$NAME" | wc -l)" -le 100000
 	info="$(bsdtar -xOf "/pkg/$NAME" .PKGINFO)"
-	field() { grep -E "^$1 = " <<<"$info" | sed "s/^$1 = //"; }
+	field() { sed -n "s/^$1 = //p" <<<"$info"; }
 	test "$(field pkgname)" = podup
 	test "$(field pkgver)" = "$VERSION-1"
 	test "$(field arch)" = x86_64
@@ -63,7 +65,7 @@ stage="$(cd "$stage" && pwd)"
 	test -z "$(field provides)"
 	test "$(field depend)" = "podman>=6.2.0"
 	test -z "$(field backup)"
-	! grep -q "^pkgname = glyndor-keyring" <<<"$info"
+	if grep -q "^pkgname = glyndor-keyring" <<<"$info"; then refuse "the package is the keyring"; fi
 	# The installed size the package declares is the bytes of its files.
 	test "$(field size)" = "$WANT_SIZE"
 '
@@ -96,7 +98,7 @@ echo "ok    members and .PKGINFO fields"
 		test "$(stat -c %s "/$path")" = "$size"
 	done </stage/files.txt
 	pacman -R --noconfirm --disable-sandbox podup >/dev/null 2>&1
-	! pacman -Q podup >/dev/null 2>&1
+	if pacman -Q podup >/dev/null 2>&1; then echo "podup is still installed after its removal" >&2; exit 1; fi
 	snapshot >/tmp/after
 	left="$(comm -3 /tmp/before /tmp/after)"
 	if [ -n "$left" ]; then echo "left behind or changed: $left" >&2; exit 1; fi

@@ -121,7 +121,9 @@ must_run "changes the packaging" debian/rules debian/control
 must_run "changes the Rust test suite" \
 	tests/hostile/input/parsing/hostile_compose.rs tests/fixtures/interpolation/ordinary-config.yml \
 	tests/scripts/stray.rs tests/scripts/shell/notes.md
-must_run "changes the CI" .github/workflows/debian-build.yml .github/workflows/reusable-rust-debian.yml .github/workflows/release.yml .github/workflows/reusable-release-build.yml
+must_run "changes the CI" .github/workflows/debian-build.yml .github/workflows/packaging-check.yml .github/workflows/reusable-rust-debian.yml .github/workflows/release.yml .github/workflows/reusable-release-build.yml
+must_run "changes the packaging of the rpm and the pacman packages" .github/scripts/packaging/images.env \
+	.github/scripts/packaging/build-rpm.sh .github/scripts/packaging/rpm/podup.spec.in
 must_run "changes an installer" install.sh install.ps1
 must_run "is not a script-only test change" unknown.txt README.md docs/commands.md .github/actionlint.yml .github/podman_lane.txt .github/vocabulary-exceptions.txt.bak
 
@@ -184,6 +186,18 @@ check "the package job keeps its name" 1 \
 check "the vendored job keeps its name" 1 \
 	"$(grep -c '^    name: build (vendored / offline)$' "$workflow")"
 check "the caller keeps its job id" 1 "$(grep -c '^  debian:$' "$caller")"
+
+# The package checks read the .deb their own lane asks this judge about, so
+# every path that starts that lane has to build the package: a skip would
+# leave it with nothing to check and a red result.
+started=0
+while IFS= read -r path; do
+	started=$((started + 1))
+	head="$(change "${path/\*\*/changed}")"
+	check "the package checks start on $path and the package is built" true \
+		"$(judge pull_request "$base" "$head" | sed -n 1p)"
+done < <(sed -n '/^    paths:$/,/^$/s/^      - "\(.*\)"$/\1/p' "$HERE/.github/workflows/packaging-check.yml")
+check "the paths of the package checks were read" 6 "$started"
 
 # The caller watches the classifier, or the rule that names it is dead.
 check "the caller watches the classifier" 2 \
