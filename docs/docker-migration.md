@@ -35,11 +35,13 @@ Quadlet export reports `pre_start is not exported; each init step requires its o
 
 podup builds one platform at a time. A `build.platforms` list (or a service `platform`) that names more than one platform fails the build before anything is sent, with an error that names the field: libpod's build endpoint gives every platform of a request the same image name, so the name ends up on whichever platform finishes last, and the host may not be able to run that one. List one platform, or build each one under its own tag. The Quadlet export is separate: a `.build` unit carries the first platform of the list.
 
+`build.isolation` is sent as the endpoint's `isolation` parameter. Podman takes Buildah's isolation names (`oci`, `default`, `rootless`, `chroot`); any other value fails the build, naming the field and the value. That includes `process` and `hyperv`, which are Docker isolation technologies that Podman does not have.
+
 The following Compose fields are translated onto Podman's libpod API. Fields outside this list still parse (an unknown key never errors, per the Compose spec's forward-compatibility rule) and podup reports any it cannot honor during `up`; see the accepted-but-has-no-effect section.
 
 | Category | Keys |
 |---|---|
-| Images / build | `image`, `build` (context, dockerfile, args, target, cache_from, cache_to, secrets, labels, network, platforms), `pull_policy` (time policies map to `newer`), `pull_refresh_after` (strict syntax only) |
+| Images / build | `image`, `build` (context, dockerfile, args, target, cache_from, cache_to, secrets, labels, network, platforms, isolation), `pull_policy` (time policies map to `newer`), `pull_refresh_after` (strict syntax only) |
 | Execution | `command`, `entrypoint`, `working_dir`, `user`, `umask`, `platform`, `tty`, `stdin_open`, `init`, `runtime`, `stop_signal` |
 | Environment | `environment`, `env_file` (dotenv format, or `format: raw`; see the note below the table), variable substitution (`${VAR:-default}`) |
 | Networking | `ports`, `expose`, `networks`, `network_mode`, `hostname`, `dns`, `dns_opt`, `dns_search`, `extra_hosts` |
@@ -434,13 +436,15 @@ These modeled fields parse but have no effect. The examples are not exhaustive; 
 | `deploy.restart_policy.delay` / `.window` | No first-class Podman restart delay or attempt-counting window (`condition` and `max_attempts` *are* honored) |
 | port long-form `mode:` (`ingress` / `host`) | Swarm ingress routing |
 
-### BuildKit / buildx-only build options
+### Build options podup cannot forward
 
-`build.privileged`, `build.entitlements`, `build.provenance` and `build.sbom` have no `podman build` equivalent: the live build ignores them and the Quadlet export reports them. `build.no_cache_filter` is ignored too. It cannot filter the cache per stage because libpod exposes only the all-or-nothing `nocache` parameter.
+`build.privileged`, `build.entitlements` and `build.provenance` have no `podman build` equivalent: the live build ignores them and the Quadlet export reports them. `build.no_cache_filter` is ignored too. It cannot filter the cache per stage because libpod exposes only the all-or-nothing `nocache` parameter.
+
+`build.sbom` is not honored either, although the endpoint has SBOM parameters: libpod's build API takes a scanner image, a scanner command and an output destination (`sbom-scanner-image`, `sbom-scanner-command`, `sbom-output`), and the compose value names none of them. The live build ignores the field and the Quadlet export reports it.
 
 `build.ssh` is accepted as a list (`[default, mykey=/path/key]`) or a mapping (`{default: , mykey: /path/key}`), both read as `id[=path]` entries, and is honored by the Quadlet export, which runs `podman build` directly (`PodmanArgs=--ssh`); the live build cannot forward it over the libpod build API and ignores it. `build.ulimits` is honored by both.
 
-`build.isolation` names a container isolation technology (`default`, `process`, `hyperv`), which `podman build` refuses, so the Quadlet export writes `PodmanArgs=--isolation` only for the buildah isolation types (`oci`, `rootless`, `chroot`) and reports any other value; the live build ignores the field.
+`build.isolation` is honored by the live build (see the note under [Works out of the box](#works-out-of-the-box)). The Quadlet export writes `PodmanArgs=--isolation` for `oci`, `rootless` and `chroot` and reports any other value.
 
 The `[Build]` keys `Annotation=`, `Volume=` and `DNS=` have no compose `build:` field to feed them (compose `build:` has no `annotations`, `volumes` or `dns` key), so nothing writes them.
 

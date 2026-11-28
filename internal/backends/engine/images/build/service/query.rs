@@ -112,6 +112,7 @@ impl Engine {
 		// Without `build.platforms` the build is for the platform the service
 		// runs on, as in Compose.
 		let platform = endpoint_values::platform(service, build)?;
+		let isolation = endpoint_values::isolation(build)?;
 		// Distinguish "absent" from "present but unparseable": a malformed
 		// `shm_size` must be rejected, not silently dropped to the default.
 		//
@@ -219,6 +220,9 @@ impl Engine {
 		}
 		if let Some(p) = platform {
 			qs.push_str(&format!("&platform={}", urlencoded(p)));
+		}
+		if let Some(i) = isolation {
+			qs.push_str(&format!("&isolation={}", urlencoded(i)));
 		}
 		if let Some(n) = &network {
 			qs.push_str(&format!("&networkmode={}", urlencoded(n)));

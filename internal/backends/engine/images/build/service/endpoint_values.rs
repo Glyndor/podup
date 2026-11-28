@@ -1,8 +1,43 @@
-//! The platform a build query names, checked before the request is sent.
+//! The platform and the isolation a build query names, checked before the
+//! request is sent.
 
 use crate::compose::types::{BuildConfig, Service};
 use crate::error::{ComposeError, Result};
 use crate::libpod::validate::build_field_error;
+
+/// The isolation names the libpod build endpoint reads. Buildah, which parses
+/// them, compares without regard to case.
+const ISOLATIONS: [&str; 4] = ["oci", "default", "rootless", "chroot"];
+
+/// `build.isolation` as the endpoint takes it, `None` when unset or empty.
+///
+/// # Errors
+/// [`crate::libpod::PodmanError::Field`] for a name the endpoint does not
+/// read, such as Docker's `process` and `hyperv`. The endpoint also accepts a
+/// bare number, as a raw Buildah constant; podup does not.
+pub(super) fn isolation(build: &BuildConfig) -> Result<Option<&str>> {
+	let BuildConfig::Config {
+		isolation: Some(value),
+		..
+	} = build
+	else {
+		return Ok(None);
+	};
+	if value.is_empty() {
+		return Ok(None);
+	}
+	if ISOLATIONS
+		.iter()
+		.any(|name| name.eq_ignore_ascii_case(value))
+	{
+		return Ok(Some(value));
+	}
+	Err(ComposeError::Podman(build_field_error(
+		"build.isolation",
+		value.as_str(),
+		format!("Podman takes {}", ISOLATIONS.join(", ")),
+	)))
+}
 
 /// The platform of a service's build: the one `build.platforms` lists, else the
 /// service's own `platform`.

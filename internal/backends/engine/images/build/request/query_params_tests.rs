@@ -382,4 +382,64 @@ mod tests {
 
 		assert_eq!(param(&query, "networkmode=").as_deref(), Some("none"));
 	}
+
+	/// `build.isolation` reaches the endpoint's `isolation` parameter as
+	/// written, for every name Buildah reads. It reads them without regard to
+	/// case.
+	#[tokio::test]
+	async fn build_isolation_reaches_the_build_query() {
+		for value in ["oci", "default", "rootless", "chroot", "Chroot"] {
+			let (_dir, fake, engine) = start_capture("proj");
+
+			let query = build_query(
+				&engine,
+				&fake,
+				&format!(
+					"services:\n  app:\n    image: proj/img:1\n    build:\n      \
+					 context: .\n      isolation: {value}\n"
+				),
+			)
+			.await;
+
+			assert_eq!(param(&query, "isolation=").as_deref(), Some(value));
+		}
+	}
+
+	/// Without `build.isolation`, or with an empty one, the engine keeps its own
+	/// default.
+	#[tokio::test]
+	async fn an_unset_isolation_is_not_sent() {
+		for build in ["context: .", "context: .\n      isolation: \"\""] {
+			let (_dir, fake, engine) = start_capture("proj");
+
+			let query = build_query(
+				&engine,
+				&fake,
+				&format!("services:\n  app:\n    image: proj/img:1\n    build:\n      {build}\n"),
+			)
+			.await;
+
+			assert_eq!(param(&query, "isolation="), None, "{query}");
+		}
+	}
+
+	/// An isolation Podman does not have is refused before the request, naming
+	/// the compose field: the engine would answer with a message that does not.
+	/// A number is refused too, although the endpoint would take one as a raw
+	/// Buildah constant.
+	#[tokio::test]
+	async fn an_isolation_the_engine_does_not_take_fails_the_build() {
+		for value in ["hyperv", "process", "2"] {
+			let message = refused_build(&format!(
+				"services:\n  app:\n    image: proj/img:1\n    build:\n      context: .\n      \
+				 isolation: \"{value}\"\n"
+			))
+			.await;
+
+			assert!(
+				message.contains("build.isolation") && message.contains(value),
+				"the error must name the field and the value: {message}"
+			);
+		}
+	}
 }
