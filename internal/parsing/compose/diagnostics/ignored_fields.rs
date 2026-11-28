@@ -153,9 +153,8 @@ pub(super) fn ignored_build_fields(units: &ContainerUnits<'_>, out: &mut Vec<Str
 		if sbom.is_some() {
 			unmapped.push((
 				"sbom",
-				"is ignored: the libpod build API takes a scanner image, a scanner command and \
-				 an output (sbom-scanner-image, sbom-scanner-command, sbom-output), and the \
-				 compose value names none of them",
+				"is ignored: libpod needs sbom-scanner-image, sbom-scanner-command and \
+				 sbom-output, which the compose value does not name",
 			));
 		}
 		if !matches!(no_cache_filter, StringOrList::Empty) {
