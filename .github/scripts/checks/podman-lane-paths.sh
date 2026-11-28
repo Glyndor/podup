@@ -74,6 +74,7 @@ while IFS= read -r f; do
 		.github/workflows/reusable-main-guard.yml) ;;
 		.github/workflows/reusable-powershell-ci.yml) ;;
 		.github/workflows/reusable-release-build.yml) ;;
+		.github/workflows/reusable-release-rehearsal.yml) ;;
 		.github/workflows/reusable-release-verify.yml) ;;
 		.github/workflows/reusable-rust-audit.yml) ;;
 		.github/workflows/reusable-rust-ci.yml) ;;

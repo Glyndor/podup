@@ -92,6 +92,7 @@
 .github/workflows/reusable-main-guard.yml	lint-shell
 .github/workflows/reusable-powershell-ci.yml	lint-powershell
 .github/workflows/reusable-release-build.yml	asset-contract,debian-build,lint-shell,linux-hardening,packaging-check,windows-arm64
+.github/workflows/reusable-release-rehearsal.yml	asset-contract,debian-build,lint-shell,linux-hardening,windows-arm64
 .github/workflows/reusable-release-verify.yml	asset-contract,debian-build,lint-shell,linux-hardening,windows-arm64
 .github/workflows/reusable-rust-audit.yml	lint-shell
 .github/workflows/reusable-rust-ci.yml	lint-shell

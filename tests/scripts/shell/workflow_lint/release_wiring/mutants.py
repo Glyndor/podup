@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mutate release.yml (and the reusable of the builds) one wiring fact at a time; each must be reported.
+"""Mutate release.yml (and the reusables of a release) one wiring fact at a time; each must be reported.
 
 Usage: mutants.py   (prints `killed N`, `SURVIVED name` per survivor)
 """
@@ -18,6 +18,7 @@ DIR = f"{wiring.REPO}/.github/workflows"
 spec = yaml.safe_load(open(f"{DIR}/release.yml"))
 reusable = yaml.safe_load(open(f"{DIR}/reusable-release-build.yml"))
 verifying = yaml.safe_load(open(f"{DIR}/reusable-release-verify.yml"))
+rehearsing = yaml.safe_load(open(f"{DIR}/reusable-release-rehearsal.yml"))
 ART = wiring.ART
 
 
@@ -29,7 +30,7 @@ def drop_line(s, needle):
     s["run"] = "\n".join(l for l in s["run"].splitlines() if needle not in l)
 
 
-MUTANTS = {}  # name -> (function over (release, builds, verification))
+MUTANTS = {}  # name -> (function over (release, builds, verification, rehearsal))
 
 
 def mutant(fn):
@@ -38,15 +39,19 @@ def mutant(fn):
 
 
 def rel(fn):
-    return lambda r, b, v: fn(r)
+    return lambda r, b, v, h: fn(r)
 
 
 def bld(fn):
-    return lambda r, b, v: fn(b)
+    return lambda r, b, v, h: fn(b)
 
 
 def ver(fn):
-    return lambda r, b, v: fn(v)
+    return lambda r, b, v, h: fn(v)
+
+
+def reh(fn):
+    return lambda r, b, v, h: fn(h)
 
 
 # --- permissions and who can mint ---------------------------------------------------------------
@@ -63,7 +68,14 @@ MUTANTS["the-reusable-may-write-at-the-top"] = bld(lambda m: m.update({"permissi
 MUTANTS["a-job-of-the-reusable-has-an-environment"] = bld(lambda m: m["jobs"]["sbom"].update({"environment": "release"}))
 for _j in ("sign", "sign-packages", "seal"):
     MUTANTS[f"{_j}-without-the-environment"] = rel((lambda j: lambda m: m["jobs"][j].pop("environment"))(_j))
-MUTANTS["release-has-the-environment"] = rel(lambda m: m["jobs"]["release"].update({"environment": "release"}))
+MUTANTS["release-has-the-environment-of-the-key"] = rel(lambda m: m["jobs"]["release"].update({"environment": "release"}))
+MUTANTS["release-without-its-environment"] = rel(lambda m: m["jobs"]["release"].pop("environment"))
+MUTANTS["release-in-another-environment"] = rel(lambda m: m["jobs"]["release"].update({"environment": "elsewhere"}))
+MUTANTS["release-in-an-environment-chosen-by-the-run"] = rel(lambda m: m["jobs"]["release"].update(
+    {"environment": "${{ !inputs.dry_run && 'release-publish' || '' }}"}))
+MUTANTS["release-runs-in-a-rehearsal"] = rel(lambda m: m["jobs"]["release"].pop("if"))
+MUTANTS["release-runs-only-in-a-rehearsal"] = rel(lambda m: m["jobs"]["release"].update({"if": "${{ inputs.dry_run }}"}))
+MUTANTS["release-runs-after-a-failure"] = rel(lambda m: m["jobs"]["release"].update({"if": "${{ !cancelled() && !inputs.dry_run }}"}))
 MUTANTS["release-reaches-for-the-key"] = rel(lambda m: step(m, "release", "Create GitHub Release").setdefault("env", {}).update(
     {"K": "${{ secrets.GLYNDOR_RELEASE_ED25519_KEY }}"}))
 
@@ -144,7 +156,13 @@ MUTANTS["no-verify-tag"] = rel(lambda m: drop_line(step(m, "release", "Create Gi
 MUTANTS["create-names-by-a-glob"] = rel(lambda m: step(m, "release", "Create GitHub Release").update(
     {"run": 'gh release create "$TAG" --verify-tag ./*  # expected-assets.py ${files[@]}'}))
 MUTANTS["a-rehearsal-publishes"] = rel(lambda m: step(m, "release", "Create GitHub Release").pop("if"))
-MUTANTS["a-rehearsal-says-nothing"] = rel(lambda m: m["jobs"]["release"]["steps"].remove(step(m, "release", "Say what a rehearsal")))
+MUTANTS["a-rehearsal-says-nothing"] = reh(lambda m: m["jobs"]["rehearsal"]["steps"].remove(step(m, "rehearsal", "Say what a rehearsal")))
+MUTANTS["the-publisher-says-what-a-rehearsal-would-publish"] = rel(lambda m: m["jobs"]["release"]["steps"].append(
+    {"name": "Say what a rehearsal would have published", "run": "true"}))
+MUTANTS["the-publisher-takes-the-scripts-of-another-commit"] = rel(lambda m: m["jobs"]["release"]["steps"].insert(
+    1, {"name": wiring.OVERLAY, "run": "true"}))
+MUTANTS["the-publisher-verifies-as-a-rehearsal"] = rel(lambda m: step(m, "release", "Verify every signature")["env"].update(
+    {"REHEARSAL": "${{ inputs.dry_run }}"}))
 MUTANTS["create-not-in-the-release-directory"] = rel(lambda m: step(m, "release", "Create GitHub Release").pop("working-directory"))
 MUTANTS["release-merges-on-download"] = rel(lambda m: step(m, "release", "download-artifact")["with"].update({"merge-multiple": True}))
 MUTANTS["release-downloads-another-artifact"] = rel(lambda m: step(m, "release", "download-artifact")["with"].update({"name": "sbom"}))
@@ -154,6 +172,61 @@ MUTANTS["release-without-the-tag-check"] = rel(lambda m: m["jobs"]["release"]["s
 MUTANTS["tag-check-after-create"] = rel(lambda m: m["jobs"]["release"]["steps"].append(m["jobs"]["release"]["steps"].pop(
     m["jobs"]["release"]["steps"].index(step(m, "release", "The tag still points")))))
 MUTANTS["no-dry-run-input"] = rel(lambda m: m["on" if "on" in m else True]["workflow_dispatch"]["inputs"].pop("dry_run"))
+
+# --- the rehearsal: the call ----------------------------------------------------------------------
+def call(m):
+    return m["jobs"]["rehearsal"]
+
+
+# `attest` is skipped in a rehearsal, so a condition with no status function never lets the job start.
+MUTANTS["rehearsal-skipped-with-attest"] = rel(lambda m: call(m).update({"if": "${{ inputs.dry_run }}"}))
+MUTANTS["rehearsal-runs-in-a-real-release"] = rel(lambda m: call(m).pop("if"))
+MUTANTS["rehearsal-runs-after-a-failed-seal"] = rel(lambda m: call(m).update({"if": "${{ !cancelled() && inputs.dry_run }}"}))
+MUTANTS["rehearsal-may-write"] = rel(lambda m: call(m)["permissions"].update({"contents": "write"}))
+MUTANTS["rehearsal-may-mint-a-token"] = rel(lambda m: call(m)["permissions"].update({"id-token": "write"}))
+MUTANTS["rehearsal-takes-the-permissions-of-the-workflow"] = rel(lambda m: call(m).pop("permissions"))
+MUTANTS["rehearsal-inherits-the-secrets"] = rel(lambda m: call(m).update({"secrets": "inherit"}))
+MUTANTS["rehearsal-without-seal"] = rel(lambda m: call(m).update({"needs": ["verify"]}))
+MUTANTS["rehearsal-is-another-workflow"] = rel(lambda m: call(m).update({"uses": "./.github/workflows/other.yml"}))
+for _k in ("tag", "commit", "version", "sums", "dry_run"):
+    MUTANTS[f"rehearsal-called-without-{_k}"] = rel((lambda k: lambda m: call(m)["with"].pop(k))(_k))
+MUTANTS["rehearsal-compares-with-another-digest"] = rel(lambda m: call(m)["with"].update({"sums": "${{ github.sha }}"}))
+MUTANTS["rehearsal-always-a-rehearsal"] = rel(lambda m: call(m)["with"].update({"dry_run": True}))
+
+# --- the rehearsal: the reusable ------------------------------------------------------------------
+MUTANTS["the-rehearsal-may-write-at-the-top"] = reh(lambda m: m.update({"permissions": {"contents": "write"}}))
+MUTANTS["the-rehearsal-job-may-write"] = reh(lambda m: m["jobs"]["rehearsal"]["permissions"].update({"contents": "write"}))
+MUTANTS["the-rehearsal-job-has-an-environment"] = reh(lambda m: m["jobs"]["rehearsal"].update({"environment": "release"}))
+MUTANTS["the-rehearsal-job-has-the-environment-of-the-publisher"] = reh(lambda m: m["jobs"]["rehearsal"].update({"environment": "release-publish"}))
+MUTANTS["the-rehearsal-job-has-no-condition"] = reh(lambda m: m["jobs"]["rehearsal"].pop("if"))
+MUTANTS["the-rehearsal-job-may-fail"] = reh(lambda m: m["jobs"]["rehearsal"].update({"continue-on-error": True}))
+MUTANTS["the-rehearsal-has-a-second-job"] = reh(lambda m: m["jobs"].update({"more": {"runs-on": "ubuntu-latest", "steps": []}}))
+MUTANTS["the-rehearsal-without-the-throwaway-key"] = reh(lambda m: m.pop("env"))
+MUTANTS["the-rehearsal-with-another-key"] = reh(lambda m: m["env"].update({"REHEARSAL_SEED_B64": "A" * 43 + "="}))
+MUTANTS["the-rehearsal-reaches-for-the-key"] = reh(lambda m: m["jobs"]["rehearsal"]["steps"][-1].setdefault("env", {}).update(
+    {"K": "${{ secrets.GLYNDOR_RELEASE_ED25519_KEY }}"}))
+MUTANTS["the-rehearsal-takes-the-token"] = reh(lambda m: m["jobs"]["rehearsal"]["steps"][-1].setdefault("env", {}).update(
+    {"GH_TOKEN": "${{ github.token }}"}))
+MUTANTS["the-rehearsal-creates-a-release"] = reh(lambda m: step(m, "rehearsal", "Say what a rehearsal").update({"run": 'gh release create "$TAG"'}))
+MUTANTS["the-rehearsal-adds-a-step"] = reh(lambda m: m["jobs"]["rehearsal"]["steps"].insert(-1, {"name": "x", "run": "true"}))
+for _n, _needle in (("set", "The files are exactly"), ("digest", "The set is the one the sealing job made"),
+                    ("signature", "Verify every signature"), ("first-tag", "The tag still points at the commit that was verified"),
+                    ("last-tag", "The tag still points at the commit that was built"), ("checkout", "The checkout is the commit"),
+                    ("download", "download-artifact")):
+    MUTANTS[f"the-rehearsal-without-the-{_n}-step"] = reh((lambda n: lambda m: m["jobs"]["rehearsal"]["steps"].remove(step(m, "rehearsal", n)))(_needle))
+    if _n != "checkout":
+        MUTANTS[f"the-rehearsal-may-skip-the-{_n}-step"] = reh((lambda n: lambda m: step(m, "rehearsal", n).update({"if": "false"}))(_needle))
+MUTANTS["the-rehearsal-does-not-check-every-file"] = reh(lambda m: drop_line(step(m, "rehearsal", "The set is the one the sealing job made"), "--strict -c"))
+MUTANTS["the-rehearsal-verifies-against-the-consumer-keys"] = reh(lambda m: step(m, "rehearsal", "Verify every signature")["env"].pop("REHEARSAL"))
+MUTANTS["the-rehearsal-checks-the-signatures-before-the-digest"] = reh(lambda m: m["jobs"]["rehearsal"]["steps"].insert(
+    m["jobs"]["rehearsal"]["steps"].index(step(m, "rehearsal", "The set is the one the sealing job made")),
+    m["jobs"]["rehearsal"]["steps"].pop(m["jobs"]["rehearsal"]["steps"].index(step(m, "rehearsal", "Verify every signature")))))
+MUTANTS["the-rehearsal-checks-out-another-tag"] = reh(lambda m: step(m, "rehearsal", "actions/checkout")["with"].update({"ref": "refs/heads/main"}))
+MUTANTS["the-rehearsal-keeps-a-credential"] = reh(lambda m: step(m, "rehearsal", "actions/checkout")["with"].pop("persist-credentials"))
+MUTANTS["the-rehearsal-restores-a-cache"] = reh(lambda m: m["jobs"]["rehearsal"]["steps"].insert(1, {
+    "name": "cache", "uses": "actions/cache@0000000000000000000000000000000000000000", "with": {"path": "target", "key": "k"}}))
+MUTANTS["the-rehearsal-python-without-isolation"] = reh(lambda m: step(m, "rehearsal", "Verify every signature").update(
+    {"run": step(m, "rehearsal", "Verify every signature")["run"].replace('-I -m venv', '-m venv')}))
 
 # --- what attest covers ---------------------------------------------------------------------------
 def narrow_subject(index):
@@ -198,7 +271,7 @@ MUTANTS["sbom-downloads-the-built-files"] = bld(lambda m: m["jobs"]["sbom"]["ste
 
 # --- Python and the shell -------------------------------------------------------------------------
 def without_isolation(job_group, job, needle):
-    def fn(r, b, v):
+    def fn(r, b, v, h):
         m = r if job_group == "r" else b
         s = step(m, job, needle)
         s["run"] = s["run"].replace("python3 -I ", "python3 ").replace('-I -X utf8', '-X utf8').replace('"$venv_py" -I ', '"$venv_py" ')
@@ -214,7 +287,7 @@ MUTANTS["release-verify-python-without-isolation"] = without_isolation("r", "rel
 MUTANTS["release-create-python-without-isolation"] = without_isolation("r", "release", "Create GitHub Release")
 MUTANTS["stage-python-without-isolation"] = without_isolation("b", "build-rpm", "Stage the payload")
 for _j in ("build-rpm", "build-pacman"):
-    MUTANTS[f"{_j}-stages-without-the-epoch"] = (lambda j: lambda r, b, v: step(b, j, "Stage the payload").update(
+    MUTANTS[f"{_j}-stages-without-the-epoch"] = (lambda j: lambda r, b, v, h: step(b, j, "Stage the payload").update(
         {"run": step(b, j, "Stage the payload")["run"].replace("export SOURCE_DATE_EPOCH\n", "")}))(_j)
 MUTANTS["rustup-piped-into-a-shell"] = bld(lambda m: step(m, "build-deb", "Install the pinned Rust").update(
     {"run": "curl -fsSL https://sh.rustup.rs | sh -s -- -y"}))
@@ -280,9 +353,9 @@ for _j in ("sign", "sign-packages", "attest", "seal", "release"):
 
 dead, alive = 0, []
 for name, fn in MUTANTS.items():
-    r, b, v = copy.deepcopy(spec), copy.deepcopy(reusable), copy.deepcopy(verifying)
+    r, b, v, h = copy.deepcopy(spec), copy.deepcopy(reusable), copy.deepcopy(verifying), copy.deepcopy(rehearsing)
     try:
-        fn(r, b, v)
+        fn(r, b, v, h)
     except (KeyError, StopIteration, ValueError, IndexError) as e:
         print(f"BROKEN {name}: the mutation could not be applied ({type(e).__name__}: {e})")
         alive.append(name)
@@ -294,6 +367,8 @@ for name, fn in MUTANTS.items():
             yaml.safe_dump(b, fh)
         with open(f"{tmp}/reusable-release-verify.yml", "w") as fh:
             yaml.safe_dump(v, fh)
+        with open(f"{tmp}/reusable-release-rehearsal.yml", "w") as fh:
+            yaml.safe_dump(h, fh)
         if wiring.problems(f"{tmp}/release.yml"):
             dead += 1
         else:

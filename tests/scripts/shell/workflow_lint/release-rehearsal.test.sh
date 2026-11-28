@@ -13,7 +13,10 @@
 #                          them), a job that runs a package check takes the checks from that
 #                          commit too, and the jobs that hold the key are in the environment
 #                          `release` in a rehearsal as in a release: a rehearsal is started from
-#                          `main`, which the environment admits, and nothing weakens that.
+#                          `main`, which the environment admits, and nothing weakens that. The job
+#                          that publishes is in `release-publish` and is not started in a rehearsal;
+#                          the one that checks the set in a rehearsal can only read and is in no
+#                          environment.
 #
 # The tag is also authorized before it runs: the verification asks whether the tagged commit is on
 # `main` in commands of its own workflow, before it runs one line of a file of that commit (which, if it
@@ -83,14 +86,15 @@ root = sys.argv[1]
 rel = ci_yaml.load(os.path.join(root, "release.yml"))
 ver = ci_yaml.load(os.path.join(root, "reusable-release-verify.yml"))
 bld = ci_yaml.load(os.path.join(root, "reusable-release-build.yml"))
+reh = ci_yaml.load(os.path.join(root, "reusable-release-rehearsal.yml"))
 SWITCH = "${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}"
 OVERLAY = "Take the release scripts from the commit that started the rehearsal"
 
-for name, spec in (("verify", ver), ("build", bld)):
+for name, spec in (("verify", ver), ("build", bld), ("rehearsal", reh)):
     declared = ((spec.get("on") or spec.get(True) or {}).get("workflow_call") or {}).get("inputs", {}).get("dry_run")
     if not declared or declared.get("type") != "boolean" or declared.get("default") is not False:
         print(f"reusable-release-{name}.yml: no boolean input dry_run that is off by default")
-for job, who in (("verify", "verification"), ("builds", "builds")):
+for job, who in (("verify", "verification"), ("builds", "builds"), ("rehearsal", "rehearsal")):
     if (rel["jobs"][job].get("with") or {}).get("dry_run") != SWITCH:
         print(f"release.yml: the {who} does not receive dry_run from the dispatch")
 
@@ -107,7 +111,9 @@ else:
 
 canon = None
 FOLDERS = (".github/scripts/release", ".github/scripts/packaging")
-for path, spec, skip in (("reusable-release-verify.yml", ver, ()), ("reusable-release-build.yml", bld, ()), ("release.yml", rel, ("attest",))):
+# The job that publishes is not started in a rehearsal, so it takes no scripts of one.
+for path, spec, skip in (("reusable-release-verify.yml", ver, ()), ("reusable-release-build.yml", bld, ()),
+                         ("reusable-release-rehearsal.yml", reh, ()), ("release.yml", rel, ("attest", "release"))):
     for job, body in spec["jobs"].items():
         steps = body.get("steps") or []
         checkout = next((i for i, s in enumerate(steps) if str(s.get("uses", "")).startswith("actions/checkout@")), None)
@@ -163,9 +169,23 @@ for job, body in bld["jobs"].items():
 for job in ("sign", "sign-packages", "seal"):
     if rel["jobs"][job].get("environment") != "release":
         print(f"release.yml: job `{job}` is not in the environment `release` in every run, a rehearsal included")
-for job in ("release", "attest"):
-    if rel["jobs"][job].get("environment") not in (None, ""):
-        print(f"release.yml: job `{job}` has an environment")
+if rel["jobs"]["attest"].get("environment") not in (None, ""):
+    print("release.yml: job `attest` has an environment")
+# The job that writes the release has an environment of its own, which holds no secret: never the one of the key.
+if rel["jobs"]["release"].get("environment") != "release-publish":
+    print("release.yml: job `release` is not in the environment `release-publish`")
+if rel["jobs"]["release"].get("if") != "${{ !inputs.dry_run }}":
+    print("release.yml: job `release` is started in a rehearsal")
+for where, job in (("release.yml", rel["jobs"]["rehearsal"]), ("reusable-release-rehearsal.yml", reh["jobs"]["rehearsal"])):
+    if job.get("environment") not in (None, ""):
+        print(f"{where}: job `rehearsal` has an environment")
+    if job.get("permissions") != {"contents": "read"}:
+        print(f"{where}: job `rehearsal` can do more than read")
+    # Without a status function a job is skipped when anything it waits for was, and `attest` is skipped
+    # in every rehearsal.
+    cond = str(job.get("if", ""))
+    if "!cancelled()" not in cond or "inputs.dry_run" not in cond or "!inputs.dry_run" in cond:
+        print(f"{where}: job `rehearsal` does not start in a rehearsal, or starts outside one")
 
 audit = next((s for s in ver["jobs"]["audit"]["steps"] if s.get("name", "").startswith("Audit dependencies")), {})
 if audit.get("continue-on-error") != "${{ inputs.dry_run }}":
@@ -219,7 +239,17 @@ plant "the checks of a rehearsal taken in every run" $B "s.replace('$C        if
 plant "the checks of a rehearsal read from the tag" $B "s.replace('git archive FETCH_HEAD tests/packaging |', 'git archive HEAD tests/packaging |', 1)" "lacks git archive FETCH_HEAD tests/packaging"
 plant "a key job without its environment in a rehearsal" $R "s.replace('    environment: release\n', '    environment: \${{ !inputs.dry_run && \\'release\\' || \\'\\' }}\n', 1)" "is not in the environment"
 plant "a key job in another environment" $R "s.replace('    environment: release\n', '    environment: elsewhere\n', 1)" "is not in the environment"
-plant "the publishing job given an environment" $R "s.replace('  release:\n    name:', '  release:\n    environment: release\n    name:', 1)" "job \`release\` has an environment"
+H=reusable-release-rehearsal.yml
+plant "the publishing job in the environment of the key" $R "s.replace('    environment: release-publish\n', '    environment: release\n', 1)" "is not in the environment \`release-publish\`"
+plant "the publishing job without an environment" $R "s.replace('    environment: release-publish\n', '', 1)" "is not in the environment \`release-publish\`"
+plant "the publishing job started in a rehearsal" $R "s.replace('    name: Publish release\n    if: \${{ !inputs.dry_run }}\n', '    name: Publish release\n', 1)" "job \`release\` is started in a rehearsal"
+plant "the rehearsal skipped with the attestation" $R "s.replace(\"    if: \${{ !cancelled() && inputs.dry_run && needs.verify.result == 'success' && needs.seal.result == 'success' }}\", '    if: \${{ inputs.dry_run }}', 1)" "release.yml: job \`rehearsal\` does not start in a rehearsal"
+plant "the job of the rehearsal skipped with the attestation" $H "s.replace('    if: \${{ !cancelled() && inputs.dry_run }}', '    if: \${{ inputs.dry_run }}', 1)" "reusable-release-rehearsal.yml: job \`rehearsal\` does not start in a rehearsal"
+plant "the rehearsal able to write from the caller" $R "s.replace('    permissions:\n      contents: read\n    uses: ./.github/workflows/reusable-release-rehearsal.yml', '    permissions:\n      contents: write\n    uses: ./.github/workflows/reusable-release-rehearsal.yml', 1)" "release.yml: job \`rehearsal\` can do more than read"
+plant "the job of the rehearsal able to write" $H "s.replace('    permissions:\n      contents: read\n\n    steps:', '    permissions:\n      contents: write\n\n    steps:', 1)" "reusable-release-rehearsal.yml: job \`rehearsal\` can do more than read"
+plant "the rehearsal given an environment" $H "s.replace('    name: Verify rehearsal\n', '    name: Verify rehearsal\n    environment: release-publish\n', 1)" "job \`rehearsal\` has an environment"
+plant "the rehearsal not told about the rehearsal" $R "s.replace(\"      sums: \${{ needs.seal.outputs.sums }}\n      dry_run: \${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}\n\", '      sums: \${{ needs.seal.outputs.sums }}\n', 1)" "the rehearsal does not receive dry_run"
+plant "the rehearsal without the scripts of the commit that started it" $H "s.replace('      - name: Take the release scripts from the commit that started the rehearsal\n', '      - name: Take nothing\n', 1)" "runs a script of the release and does not take the scripts of a rehearsal right after its checkout"
 plant "the audit stopping a rehearsal" $V "s.replace('continue-on-error: \${{ inputs.dry_run }}', 'continue-on-error: false')" "does not stop a release and go past"
 
 echo "== the tag is on main before a line of it runs"
