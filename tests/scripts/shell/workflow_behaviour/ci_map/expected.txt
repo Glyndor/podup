@@ -69,6 +69,7 @@
 .github/workflows/reusable-main-guard.yml	C N N R N
 .github/workflows/reusable-powershell-ci.yml	C B N R N
 .github/workflows/reusable-release-build.yml	C B B R N
+.github/workflows/reusable-release-rehearsal.yml	C B N R N
 .github/workflows/reusable-release-verify.yml	C B N R N
 .github/workflows/reusable-rust-audit.yml	C N N R N
 .github/workflows/reusable-rust-ci.yml	R B N R N

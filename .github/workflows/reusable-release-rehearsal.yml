@@ -1,0 +1,146 @@
+name: Release rehearsal (reusable)
+
+# What a rehearsal of release.yml checks of the set a release would publish: the files, the checksums,
+# the signatures and the tag, as the publishing job checks them, with no provenance (a rehearsal makes
+# no attestation) and no publication. It is called only when `dry_run` is set, and the token it gets
+# can only read; it is in no environment and reads no secret. The steps it shares with the publishing
+# job are held equal to that job's by tests/scripts/shell/workflow_lint/release_wiring/rehearsal_job.py.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "The tag the rehearsal was started for"
+        required: true
+        type: string
+      commit:
+        description: "The commit the verification named"
+        required: true
+        type: string
+      version:
+        description: "The version the verification named"
+        required: true
+        type: string
+      sums:
+        description: "The digest of the checksums the sealing job signed"
+        required: true
+        type: string
+      dry_run:
+        description: "True in a rehearsal, which is the only run this does anything in"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  # The public throwaway key of a rehearsal, as release.yml names it: the environment of a caller does
+  # not reach the workflow it calls.
+  REHEARSAL_SEED_B64: zVnFFv3VpjbGd6UB3cU4loQoojjHKh7Y3fw6d4/VU+c=
+
+jobs:
+  rehearsal:
+    name: Verify rehearsal
+    # The status function is for the same reason as in the caller: something the caller waited for,
+    # directly or not, was skipped.
+    if: ${{ !cancelled() && inputs.dry_run }}
+    runs-on: ubuntu-latest
+    # Bound: worst of the last three successful runs of the publishing job on 2026-09-02, which does
+    # these checks, was 33s. Ten times that, rounded up, never under ten minutes.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: Take the release scripts from the commit that started the rehearsal
+        if: ${{ inputs.dry_run }}
+        run: |
+          set -o pipefail
+          # A rehearsal may name a tag older than the scripts of the release and of the packages, so
+          # those come from the commit that launched the run, the one this workflow file is from. Only
+          # those two folders: the rest of the tag, its own tests included, stays as the tag has it.
+          # Nothing signed in a rehearsal is published, and the scripts stay out of what the later
+          # steps read as changed or new.
+          git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
+          git ls-files -z .github/scripts/release .github/scripts/packaging | xargs -0 -r git update-index --skip-worktree
+          rm -rf .github/scripts/release .github/scripts/packaging && git archive FETCH_HEAD .github/scripts/release .github/scripts/packaging | tar -x
+          printf '%s\n' /.github/scripts/release/ /.github/scripts/packaging/ >> .git/info/exclude
+
+      - name: The checkout is the commit that was verified
+        env:
+          COMMIT: ${{ inputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$COMMIT"
+
+      - name: The tag still points at the commit that was verified
+        env:
+          TAG: ${{ inputs.tag }}
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/tags/${TAG}:refs/tags/${TAG}"
+          now="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+          [ "$now" = "$COMMIT" ] || { echo "::error::the tag $TAG points at $now now, and the release was verified at $COMMIT"; exit 1; }
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-set
+          path: ${{ runner.temp }}/release
+
+      - name: The files are exactly the set the version is made of
+        env:
+          VERSION: ${{ inputs.version }}
+        run: bash .github/scripts/release/check-artifact-dir.sh "$RUNNER_TEMP/release" exact "$VERSION" published
+
+      - name: The set is the one the sealing job made
+        working-directory: ${{ runner.temp }}/release
+        env:
+          SEALED: ${{ inputs.sums }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # The digest of the checksums is what the sealing job reported when it signed them. A set that
+          # is another one, with signatures of its own, is refused before anything of it is used.
+          [[ "$SEALED" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::the sealing job reported no digest"; exit 1; }
+          [ "$(sha256sum SHA256SUMS | cut -d' ' -f1)" = "$SEALED" ] || { echo "::error::SHA256SUMS is not the one the sealing job signed"; exit 1; }
+          sha256sum --strict -c SHA256SUMS
+          want="$(python3 -I "$GITHUB_WORKSPACE/.github/scripts/release/expected-assets.py" "$VERSION" checksummed)"
+          got="$(awk '{ print $2 }' SHA256SUMS | LC_ALL=C sort)"
+          [ "$got" = "$want" ] || { echo "::error::SHA256SUMS does not list exactly the set of the version"; exit 1; }
+
+      - name: Verify every signature against the keys consumers embed
+        working-directory: ${{ runner.temp }}/release
+        env:
+          VERSION: ${{ inputs.version }}
+          REHEARSAL: ${{ inputs.dry_run }}
+        run: |
+          here="$GITHUB_WORKSPACE/.github/scripts/release"
+          python3 -I -m venv "$RUNNER_TEMP/verifyvenv"
+          "$RUNNER_TEMP/verifyvenv/bin/python" -I -m pip install --quiet --require-hashes --only-binary=:all: -r "$here/sign-requirements.txt"
+          bash "$here/verify-signatures.sh" "$RUNNER_TEMP/verifyvenv/bin/python" "$VERSION"
+
+      - name: The tag still points at the commit that was built
+        env:
+          TAG: ${{ inputs.tag }}
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/tags/${TAG}:refs/tags/${TAG}"
+          now="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+          [ "$now" = "$COMMIT" ] || { echo "::error::the tag $TAG points at $now now, and the release was built from $COMMIT"; exit 1; }
+
+      - name: Say what a rehearsal would have published
+        working-directory: ${{ runner.temp }}/release
+        run: |
+          {
+            echo "### Rehearsal: nothing was published"
+            echo
+            echo "Signed with the throwaway key and verified against it. The set is:"
+            echo
+            printf -- '- %s\n' *
+          } >>"$GITHUB_STEP_SUMMARY"

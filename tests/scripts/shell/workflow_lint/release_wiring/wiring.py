@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The wiring of release.yml and reusable-release-build.yml that no single script exercises.
+"""The wiring of release.yml and the reusables of a release that no single script exercises.
 
 Usage: wiring.py [WORKFLOW]   (prints one line per problem, exit 1 if any)
 
@@ -7,7 +7,8 @@ What a release needs of its jobs is in the `needs`, the permissions, the paths, 
 they check out and the way Python is started, and a wrong value in one of them only shows once
 everything has been built. These checks read the workflows and compare them with the files the release
 reads (`expected-assets.py`, `verify-provenance.sh`), so a change on one side that is not made on the
-other fails here. The reusable that holds the build jobs is read from the folder of WORKFLOW.
+other fails here. The reusables of the builds, the verification and the rehearsal are read from the folder
+of WORKFLOW.
 """
 import fnmatch
 import os
@@ -16,6 +17,8 @@ import subprocess
 import sys
 
 import yaml
+
+from rehearsal_job import OVERLAY, rehearsal_problems, uses
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "../../../../.."))
@@ -40,16 +43,15 @@ PERMISSIONS = {
     "attest": {"contents": "read", "id-token": "write", "attestations": "write"},
     "seal": {"contents": "read", "attestations": "read"},
     "release": {"contents": "write", "attestations": "read"},
+    "rehearsal": {"contents": "read"},
 }
 NOT_DRY = "${{ !inputs.dry_run }}"
 TAG_CHECK = "refs/tags/${TAG}^{commit}"
 # The jobs that hold the key, which have a `release` environment and never the right to write.
 KEY_JOBS = ("sign", "sign-packages", "seal")
+# The environment of the job that writes the release: its own, which holds no secret, and never the one of the key.
+PUBLISH_ENV = "release-publish"
 VERSION = "1.2.3"
-
-
-def uses(step, action):
-    return action in str(step.get("uses", ""))
 
 
 def expected(which):
@@ -80,9 +82,6 @@ def attest_condition(job):
     others = [n for n in needs_of(job) if n != "attest"]
     ok = " && ".join(f"needs.{n}.result == 'success'" if n.isidentifier() else f"needs['{n}'].result == 'success'" for n in others)
     return "${{ !cancelled() && " + ok + " && (needs.attest.result == 'success' || inputs.dry_run && needs.attest.result == 'skipped') }}"
-
-
-OVERLAY = "Take the release scripts from the commit that started the rehearsal"
 
 
 def first_script(steps, skip=None):
@@ -159,6 +158,8 @@ def problems(path):
     rjobs = reusable["jobs"]
     verify_spec = yaml.safe_load(open(os.path.join(os.path.dirname(path), "reusable-release-verify.yml")))
     vjobs = verify_spec["jobs"]
+    rehearsal_spec = yaml.safe_load(open(os.path.join(os.path.dirname(path), "reusable-release-rehearsal.yml")))
+    hjobs = rehearsal_spec["jobs"]
     out = []
 
     def bad(message):
@@ -181,21 +182,24 @@ def problems(path):
             bad(f"reusable job `{name}` is granted {job['permissions']}")
         if "environment" in job or "secrets" in str(job):
             bad(f"reusable job `{name}` has an environment or reaches for secrets")
-    # The key jobs have the environment; the publishing job has the right to write and no environment of the key.
+    # The key jobs have the environment of the key; the publishing job has the right to write, an environment of
+    # its own and never the key.
     for name in KEY_JOBS:
         if jobs[name].get("environment") != "release":
             bad(f"`{name}` holds the key without `environment: release`")
         if "write" in (jobs[name].get("permissions") or {}).values():
             bad(f"`{name}` holds the key and a permission to write")
-    if "environment" in jobs["release"] or "secrets" in str(jobs["release"]).replace("secrets.GITHUB_TOKEN", ""):
-        bad("`release` writes the release and must not reach for the key or an environment")
+    if jobs["release"].get("environment") != PUBLISH_ENV or "secrets" in str(jobs["release"]).replace("secrets.GITHUB_TOKEN", ""):
+        bad(f"`release` writes the release: it is in `environment: {PUBLISH_ENV}`, which holds no secret, and never reaches for the key")
+    if jobs["release"].get("if") != NOT_DRY:
+        bad("`release` is not skipped in a rehearsal and only there")
 
     # 2. The graph: everything that makes something waits for `verify`, the sealing job waits for every
     # job that makes something it gathers, and the publishing job waits for the sealing one.
     for name in jobs:
         if name != "verify" and "verify" not in needs_of(jobs[name]) and name != "release":
             bad(f"`{name}` does not wait for `verify`")
-    producers = {n for n in jobs if n not in ("seal", "release", "verify")}
+    producers = {n for n in jobs if n not in ("seal", "release", "rehearsal", "verify")}
     reach = closure(jobs, "seal") | set(needs_of(jobs["seal"]))
     for name in sorted(producers - reach):
         bad(f"seal does not wait for `{name}`")
@@ -210,7 +214,8 @@ def problems(path):
 
     # 3. The commit: every checkout after `verify` is the tag of the run, never a bare revision, and every job
     # asserts right after that what it checked out is the commit `verify` named.
-    for label, group, want in (("release.yml", jobs, TAG_REF), ("the builds", rjobs, TAG_REF_INPUT), ("the verification", {"audit": vjobs["audit"]}, TAG_REF_INPUT)):
+    for label, group, want in (("release.yml", jobs, TAG_REF), ("the builds", rjobs, TAG_REF_INPUT), ("the verification", {"audit": vjobs["audit"]}, TAG_REF_INPUT),
+                               ("the rehearsal", hjobs, TAG_REF_INPUT)):
         for name, job in group.items():
             steps = job.get("steps") or []
             for i, s in enumerate(steps):
@@ -358,7 +363,7 @@ def problems(path):
         bad("seal does not upload the sealed set as `release-set`")
 
     # 5. The publishing job: the exact set again, the signatures again, the tag again, explicit names,
-    # `--verify-tag`, and nothing published in a rehearsal.
+    # `--verify-tag`, and nothing of a rehearsal in it.
     rel = jobs["release"]["steps"]
     down = next((s for s in rel if uses(s, "download-artifact")), None)
     if down is None or "merge-multiple" in down.get("with", {}) or down["with"].get("name") != "release-set" or down["with"].get("path") != REL:
@@ -386,8 +391,12 @@ def problems(path):
         bad("`gh release create` names files with a glob")
     if rel[created].get("working-directory") != REL:
         bad("`gh release create` does not run in the directory of the sealed set")
-    if not any("inputs.dry_run" in str(s.get("if", "")) and "Say what a rehearsal" in str(s.get("name", "")) for s in rel):
-        bad("a rehearsal does not say what it would have published")
+    if any(s.get("name") == OVERLAY or str(s.get("name", "")).startswith("Say what a rehearsal") for s in rel) \
+            or any("REHEARSAL" in (s.get("env") or {}) for s in rel):
+        bad("the job that publishes carries a step or a value of a rehearsal")
+    # 5b. The rehearsal: the checks of the set without the provenance and without the publication.
+    seed = (spec.get("env") or {}).get("REHEARSAL_SEED_B64")
+    out += rehearsal_problems(jobs["rehearsal"], rehearsal_spec, rel, seed)
 
     # 6. What `attest` covers is what `verify-provenance.sh` asks for, and what it downloads is every
     # artifact of a binary or a package that the builds upload and none of the others.
@@ -484,7 +493,7 @@ def problems(path):
     out += deb_sbom_problems("\n".join(str(s.get("run", "")) for s in sbom["steps"]), open(DEBIAN_RULES).read())
 
     # 9. Python is started with -I wherever the tag's own scripts run, and nothing is piped into a shell.
-    for label, group in (("release.yml", jobs), ("the reusable", rjobs)):
+    for label, group in (("release.yml", jobs), ("the reusable", rjobs), ("the rehearsal", hjobs)):
         for name, job in group.items():
             out += python_without_isolation(runs(job), f"{label} `{name}`")
             for s in runs(job):
@@ -499,7 +508,7 @@ def problems(path):
                 bad(f"`{name}`: the key of `{s.get('name')}` is not the secret in a real run and the throwaway key in a rehearsal")
     # 10b. A job that runs in a container is root in a workspace the runner's user owns: it trusts the workspace
     # before the first git command, or git stops on "dubious ownership", the check of the checkout included.
-    for label, group in (("the builds", rjobs), ("release.yml", jobs), ("the verification", vjobs)):
+    for label, group in (("the builds", rjobs), ("release.yml", jobs), ("the verification", vjobs), ("the rehearsal", hjobs)):
         for name, job in group.items():
             if "container" not in job:
                 continue
@@ -511,7 +520,7 @@ def problems(path):
 
     # 11. Nothing a release builds from or into is a cache shared with other runs: no cache action, no
     # setup action asked to cache, no restore keys, in any job of the release or of its reusables.
-    for label, group in (("release.yml", jobs), ("the builds", rjobs), ("the verification", vjobs)):
+    for label, group in (("release.yml", jobs), ("the builds", rjobs), ("the verification", vjobs), ("the rehearsal", hjobs)):
         for name, job in group.items():
             for s in job.get("steps") or []:
                 with_keys = {str(k) for k in (s.get("with") or {})}

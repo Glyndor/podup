@@ -21,6 +21,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 RELEASE="$HERE/.github/workflows/release.yml"
 BUILDS="$HERE/.github/workflows/reusable-release-build.yml"
 VERIFYING="$HERE/.github/workflows/reusable-release-verify.yml"
+REHEARSING="$HERE/.github/workflows/reusable-release-rehearsal.yml"
 CHECK_DIR="$HERE/.github/scripts/release/check-artifact-dir.sh"
 CHECK_TAG="$HERE/.github/scripts/release/check-tag.sh"
 VERIFY_PROV="$HERE/.github/scripts/release/verify-provenance.sh"
@@ -43,17 +44,18 @@ check() { # <description> <expected> <actual>
 }
 
 # --- the shipped workflows, read as data -------------------------------------
-facts="$(python3 - "$RELEASE" "$BUILDS" "$VERIFYING" <<'PY'
+facts="$(python3 - "$RELEASE" "$BUILDS" "$VERIFYING" "$REHEARSING" <<'PY'
 import sys, yaml
 jobs = yaml.safe_load(open(sys.argv[1]))["jobs"]
 builds = yaml.safe_load(open(sys.argv[2]))["jobs"]
 verifying = yaml.safe_load(open(sys.argv[3]))["jobs"]
+rehearsing = yaml.safe_load(open(sys.argv[4]))["jobs"]
 
 def text(job):
     return yaml.safe_dump(job)
 
 out = {}
-groups = [("release", jobs), ("builds", builds), ("verification", verifying)]
+groups = [("release", jobs), ("builds", builds), ("verification", verifying), ("rehearsal", rehearsing)]
 checkouts = [(g, n, s) for g, grp in groups for n, j in grp.items() for s in j.get("steps", [])
              if str(s.get("uses", "")).startswith("actions/checkout")]
 TAG_REFS = ("refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}", "refs/tags/${{ inputs.tag }}")
@@ -93,6 +95,15 @@ out["the signature artifacts do not match podup-*"] = all(
 rel = jobs["release"]
 out["release waits for seal and not for the signers alone"] = "seal" in rel["needs"]
 out["release has the right to write, may read attestations, and has no key"] = rel["permissions"] == {"contents": "write", "attestations": "read"} and "secrets.GLYNDOR" not in text(rel)
+out["the publishing job is in its own environment, which is not the one of the key, and not in a rehearsal"] = (
+    rel.get("environment") == "release-publish" and rel.get("if") == "${{ !inputs.dry_run }}")
+both = [jobs["rehearsal"], rehearsing["rehearsal"]]
+out["the rehearsal can only read and is in no environment"] = all(
+    j.get("permissions") == {"contents": "read"} and "environment" not in j for j in both)
+out["the rehearsal never sees a secret or the token"] = not any(w in text(j) for j in both for w in ("secrets", "github.token"))
+out["only the publishing job has a command that creates a release"] = [
+    n for grp in (jobs, builds, verifying, rehearsing) for n, j in grp.items()
+    if any("gh release create" in str(s.get("run", "")) for s in j.get("steps", []))] == ["release"]
 out["no job has the key and the right to write"] = not any(
     "secrets.GLYNDOR" in text(j) and "write" in (j.get("permissions") or {}).values() for j in jobs.values())
 for k, v in out.items():

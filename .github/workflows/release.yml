@@ -556,14 +556,18 @@ jobs:
   # The release is published here, by a job that holds the right to write one and never the key.
   # What it publishes is the set the sealing job made, checked again against the exact list of
   # names, every signature checked again against the public keys, and the tag looked up one more
-  # time: it has to still be the commit that was verified. In a rehearsal it stops there.
+  # time: it has to still be the commit that was verified. It runs only in a real release, in an
+  # environment of its own, `release-publish`, which holds no secret: the key lives in `release`,
+  # which this job never joins. What a rehearsal checks of the set is the job after this one.
   release:
     name: Publish release
+    if: ${{ !inputs.dry_run }}
     needs: [verify, seal]
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 33s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
     timeout-minutes: 10
+    environment: release-publish
     permissions:
       contents: write
       attestations: read
@@ -573,20 +577,6 @@ jobs:
         with:
           persist-credentials: false
           ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-
-      - name: Take the release scripts from the commit that started the rehearsal
-        if: ${{ inputs.dry_run }}
-        run: |
-          set -o pipefail
-          # A rehearsal may name a tag older than the scripts of the release and of the packages, so
-          # those come from the commit that launched the run, the one this workflow file is from. Only
-          # those two folders: the rest of the tag, its own tests included, stays as the tag has it.
-          # Nothing signed in a rehearsal is published, and the scripts stay out of what the later
-          # steps read as changed or new.
-          git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
-          git ls-files -z .github/scripts/release .github/scripts/packaging | xargs -0 -r git update-index --skip-worktree
-          rm -rf .github/scripts/release .github/scripts/packaging && git archive FETCH_HEAD .github/scripts/release .github/scripts/packaging | tar -x
-          printf '%s\n' /.github/scripts/release/ /.github/scripts/packaging/ >> .git/info/exclude
 
       - name: The checkout is the commit that was verified
         env:
@@ -643,7 +633,6 @@ jobs:
         working-directory: ${{ runner.temp }}/release
         env:
           VERSION: ${{ needs.verify.outputs.version }}
-          REHEARSAL: ${{ inputs.dry_run }}
         run: |
           here="$GITHUB_WORKSPACE/.github/scripts/release"
           python3 -I -m venv "$RUNNER_TEMP/verifyvenv"
@@ -677,14 +666,21 @@ jobs:
             --verify-tag \
             "${files[@]}"
 
-      - name: Say what a rehearsal would have published
-        if: ${{ inputs.dry_run }}
-        working-directory: ${{ runner.temp }}/release
-        run: |
-          {
-            echo "### Rehearsal: nothing was published"
-            echo
-            echo "Signed with the throwaway key and verified against it. The set is:"
-            echo
-            printf -- '- %s\n' *
-          } >>"$GITHUB_STEP_SUMMARY"
+
+  # A rehearsal checks the set the publisher would, in a workflow of its own whose token can only read:
+  # reusable-release-rehearsal.yml. The condition names the results it waits for, behind a status
+  # function: `attest` is skipped in a rehearsal, and a job with no status function in its condition is
+  # skipped when anything it waits for, directly or not, was.
+  rehearsal:
+    name: rehearsal
+    if: ${{ !cancelled() && inputs.dry_run && needs.verify.result == 'success' && needs.seal.result == 'success' }}
+    needs: [verify, seal]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reusable-release-rehearsal.yml
+    with:
+      tag: ${{ needs.verify.outputs.tag }}
+      commit: ${{ needs.verify.outputs.commit }}
+      version: ${{ needs.verify.outputs.version }}
+      sums: ${{ needs.seal.outputs.sums }}
+      dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}

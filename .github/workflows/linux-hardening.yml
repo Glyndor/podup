@@ -22,6 +22,7 @@ on:
       - ".github/workflows/linux-hardening.yml"
       - ".github/workflows/release.yml"
       - ".github/workflows/reusable-release-build.yml"
+      - ".github/workflows/reusable-release-rehearsal.yml"
       - ".github/workflows/reusable-release-verify.yml"
   pull_request:
     branches:
@@ -36,6 +37,7 @@ on:
       - ".github/workflows/linux-hardening.yml"
       - ".github/workflows/release.yml"
       - ".github/workflows/reusable-release-build.yml"
+      - ".github/workflows/reusable-release-rehearsal.yml"
       - ".github/workflows/reusable-release-verify.yml"
   workflow_dispatch:
 

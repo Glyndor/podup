@@ -65,6 +65,7 @@ echo "-- the workflows start each of them with -I"
 # step with the flag taken away; this is the one case that reads the shipped files directly.
 unisolated="$(grep -hE '(python3?|"?\$venv_py"?) +[^-| ]|(python3?|"?\$venv_py"?) +-[^I]' \
 	"$HERE/.github/workflows/release.yml" "$HERE/.github/workflows/reusable-release-build.yml" \
+	"$HERE/.github/workflows/reusable-release-rehearsal.yml" \
 	| grep -vE '^\s*#|command -v python|py=python|python3 -I|\$venv_py" -I|-m venv' || true)"
 check "no step of the release starts Python without -I" "" "$unisolated"
 
