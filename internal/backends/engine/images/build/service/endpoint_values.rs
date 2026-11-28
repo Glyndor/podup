@@ -37,25 +37,28 @@ pub(super) fn checked<'a>(
 		}
 		isolation = named.as_deref().filter(|value| !value.is_empty());
 	}
+	let platform = entries.first();
 	// libpod splits a single `platform=` value at its commas. Merged compose
 	// files may list one platform twice.
-	let mut listed = entries.iter().flat_map(|entry| entry.split(','));
-	let platform = listed.next();
-	let unknown = isolation.filter(|value| {
+	let (field, value, message) = if entries
+		.iter()
+		.any(|entry| entry.contains(',') || Some(entry) != platform)
+	{
+		let message = "libpod would give every platform the same image name; name one platform";
+		(field, entries.join(","), message)
+	} else if let Some(value) = isolation.filter(|value| {
 		!ISOLATIONS
 			.iter()
 			.any(|name| name.eq_ignore_ascii_case(value))
-	});
-	let (field, value, message) = if listed.any(|other| Some(other) != platform) {
-		let message = "libpod would give every platform the same image name; name one platform";
-		(field, entries.join(","), message)
-	} else if let Some(value) = unknown {
+	}) {
 		let message = "Podman takes oci, default, rootless or chroot";
 		("build.isolation", value.to_owned(), message)
 	} else {
-		return Ok((platform, isolation));
+		return Ok((platform.map(String::as_str), isolation));
 	};
 	Err(ComposeError::Podman(build_field_error(
-		field, value, message,
+		field,
+		value.as_str(),
+		message.to_string(),
 	)))
 }

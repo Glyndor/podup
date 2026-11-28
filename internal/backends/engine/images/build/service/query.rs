@@ -129,13 +129,13 @@ impl Engine {
 		// The libpod endpoint reads `extrahosts` as a JSON array of
 		// `host:ip` entries. A comma-separated list is not that shape: the
 		// daemon rejects the build before it starts.
-		let extrahosts = if build.extra_hosts().is_empty() {
-			None
-		} else {
-			Some(crate::engine::to_query_json(
-				"build.extra_hosts",
-				&build.extra_hosts(),
-			)?)
+		// The `Vec` itself is serialised, the type the cache lists use too: a
+		// second serialiser for a slice does not fit the binary budget.
+		let extrahosts = match build {
+			BuildConfig::Config { extra_hosts, .. } if !extra_hosts.is_empty() => Some(
+				crate::engine::to_query_json("build.extra_hosts", extra_hosts)?,
+			),
+			_ => None,
 		};
 		// The endpoint reads the caches as a JSON array of image references.
 		// Compose writes them with the global cache syntax, so a registry
