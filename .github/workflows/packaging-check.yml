@@ -1,0 +1,248 @@
+name: Package checks
+
+# The rpm and the pacman packages are made from the .deb the release builds,
+# and the four checks under tests/packaging/ say what the rpm channel and the
+# pacman channel read out of a package and what a user gets when they install
+# it. Nothing ran them: they sat in the tree and no workflow called them, so
+# a broken recipe merged and was only noticed when a release published it.
+#
+# What runs here. The four checks, over packages built from the .deb this pull
+# request builds: the same Debian package the release makes, the same staged
+# payload, the same pinned images. The .deb is built for both architectures,
+# because the reproducible check builds the rpm of both and the aarch64 one is
+# made of the aarch64 payload.
+#
+# When it runs. Only when the packaging changes. The paths filter below is the
+# whole trigger, and the map in
+# tests/scripts/shell/workflow_behaviour/ci_map/triggers.txt holds which
+# workflows start for which change, so both directions are held: a change to
+# the packaging starts this lane, and a change to anything else does not.
+#
+# What it reports. One check, from the gate job, which runs on every outcome.
+# A skipped job is a success to GitHub, so a lane whose build failed and whose
+# checks never ran would leave the pull request green with nothing proved.
+#
+# What it costs. Two Debian builds (the Rust suite runs inside them, as it
+# does in the Debian lane) and the containers the checks run in. It is the
+# price of a broken package being caught here and not at release time.
+#
+# Concurrency. One run per pull request ref; a new push cancels the run of the
+# commit that no longer exists.
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches: [main, develop]
+    paths:
+      - ".github/scripts/packaging/**"
+      - "tests/packaging/**"
+      - ".github/workflows/packaging-check.yml"
+      # The release builds the same packages from the same .deb and runs the
+      # same checks before anything is attached to it, so a change to it is a
+      # change to what runs them.
+      - ".github/workflows/reusable-release-build.yml"
+      # The reusable that builds the .deb these checks read. A change to it
+      # changes what the .deb is, so the lane has to run: the check
+      # check-local-reusables.py asks for exactly this.
+      - ".github/workflows/reusable-rust-debian.yml"
+      # The judge that decides whether the .deb has to be built at all. It is
+      # read from the base commit, so the pull request that edits it is judged
+      # by the previous version, which builds the package.
+      - ".github/scripts/checks/debian-ci-inputs.sh"
+
+permissions:
+  contents: read
+
+# Cancels superseded pull_request runs only; see asset-contract.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Every run step goes through `bash -e -o pipefail`, which is what `shell: bash` means to Actions. Without it
+# the shell is `bash -e` alone, and a pipeline hides the failure of all but its last command.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # The .deb the packages are made from: the same reusable the Debian lane
+  # calls, with the same image and the same toolchain, so the payload the
+  # checks read is the payload the release ships.
+  deb:
+    name: Build the Debian package
+    uses: ./.github/workflows/reusable-rust-debian.yml
+    strategy:
+      # The first architecture that fails stops the other one: one broken
+      # build is one answer.
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    with:
+      package-name: podup
+      runner: ${{ matrix.runner }}
+      arch: ${{ matrix.arch }}
+      upload-artifact: true
+      artifact-name: packaging-deb-${{ matrix.arch }}
+      # The package is built for musl, so the toolchain and the target travel
+      # together, and they are the ones the release builds it with.
+      rust-toolchain: "1.100"
+      rust-target: ${{ matrix.target }}
+
+  # The checks, over the packages built from the .deb of this pull request.
+  # Each one is a step of its own, so the log names the check that failed and
+  # the first failure stops the ones after it.
+  packages:
+    name: Check the rpm and the pacman packages
+    needs: [deb]
+    runs-on: ubuntu-latest
+    # Bound: the containers of the checks: two rpm builds, one pacman one, the
+    # reproducible check builds nine more, and the installs in AlmaLinux and
+    # Arch. Ceiling, not measured.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Take the Debian packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: packaging-deb-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/deb
+
+      # The payload of both packages is staged from the .deb of its own
+      # architecture, with the epoch the release stamps them with.
+      - name: Stage the payload of each Debian package
+        id: stage
+        env:
+          DEB_DIR: ${{ runner.temp }}/deb
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          debs=("$DEB_DIR"/podup_*_amd64.deb)
+          if [ "${#debs[@]}" -ne 1 ]; then
+            echo "::error::expected one amd64 .deb in $DEB_DIR, found ${#debs[@]}"
+            exit 1
+          fi
+          version="$(basename "${debs[0]}")"
+          version="${version#podup_}"
+          version="${version%_amd64.deb}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::the .deb is named $(basename "${debs[0]}"), which carries no X.Y.Z version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # The staging below reads the epoch from its environment, and what is
+          # written to GITHUB_ENV reaches the following steps only.
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct HEAD)"
+          export SOURCE_DATE_EPOCH
+          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" >> "$GITHUB_ENV"
+          for arch in amd64 arm64; do
+            deb=("$DEB_DIR"/podup_"${version}"_"${arch}".deb)
+            if [ "${#deb[@]}" -ne 1 ]; then
+              echo "::error::expected one ${arch} .deb in $DEB_DIR, found ${#deb[@]}"
+              exit 1
+            fi
+            python3 -I .github/scripts/packaging/stage-payload.py \
+              --deb "${deb[0]}" --version "$version" --arch "$arch" \
+              --license LICENSE --out "$RUNNER_TEMP/stage-$arch"
+          done
+
+      - name: Build the rpm and the pacman package
+        env:
+          VERSION: ${{ steps.stage.outputs.version }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/packaging/build-rpm.sh \
+            "$RUNNER_TEMP/stage-amd64" "$RUNNER_TEMP/out" "$VERSION" x86_64
+          bash .github/scripts/packaging/build-rpm.sh \
+            "$RUNNER_TEMP/stage-arm64" "$RUNNER_TEMP/out" "$VERSION" aarch64
+          bash .github/scripts/packaging/build-pacman.sh \
+            "$RUNNER_TEMP/stage-amd64" "$RUNNER_TEMP/out" "$VERSION"
+
+      - name: The staged payload is the .deb's
+        env:
+          VERSION: ${{ steps.stage.outputs.version }}
+        run: |
+          set -euo pipefail
+          bash tests/packaging/verify-matches-deb.sh \
+            "$RUNNER_TEMP/deb/podup_${VERSION}_amd64.deb" "$RUNNER_TEMP/stage-amd64" LICENSE
+
+      - name: The rpm says what the rpm channel reads
+        env:
+          VERSION: ${{ steps.stage.outputs.version }}
+        run: |
+          set -euo pipefail
+          bash tests/packaging/verify-rpm.sh \
+            "$RUNNER_TEMP/out/podup-${VERSION}-1.glyndor.any.x86_64.rpm" \
+            "$RUNNER_TEMP/stage-amd64" "$VERSION" x86_64
+
+      # The aarch64 binary cannot run on this runner, so the check reads the
+      # header and the files and says it skipped the install. No lane installs
+      # the aarch64 package, the release one included.
+      - name: The aarch64 rpm says what the rpm channel reads
+        env:
+          VERSION: ${{ steps.stage.outputs.version }}
+        run: |
+          set -euo pipefail
+          bash tests/packaging/verify-rpm.sh \
+            "$RUNNER_TEMP/out/podup-${VERSION}-1.glyndor.any.aarch64.rpm" \
+            "$RUNNER_TEMP/stage-arm64" "$VERSION" aarch64
+
+      - name: The pacman package says what the pacman channel reads
+        env:
+          VERSION: ${{ steps.stage.outputs.version }}
+        run: |
+          set -euo pipefail
+          bash tests/packaging/verify-pacman.sh \
+            "$RUNNER_TEMP/out/podup-${VERSION}-1-x86_64.pkg.tar.zst" \
+            "$RUNNER_TEMP/stage-amd64" "$VERSION"
+
+      - name: The same input gives the same bytes
+        env:
+          VERSION: ${{ steps.stage.outputs.version }}
+        run: |
+          set -euo pipefail
+          bash tests/packaging/verify-reproducible.sh \
+            "$RUNNER_TEMP/stage-amd64" "$RUNNER_TEMP/stage-arm64" "$VERSION"
+
+  # The one check this lane reports. It runs on every outcome, because a
+  # skipped job is a success to GitHub: a lane whose build failed and whose
+  # checks never ran would leave the pull request green with nothing proved.
+  gate:
+    name: rpm and pacman packages
+    needs: [deb, packages]
+    if: always()
+    runs-on: ubuntu-latest
+    # Bound: it reads two strings.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Certify the result
+        env:
+          DEB: ${{ needs.deb.result }}
+          CHECKS: ${{ needs.packages.result }}
+        run: |
+          set -uo pipefail
+          bad=0
+          case "$DEB" in
+            success) ;;
+            *) echo "::error::the Debian package ended as $DEB, so the packages were never built"; bad=1 ;;
+          esac
+          case "$CHECKS" in
+            success) ;;
+            *) echo "::error::the package checks ended as $CHECKS"; bad=1 ;;
+          esac
+          printf 'Debian package: %s, package checks: %s\n' "$DEB" "$CHECKS" \
+            | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          exit "$bad"

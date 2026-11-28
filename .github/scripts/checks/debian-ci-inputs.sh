@@ -31,8 +31,12 @@
 #   build.rs                    the crate's build script
 #   tests/                      the Rust test suite the package build runs
 #   debian/                     the packaging
-#   .github/workflows/debian-build.yml, reusable-rust-debian.yml, release.yml, reusable-release-build.yml
-#                               the CI that builds the package
+#   .github/scripts/packaging/  the rpm and the pacman packages, which are made
+#                               from the .deb this lane builds: the packaging
+#                               checks read that .deb, so a change to how they
+#                               are packed needs the package they are packed from
+#   .github/workflows/debian-build.yml, reusable-rust-debian.yml, release.yml, reusable-release-build.yml,
+#   packaging-check.yml         the CI that builds the package
 #   .github/scripts/checks/debian-ci-inputs.sh   this script
 #   install.sh, install.ps1     the installers
 #
@@ -94,9 +98,16 @@ while IFS= read -r path; do
 		# the Rust tests, which the package build runs.
 		tests/scripts/*.sh | tests/scripts/*.ps1) ;;
 		tests/*) answer true "$path changes the Rust test suite" ;;
-		# The CI that builds the package: its caller, its reusable and the
-		# release workflow, which builds the same package.
-		.github/workflows/debian-build.yml | .github/workflows/reusable-rust-debian.yml | .github/workflows/release.yml | .github/workflows/reusable-release-build.yml)
+		# The packaging of the rpm and the pacman packages. They are made
+		# from the .deb this lane builds, and the packaging checks read that
+		# .deb, so a change to how they are packed needs the package they
+		# are packed from.
+		.github/scripts/packaging/*) answer true "$path changes the packaging of the rpm and the pacman packages" ;;
+		# The CI that builds the package: its callers, its reusable and the
+		# release workflow, which builds the same package. The package checks
+		# read the .deb they ask for, so skipping it would leave them with
+		# nothing to check.
+		.github/workflows/debian-build.yml | .github/workflows/packaging-check.yml | .github/workflows/reusable-rust-debian.yml | .github/workflows/release.yml | .github/workflows/reusable-release-build.yml)
 			answer true "$path changes the CI"
 			;;
 		# The rest of the CI. The package build runs `cargo test`, and the Rust

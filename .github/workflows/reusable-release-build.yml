@@ -313,6 +313,17 @@ jobs:
           COMMIT: ${{ inputs.commit }}
         run: test "$(git rev-parse HEAD)" = "$COMMIT"
 
+      - name: Take the package checks from the commit that started the rehearsal
+        if: ${{ inputs.dry_run }}
+        run: |
+          set -o pipefail
+          # The packaging scripts of a rehearsal come from this commit, so the checks that read what
+          # they build do too: a tag older than the checks has none to run.
+          git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
+          git ls-files -z tests/packaging | xargs -0 -r git update-index --skip-worktree
+          rm -rf tests/packaging && git archive FETCH_HEAD tests/packaging | tar -x
+          printf '%s\n' /tests/packaging/ >> .git/info/exclude
+
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: podup-deb-${{ matrix.deb_arch }}
@@ -344,6 +355,25 @@ jobs:
           VERSION: ${{ inputs.version }}
           RPM_ARCH: ${{ matrix.rpm_arch }}
         run: bash .github/scripts/packaging/build-rpm.sh "$RUNNER_TEMP/stage" "$RUNNER_TEMP/out" "$VERSION" "$RPM_ARCH"
+
+      # The package is proved before it is uploaded, and so before it can be
+      # signed, attested and attached to the release: what the rpm channel
+      # reads out of a package and what a user gets when they install it are
+      # checked on the very bytes the release ships. The header is read in the
+      # pinned Fedora image and the install happens in the pinned AlmaLinux
+      # one, both without network.
+      - name: Prove the rpm the release is about to publish
+        env:
+          VERSION: ${{ inputs.version }}
+          RPM_ARCH: ${{ matrix.rpm_arch }}
+          DEB_ARCH: ${{ matrix.deb_arch }}
+        run: |
+          set -euo pipefail
+          bash tests/packaging/verify-rpm.sh \
+            "$RUNNER_TEMP/out/podup-${VERSION}-1.glyndor.any.${RPM_ARCH}.rpm" \
+            "$RUNNER_TEMP/stage" "$VERSION" "$RPM_ARCH"
+          bash tests/packaging/verify-matches-deb.sh \
+            "$RUNNER_TEMP/deb/podup_${VERSION}_${DEB_ARCH}.deb" "$RUNNER_TEMP/stage" LICENSE
 
       - name: Upload artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -386,6 +416,17 @@ jobs:
           COMMIT: ${{ inputs.commit }}
         run: test "$(git rev-parse HEAD)" = "$COMMIT"
 
+      - name: Take the package checks from the commit that started the rehearsal
+        if: ${{ inputs.dry_run }}
+        run: |
+          set -o pipefail
+          # The packaging scripts of a rehearsal come from this commit, so the checks that read what
+          # they build do too: a tag older than the checks has none to run.
+          git fetch --no-tags --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_SHA"
+          git ls-files -z tests/packaging | xargs -0 -r git update-index --skip-worktree
+          rm -rf tests/packaging && git archive FETCH_HEAD tests/packaging | tar -x
+          printf '%s\n' /tests/packaging/ >> .git/info/exclude
+
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: podup-deb-amd64
@@ -414,6 +455,21 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: bash .github/scripts/packaging/build-pacman.sh "$RUNNER_TEMP/stage" "$RUNNER_TEMP/out" "$VERSION"
+
+      # The package is proved before it is uploaded, and so before it can be
+      # signed, attested and attached to the release: the members and the
+      # .PKGINFO the pacman channel reads, and the install in Arch, are
+      # checked on the very bytes the release ships.
+      - name: Prove the pacman package the release is about to publish
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          bash tests/packaging/verify-pacman.sh \
+            "$RUNNER_TEMP/out/podup-${VERSION}-1-x86_64.pkg.tar.zst" \
+            "$RUNNER_TEMP/stage" "$VERSION"
+          bash tests/packaging/verify-matches-deb.sh \
+            "$RUNNER_TEMP/deb/podup_${VERSION}_amd64.deb" "$RUNNER_TEMP/stage" LICENSE
 
       - name: Upload artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

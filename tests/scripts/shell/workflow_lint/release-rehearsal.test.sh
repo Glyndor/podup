@@ -10,7 +10,8 @@
 #                          the verification and the builds, every checkout of a job that runs
 #                          a release script is followed by the step that takes the scripts
 #                          from the commit that started a rehearsal (the tag may be older than
-#                          them), and the jobs that hold the key are in the environment
+#                          them), a job that runs a package check takes the checks from that
+#                          commit too, and the jobs that hold the key are in the environment
 #                          `release` in a rehearsal as in a release: a rehearsal is started from
 #                          `main`, which the environment admits, and nothing weakens that.
 #
@@ -140,6 +141,25 @@ else:
     if "git archive FETCH_HEAD .github/scripts |" in canon or "rm -rf .github/scripts " in canon:
         print("the step that takes the scripts replaces the whole scripts folder, and the tag's own tests read it")
 
+# A job that runs a package check takes the checks of a rehearsal too, before the first one: the
+# scripts that build the packages are those of the commit that started it, and a tag older than the
+# checks has none.
+PACKAGE_CHECKS = "Take the package checks from the commit that started the rehearsal"
+for job, body in bld["jobs"].items():
+    steps = body.get("steps") or []
+    taken = [i for i, s in enumerate(steps) if s.get("name") == PACKAGE_CHECKS]
+    used = [i for i, s in enumerate(steps) if i not in taken and "bash tests/packaging/" in str(s.get("run", ""))]
+    if used and (not taken or taken[0] > used[0]):
+        print(f"job `{job}` runs a package check and does not take the checks of a rehearsal first")
+    for i in taken:
+        if not used:
+            print(f"job `{job}` takes the package checks and runs none")
+        if steps[i].get("if") != "${{ inputs.dry_run }}":
+            print(f"job `{job}`: the step that takes the package checks is not only for a rehearsal")
+        for needle in ('"$GITHUB_SHA"', "skip-worktree", ".git/info/exclude", "git archive FETCH_HEAD tests/packaging |"):
+            if needle not in str(steps[i].get("run", "")):
+                print(f"job `{job}`: the step that takes the package checks lacks {needle}")
+
 for job in ("sign", "sign-packages", "seal"):
     if rel["jobs"][job].get("environment") != "release":
         print(f"release.yml: job `{job}` is not in the environment `release` in every run, a rehearsal included")
@@ -193,6 +213,10 @@ plant "a checkout without the step that takes the scripts" $B "s.replace('      
 plant "the whole scripts folder taken in one job" $R "s.replace('rm -rf .github/scripts/release .github/scripts/packaging &&', 'rm -rf .github/scripts &&', 1)" "differs from the others"
 plant "the scripts taken in the Debian job, over the tests of the tag" $B "(lambda b: s.replace('      - name: Trust the workspace\n', b + '      - name: Trust the workspace\n', 1))(s[s.index('      - name: Take the release scripts'):s.index('      - name:', s.index('      - name: Take the release scripts') + 20)])" "takes them anyway, over the tag's own tests"
 plant "the scripts left in the worktree as changed files" $R "s.replace('skip-worktree', 'no-skip-worktree', 1)" "differs from the others"
+C='      - name: Take the package checks from the commit that started the rehearsal\n'
+plant "a package check run without the checks of the rehearsal" $B "s.replace('$C', '      - name: Take nothing\n', 1)" "does not take the checks of a rehearsal first"
+plant "the checks of a rehearsal taken in every run" $B "s.replace('$C        if: \${{ inputs.dry_run }}\n', '$C', 1)" "the step that takes the package checks is not only for a rehearsal"
+plant "the checks of a rehearsal read from the tag" $B "s.replace('git archive FETCH_HEAD tests/packaging |', 'git archive HEAD tests/packaging |', 1)" "lacks git archive FETCH_HEAD tests/packaging"
 plant "a key job without its environment in a rehearsal" $R "s.replace('    environment: release\n', '    environment: \${{ !inputs.dry_run && \\'release\\' || \\'\\' }}\n', 1)" "is not in the environment"
 plant "a key job in another environment" $R "s.replace('    environment: release\n', '    environment: elsewhere\n', 1)" "is not in the environment"
 plant "the publishing job given an environment" $R "s.replace('  release:\n    name:', '  release:\n    environment: release\n    name:', 1)" "job \`release\` has an environment"
