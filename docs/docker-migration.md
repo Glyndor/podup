@@ -459,7 +459,7 @@ The `[Build]` keys `Annotation=`, `Volume=` and `DNS=` have no compose `build:` 
 | `pull_refresh_after` | strictly validated after interpolation, syntax only; no last-pull clock is available, so it has no runtime effect |
 | `attach` | Honoured by `up`: a service with `attach: false` is never followed. Ignored only by `generate quadlet`, where there is no log following |
 | `use_api_socket` | no podup equivalent |
-| `healthcheck.start_interval` | Podman probes at `healthcheck.interval` during the start period, so `up --wait` can take that long to see the service healthy; `up` reports it |
+| `healthcheck.start_interval` | Podman probes at `healthcheck.interval` during the start period, so `up --wait` can take that long to see the service healthy; `up` reports it. podup does not turn it into a Podman startup healthcheck: measured on Podman 6.2.1, a container that never passes is then marked unhealthy after `retries` probes at `start_interval` instead of `interval`, and its on-failure action does not run |
 | `domainname` | Podman 6.2.0 has no setting for a container's domain name (the `kernel.domainname` sysctl is refused by `podman run` and fails at start through the API); `up` reports it |
 | `external_links` | Podman has no link option, and a container outside the project cannot be given another name; `up` reports it |
 | `provider:` / top-level `models:` | podup runs no model runner; the service/model is not honored |
