@@ -199,7 +199,7 @@ impl Engine {
 			// the first create of either.
 			self.check_distinct_container_names(file, &enabled)?;
 			// And that the environment of each can be read.
-			self.check_env_files(file, &enabled, &target_set)?;
+			self.check_env_files(file, &enabled, &target_set, start)?;
 
 			// Prefetch the project's containers once (instead of one API call per
 			// replica): which names already exist, and for each the facts

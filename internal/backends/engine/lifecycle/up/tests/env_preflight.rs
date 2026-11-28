@@ -157,3 +157,47 @@ async fn a_service_this_up_does_not_start_is_not_read() {
 		"up did not go on: {changes:?}"
 	);
 }
+
+/// `create` never starts the dependency, so nobody writes the file and the
+/// `up` must fail before it creates anything.
+#[tokio::test]
+async fn a_missing_file_of_a_dependent_service_fails_create_before_anything_is_created() {
+	let dir = dir_with(&[]);
+	let yaml = "services:
+  generate:
+    image: alpine
+  app:
+    image: alpine
+    env_file: [late.env]
+    depends_on: [generate]
+";
+	let fake: FakePodman = fake_podman::start(|method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			(200, "[]".to_string())
+		} else if method == "GET" {
+			(404, r#"{"message":"no such object"}"#.to_string())
+		} else {
+			(200, "{}".to_string())
+		}
+	});
+	let engine = Engine::with_base_dir(fake.client(), "probe".into(), dir.path().to_path_buf());
+	let mut file = crate::parse_str(yaml).expect("fixture must parse");
+	normalize_default_network(&mut file);
+	let err = engine
+		.create_with_options(&file, &[], &[], false, false, false)
+		.await
+		.err();
+	assert!(
+		matches!(err, Some(ComposeError::FileNotFound(ref path)) if path.ends_with("late.env")),
+		"got {err:?}"
+	);
+	let changes = fake
+		.requests
+		.lock()
+		.unwrap()
+		.iter()
+		.filter(|r| !r.starts_with("GET"))
+		.cloned()
+		.collect::<Vec<String>>();
+	assert!(changes.is_empty(), "{changes:?}");
+}

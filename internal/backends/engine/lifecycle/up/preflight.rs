@@ -16,12 +16,14 @@ impl Engine {
 	/// Nothing is kept: each service reads its environment again when its turn
 	/// comes, after what it depends on has run. One thing is left to that second
 	/// read: a missing file of a service that has dependencies in this run,
-	/// because one of them may be what writes it.
+	/// because one of them may be what writes it. That needs the dependencies to
+	/// be started: `create` and `--no-start` start none, so there it fails here.
 	pub(super) fn check_env_files(
 		&self,
 		file: &ComposeFile,
 		enabled: &HashSet<String>,
 		target_set: &Option<HashSet<String>>,
+		start: bool,
 	) -> Result<()> {
 		for (name, service) in &file.services {
 			let selected = target_set.as_ref().is_none_or(|set| set.contains(name));
@@ -31,12 +33,13 @@ impl Engine {
 			match self.effective_env(service) {
 				Ok(_) => {}
 				Err(ComposeError::FileNotFound(_))
-					if effective_depends_on(service, &file.services)
-						.service_names()
-						.iter()
-						.any(|dep| {
-							enabled.contains(dep.as_str()) && in_started_set(target_set, dep)
-						}) => {}
+					if start
+						&& effective_depends_on(service, &file.services)
+							.service_names()
+							.iter()
+							.any(|dep| {
+								enabled.contains(dep.as_str()) && in_started_set(target_set, dep)
+							}) => {}
 				Err(e) => return Err(e),
 			}
 		}
