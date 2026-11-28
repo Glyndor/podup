@@ -9,6 +9,8 @@ mod image_unit_suffix;
 mod mount_colon;
 mod network;
 mod pull_policy;
+#[cfg(unix)]
+pub(in crate::backends::quadlet) mod real_env;
 mod secret_separators;
 mod units;
 

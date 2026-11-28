@@ -3,9 +3,10 @@
 //! (see the Docker migration guide); the export writes the same alias on the
 //! `Network=` line of the target's unit, so the units do what `up` does.
 
-use std::process::Command;
-
+#[cfg(unix)]
 use crate::backends::quadlet::tests::generator::generator;
+#[cfg(unix)]
+use crate::backends::quadlet::tests::real_env::command;
 use crate::parse_str;
 use crate::quadlet::tests::unit_named;
 use crate::quadlet::{generate_at, QuadletOutput};
@@ -135,6 +136,7 @@ fn inside_a_pod_a_link_is_still_reported_as_skipped() {
 /// Podman's generator reads the line back into the `--network` flag with both
 /// aliases, and a container started with those options answers to the alias
 /// from another container of the network.
+#[cfg(unix)]
 #[test]
 fn podman_reads_the_alias_and_a_container_resolves_it() {
 	let Some(generator) = generator() else {
@@ -145,7 +147,7 @@ fn podman_reads_the_alias_and_a_container_resolves_it() {
 	for unit in &out.units {
 		std::fs::write(dir.path().join(&unit.filename), &unit.contents).unwrap();
 	}
-	let run = Command::new(&generator)
+	let run = command(&generator)
 		.args(["-dryrun", "-user"])
 		.env("QUADLET_UNIT_DIRS", dir.path())
 		.output()
@@ -159,14 +161,16 @@ fn podman_reads_the_alias_and_a_container_resolves_it() {
 	real_resolution();
 }
 
+#[cfg(unix)]
 fn podman(args: &[&str]) -> std::process::Output {
-	Command::new("podman").args(args).output().unwrap()
+	command("podman").args(args).output().unwrap()
 }
 
+#[cfg(unix)]
 /// Two containers on a network, started with the option list the unit carries:
 /// the second one resolves the alias of the first.
 fn real_resolution() {
-	if Command::new("podman").arg("--version").output().is_err() {
+	if command("podman").arg("--version").output().is_err() {
 		return;
 	}
 	let id = std::process::id();

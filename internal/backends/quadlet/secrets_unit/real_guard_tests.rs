@@ -4,15 +4,15 @@
 //! `systemctl start` after a name clash would destroy a secret podup never made.
 
 use std::path::Path;
-use std::process::Command;
 
 use super::real_tests::{exec_lines, podman_available};
 use super::tests::FILE_SECRET;
+use crate::backends::quadlet::tests::real_env::{command, PATH};
 use crate::compose::parse_str;
 use crate::quadlet::generate_at;
 
 fn podman(args: &[&str]) -> std::process::Output {
-	Command::new("podman").args(args).output().unwrap()
+	command("podman").args(args).output().unwrap()
 }
 
 fn secret_id(name: &str) -> String {
@@ -70,10 +70,7 @@ fn the_unit_replaces_only_a_secret_that_is_the_projects() {
 	assert_eq!(lines.len(), 1);
 	let run = || {
 		let mut args = lines[0].iter();
-		Command::new(args.next().unwrap())
-			.args(args)
-			.output()
-			.unwrap()
+		command(args.next().unwrap()).args(args).output().unwrap()
 	};
 	let name = format!("{project}_secret_token");
 	let _cleanup = Secret(name.clone());
@@ -151,7 +148,7 @@ fn a_name_or_a_path_that_starts_with_a_dash_is_a_value() {
 	let _cleanup = Secret("--help".to_string());
 	let _cleanup_name = Secret(format!("{project}_dash"));
 	for name in ["--help", &format!("{project}_dash")] {
-		let run = Command::new(&words[0])
+		let run = command(&words[0])
 			.args(&words[1..4])
 			.args([name, &project, "-/x", ""])
 			.current_dir(dir.path())
@@ -185,7 +182,7 @@ fn generated_command(
 }
 
 fn run_command(words: &[String]) -> std::process::Output {
-	Command::new(&words[0]).args(&words[1..]).output().unwrap()
+	command(&words[0]).args(&words[1..]).output().unwrap()
 }
 
 /// What puts something else where the file was.
@@ -246,7 +243,7 @@ fn the_command_refuses_what_up_refuses_where_the_file_was() {
 			Box::new({
 				let f = file.clone();
 				move || {
-					assert!(Command::new("mkfifo").arg(&f).status().unwrap().success());
+					assert!(command("mkfifo").arg(&f).status().unwrap().success());
 				}
 			}),
 		),
@@ -323,7 +320,7 @@ fn the_command_refuses_a_file_whose_mode_is_not_the_one_it_had_when_the_units_we
 fn interposed(dir: &Path, program: &str, only_when: &str, swap: &str) -> std::path::PathBuf {
 	use std::os::unix::fs::PermissionsExt;
 	let real = String::from_utf8_lossy(
-		&Command::new("sh")
+		&command("sh")
 			.args(["-c", &format!("command -v {program}")])
 			.output()
 			.unwrap()
@@ -348,8 +345,8 @@ fn interposed(dir: &Path, program: &str, only_when: &str, swap: &str) -> std::pa
 }
 
 fn run_with_path(words: &[String], bin: &Path) -> std::process::Output {
-	let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
-	Command::new(&words[0])
+	let path = format!("{}:{PATH}", bin.display());
+	command(&words[0])
 		.args(&words[1..])
 		.env("PATH", path)
 		.output()

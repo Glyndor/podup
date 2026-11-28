@@ -2,10 +2,9 @@
 //! Podman, and a live systemd user manager. Each test skips by name, with a
 //! `SKIP:` line, where its tool is missing.
 
-use std::process::Command;
-
 use super::tests::{generate, secrets_unit, yaml_path, BASE, FILE_SECRET};
 use crate::backends::quadlet::tests::generator::generator;
+use crate::backends::quadlet::tests::real_env::{command, manager_unit_dir};
 use crate::compose::parse_str;
 use crate::quadlet::generate_at;
 use std::path::Path;
@@ -66,7 +65,7 @@ pub(super) fn exec_lines(unit: &str) -> Vec<Vec<String>> {
 /// guaranteed.
 pub(super) fn podman_available() -> bool {
 	crate::backends::quadlet::tests::generator::generator().is_some()
-		&& Command::new("podman").arg("--version").output().is_ok()
+		&& command("podman").arg("--version").output().is_ok()
 }
 
 #[test]
@@ -76,7 +75,7 @@ fn systemd_accepts_the_unit() {
 	let unit = secrets_unit(&out).unwrap();
 	let path = dir.path().join("proj-podup-secrets.service");
 	std::fs::write(&path, unit).unwrap();
-	let Ok(run) = Command::new("systemd-analyze")
+	let Ok(run) = command("systemd-analyze")
 		.args(["--user", "verify"])
 		.arg(&path)
 		.output()
@@ -100,7 +99,7 @@ fn the_generator_makes_the_container_wait_for_the_unit() {
 	let dir = tempfile::tempdir().unwrap();
 	let out = generate(FILE_SECRET);
 	crate::quadlet::write_units(dir.path(), &out.units).unwrap();
-	let run = Command::new(&generator)
+	let run = command(&generator)
 		.args(["-dryrun", "-user"])
 		.env("QUADLET_UNIT_DIRS", dir.path())
 		.output()
@@ -138,20 +137,15 @@ fn the_unit_creates_the_secret_and_a_missing_file_fails_closed() {
 		let lines = exec_lines(&unit.contents);
 		assert_eq!(lines.len(), 1);
 		let mut args = lines[0].iter();
-		Command::new(args.next().unwrap())
-			.args(args)
-			.output()
-			.unwrap()
+		command(args.next().unwrap()).args(args).output().unwrap()
 	};
 	let cleanup = || {
-		let _ = Command::new("podman")
-			.args(["secret", "rm", &scoped])
-			.output();
+		let _ = command("podman").args(["secret", "rm", &scoped]).output();
 	};
 	cleanup();
 	let made = create();
 	assert!(made.status.success());
-	let read = Command::new("podman")
+	let read = command("podman")
 		.args([
 			"run",
 			"--rm",
@@ -169,7 +163,7 @@ fn the_unit_creates_the_secret_and_a_missing_file_fails_closed() {
 	std::fs::write(&file, "rotated").unwrap();
 	let again = create();
 	assert!(again.status.success());
-	let reread = Command::new("podman")
+	let reread = command("podman")
 		.args([
 			"run",
 			"--rm",
@@ -182,7 +176,7 @@ fn the_unit_creates_the_secret_and_a_missing_file_fails_closed() {
 		.output()
 		.unwrap();
 	assert_eq!(String::from_utf8_lossy(&reread.stdout), "rotated");
-	let labelled = Command::new("podman")
+	let labelled = command("podman")
 		.args([
 			"secret",
 			"inspect",
@@ -204,7 +198,7 @@ fn the_unit_creates_the_secret_and_a_missing_file_fails_closed() {
 	);
 	cleanup();
 	// And a container that names a secret that does not exist does not start.
-	let missing = Command::new("podman")
+	let missing = command("podman")
 		.args([
 			"run",
 			"--rm",
@@ -221,7 +215,7 @@ fn the_unit_creates_the_secret_and_a_missing_file_fails_closed() {
 // --- a live systemd user manager --------------------------------------
 
 fn limited(program: &str, args: &[&str], secs: u64) -> std::process::Output {
-	let mut child = Command::new(program)
+	let mut child = command(program)
 		.args(args)
 		.stdin(std::process::Stdio::null())
 		.stdout(std::process::Stdio::piped())
@@ -236,7 +230,7 @@ fn limited(program: &str, args: &[&str], secs: u64) -> std::process::Output {
 		if started.elapsed().as_secs() > secs {
 			let _ = child.kill();
 			let _ = child.wait();
-			panic!("did not end in s");
+			panic!("{program} did not end in {secs} s");
 		}
 		std::thread::sleep(std::time::Duration::from_millis(50));
 	}
@@ -250,6 +244,15 @@ fn systemctl(args: &[&str]) -> std::process::Output {
 
 fn text(out: &std::process::Output) -> String {
 	String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// How a program ended and what it said about it, for a failure message.
+fn said(out: &std::process::Output) -> String {
+	format!(
+		"{}: {}",
+		out.status,
+		String::from_utf8_lossy(&out.stderr).trim()
+	)
 }
 
 /// Everything the live test puts on this machine, taken off again when it
@@ -271,14 +274,10 @@ impl Drop for Live {
 		// `systemctl link` put a symlink in the user unit directory, named as
 		// the unit. It is found by name, not by asking systemd: the file it
 		// points at may be gone by now, and then systemd no longer knows it.
-		let config = std::env::var_os("XDG_CONFIG_HOME")
-			.map(std::path::PathBuf::from)
-			.or_else(|| {
-				std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
-			});
+		let linked_in = manager_unit_dir();
 		for unit in &self.units {
-			if let Some(config) = &config {
-				let path = config.join("systemd").join("user").join(unit);
+			if let Some(dir) = &linked_in {
+				let path = dir.join(unit);
 				if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
 					let _ = std::fs::remove_file(&path);
 				}
@@ -303,7 +302,7 @@ fn a_live_manager_keeps_the_container_down_until_the_file_exists() {
 		eprintln!("SKIP: a_live_manager_keeps_the_container_down_until_the_file_exists: podman is not installed");
 		return;
 	}
-	let alive = Command::new("systemctl")
+	let alive = command("systemctl")
 		.args(["--user", "show", "-p", "Version", "--value"])
 		.output()
 		.is_ok_and(|o| o.status.success() && !o.stdout.is_empty());
@@ -334,7 +333,7 @@ fn a_live_manager_keeps_the_container_down_until_the_file_exists() {
 	let generated = dir.path().join("services");
 	std::fs::create_dir_all(&generated).unwrap();
 	crate::quadlet::write_units(&inputs, &out.units).unwrap();
-	let _ = Command::new(&generator)
+	let _ = command(&generator)
 		.args(["-user"])
 		.arg(&generated)
 		.env("QUADLET_UNIT_DIRS", &inputs)
@@ -344,11 +343,21 @@ fn a_live_manager_keeps_the_container_down_until_the_file_exists() {
 
 	for path in [generated.join(&web), inputs.join(&secrets)] {
 		let linked = systemctl(&["link", path.to_str().unwrap()]);
-		assert!(linked.status.success());
+		assert!(
+			linked.status.success(),
+			"systemctl --user link {}: {}",
+			path.display(),
+			said(&linked)
+		);
 		live.units
 			.push(path.file_name().unwrap().to_string_lossy().into_owned());
 	}
-	assert!(systemctl(&["daemon-reload"]).status.success());
+	let reloaded = systemctl(&["daemon-reload"]);
+	assert!(
+		reloaded.status.success(),
+		"systemctl --user daemon-reload: {}",
+		said(&reloaded)
+	);
 
 	// No file: the secrets unit fails and the container does not start.
 	let started = systemctl(&["start", &web]);
@@ -356,44 +365,35 @@ fn a_live_manager_keeps_the_container_down_until_the_file_exists() {
 		!started.status.success(),
 		"the container started with no secret file"
 	);
-	assert_eq!(
-		text(&systemctl(&[
-			"show",
-			"-p",
-			"ActiveState",
-			"--value",
-			&secrets
-		])),
-		"failed"
-	);
-	assert_ne!(text(&systemctl(&["is-active", &web])), "active");
+	let state = systemctl(&["show", "-p", "ActiveState", "--value", &secrets]);
+	assert_eq!(text(&state), "failed", "show: {}", said(&state));
+	let active = systemctl(&["is-active", &web]);
+	assert_ne!(text(&active), "active", "is-active: {}", said(&active));
 
 	// The file exists: the secrets unit runs, the container starts, and the
 	// secret holds the bytes of the file at the path as it was written.
 	std::fs::write(&file, "live-secret").unwrap();
 	let _ = systemctl(&["reset-failed", &secrets]);
 	let started = systemctl(&["start", &web]);
-	assert!(started.status.success());
-	assert_eq!(text(&systemctl(&["is-active", &web])), "active");
-	assert_eq!(
-		text(&systemctl(&[
-			"show",
-			"-p",
-			"ActiveState",
-			"--value",
-			&secrets
-		])),
-		"active"
+	assert!(
+		started.status.success(),
+		"systemctl --user start: {}",
+		said(&started)
 	);
+	let active = systemctl(&["is-active", &web]);
+	assert_eq!(text(&active), "active", "is-active: {}", said(&active));
+	let state = systemctl(&["show", "-p", "ActiveState", "--value", &secrets]);
+	assert_eq!(text(&state), "active", "show: {}", said(&state));
 	let read = limited(
 		"podman",
 		// The compose name, not the Podman name: where `up` mounts it.
 		&["exec", &live.container, "cat", "/run/secrets/token"],
 		60,
 	);
-	assert_eq!(
-		text(&read),
-		"live-secret",
-		"stderr: \\ncontainers: \\nservice"
+	// The message holds neither what the container printed nor the secret.
+	assert!(
+		text(&read) == "live-secret",
+		"podman exec did not show the bytes of the file: {}",
+		read.status
 	);
 }
